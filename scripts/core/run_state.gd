@@ -34,13 +34,10 @@ var ai: AiData = null
 var command_parts: Array[String] = []
 
 # ── 扑克牌机制（**当前主玩法**）──────────────────────────
-## 起始牌库 9 张
-const START_DECK := [
-	[PokerCard.Suit.HEART, 1], [PokerCard.Suit.HEART, 3], [PokerCard.Suit.HEART, 5],
-	[PokerCard.Suit.DIAMOND, 2], [PokerCard.Suit.DIAMOND, 4],
-	[PokerCard.Suit.SPADE, 3], [PokerCard.Suit.SPADE, 6],
-	[PokerCard.Suit.CLUB, 1], [PokerCard.Suit.CLUB, 4],
-]
+## 起始牌池：**扑克 52 张全牌**（4 花色 × 点数 1~13），2026-10-22 起不再是手写 9 张
+const POKER_RANKS := 13
+## 一副完整扑克的张数（写死给断言用，避免两边算错）
+const POKER_DECK_SIZE := 52
 ## 每回合发几张到手牌
 const POKER_HAND_SIZE := 5
 ## 一次最多打几张
@@ -48,7 +45,10 @@ const POKER_PLAY_LIMIT := 5
 
 var poker_deck: Array[PokerCard] = []
 var poker_draw: Array[PokerCard] = []
+## 弃牌堆：**还会回来**（抽牌堆空了就洗回来）
 var poker_discard: Array[PokerCard] = []
+## 失效堆：**打出去的牌**，本关内不再回到手牌（按主人的机制：打完即失效）
+var poker_void: Array[PokerCard] = []
 var poker_hand: Array[PokerCard] = []
 ## 本关剩余出牌次数 / 弃牌次数
 var hands_left: int = 0
@@ -89,6 +89,7 @@ func reset_poker() -> void:
 	_poker_deck_built = false
 	poker_draw.clear()
 	poker_discard.clear()
+	poker_void.clear()
 	poker_hand.clear()
 	hands_left = 0
 	discards_left = 0
@@ -96,13 +97,15 @@ func reset_poker() -> void:
 	bonus_mult = 0
 
 
-## 起始牌库：9 张固定牌
+## 起始牌池：一副完整扑克（4 花色 × 13 点数 = 52 张）
 func ensure_poker_deck() -> void:
 	if _poker_deck_built:
 		return
 	poker_deck.clear()
-	for p in START_DECK:
-		poker_deck.append(PokerCard.make(int(p[0]), int(p[1])))
+	for suit in [PokerCard.Suit.HEART, PokerCard.Suit.DIAMOND,
+			PokerCard.Suit.SPADE, PokerCard.Suit.CLUB]:
+		for rank in range(1, POKER_RANKS + 1):
+			poker_deck.append(PokerCard.make(suit, rank))
 	_poker_deck_built = true
 
 
@@ -127,6 +130,7 @@ func start_poker_level(level: LevelData) -> void:
 	discards_left = 2
 	poker_draw.clear()
 	poker_discard.clear()
+	poker_void.clear()
 	poker_hand.clear()
 	poker_draw = build_poker_deck()
 	_shuffle_poker(poker_draw)
@@ -141,7 +145,7 @@ func _shuffle_poker(arr: Array[PokerCard]) -> void:
 		arr[j] = tmp
 
 
-## 抽 n 张进手牌；抽牌堆空就洗回弃牌堆
+## 抽 n 张进手牌；抽牌堆空就洗回**弃牌堆**（失效堆不参与洗回）
 func draw_poker(count: int) -> void:
 	var added := 0
 	while added < count:
@@ -155,10 +159,10 @@ func draw_poker(count: int) -> void:
 		added += 1
 
 
-## 打出一手：打出的牌进弃牌堆，补满手牌，出牌次数 −1
+## 打出一手：打出的牌进**失效堆**（本关不再回来），补满手牌，出牌次数 −1
 func play_poker_hand(played: Array[PokerCard]) -> void:
 	for c in played:
-		poker_discard.append(c)
+		poker_void.append(c)
 		poker_hand.erase(c)
 	draw_poker(POKER_HAND_SIZE - poker_hand.size())
 	hands_left = maxi(0, hands_left - 1)

@@ -5,6 +5,8 @@ extends RefCounted
 ## 玩家选 1~5 张牌 → 判定牌型 → 给该牌型的基础筹码与基础倍率 →
 ## 每张牌再按「点数」加筹码、按「颜色」加倍率/筹码 → 相乘得分。
 ##
+## A 既当最小（1）也当最大（14）：A-2-3-4-5 与 10-J-Q-K-A 都算顺子。
+##
 ## 颜色规则（整个玩法最简单的一条）：
 ##   红（♥ ♦）每张 **+3 倍率**
 ##   黑（♠ ♣）每张 **+25 筹码**
@@ -111,7 +113,11 @@ static func evaluate_type(cards: Array[PokerCard]) -> int:
 	return Type.HIGH_CARD
 
 
-## 顺子：5 张、点数连续、无重复
+## 顺子：5 张、点数连续、无重复。
+##
+## **A 是最小的 1，也是最大的 14**（德州规矩，2026-10-22 按主人要求补上）：
+##   A-2-3-4-5（A 当 1，叫"轮子"）与 10-J-Q-K-A（A 当 14）都算顺子。
+##   两者同花色时都算同花顺；同花色的 10-J-Q-K-A 就是"皇家同花顺"，本作不单独设档（与德州一致）。
 static func _is_straight(cards: Array[PokerCard]) -> bool:
 	if cards.size() != 5:
 		return false
@@ -119,8 +125,21 @@ static func _is_straight(cards: Array[PokerCard]) -> bool:
 	for c in cards:
 		rs.append(c.rank)
 	rs.sort()
-	for i in range(1, rs.size()):
-		if rs[i] != rs[i - 1] + 1:
+	if _consecutive(rs):
+		return true
+	# A 当 14：只有手里真有 A（rank 1）时才试这一路
+	if rs[0] != 1:
+		return false
+	var hi: Array[int] = []
+	for r in rs:
+		hi.append(14 if r == 1 else r)
+	hi.sort()
+	return _consecutive(hi)
+
+
+static func _consecutive(sorted_ranks: Array[int]) -> bool:
+	for i in range(1, sorted_ranks.size()):
+		if sorted_ranks[i] != sorted_ranks[i - 1] + 1:
 			return false
 	return true
 

@@ -288,20 +288,20 @@ func _test_run_state() -> void:
 # ── 代码卡机制（当前主玩法）───────────────────────────
 func _test_poker_cards() -> void:
 	print("[扑克 · 牌数据]")
-	# 起始牌库 9 张
+	# 起始牌池 = 完整一副扑克（2026-10-22 起由 9 张改为 52 张）
 	var run := RunState.new()
 	run.reset_run()
 	run.ensure_poker_deck()
-	_eq(run.poker_deck.size(), 9, "起始牌库 9 张")
+	_eq(run.poker_deck.size(), RunState.POKER_DECK_SIZE, "起始牌池 52 张（完整一副）")
 	var ranks := {}
 	for c in run.poker_deck:
 		ranks[c.rank] = int(ranks.get(c.rank, 0)) + 1
-	# 必须存在重复点数，否则一对都凑不出来
-	var has_dup := false
+	# 13 个点数各 4 张（A~K 齐全），一对/三条/四条才凑得出来
+	var full := ranks.size() == RunState.POKER_RANKS
 	for r in ranks:
-		if int(ranks[r]) >= 2:
-			has_dup = true
-	_check(has_dup, "起始牌库里有点数重复（能凑出对子）")
+		if int(ranks[r]) != 4:
+			full = false
+	_check(full, "13 个点数各 4 张（A~K 齐全）")
 	var suits := {}
 	for c in run.poker_deck:
 		suits[c.suit] = true
