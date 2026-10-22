@@ -96,6 +96,9 @@ var _banner_tween: Tween = null
 # ── 出牌特效（2026-10-22）─────────────────────────────
 ## 无头测试里自动关掉：动画里有 await，headless 下会拖住 smoke_test 的 1.0 秒等待
 var _fx_enabled := true
+var _bg_fx: BgFx = null
+var _prog_host: Control = null
+var _prog_fill: ColorRect = null
 var _fx_root: Control = null
 var _fx_flash: ColorRect = null
 var _fx_back: Panel = null
@@ -153,6 +156,12 @@ func _build_ui() -> void:
 	veil.set_anchors_preset(Control.PRESET_FULL_RECT)
 	veil.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	add_child(veil)
+
+	# 环境动效：漂浮尘埃 + 扫描线 + 鼠标视差（压暗层之上、HUD 之下，不抢内容）
+	_bg_fx = BgFx.new()
+	_bg_fx.name = "BgFx"
+	_bg_fx.set_anchors_preset(Control.PRESET_FULL_RECT)
+	add_child(_bg_fx)
 
 	_build_rail()
 	_build_console_area()
@@ -233,6 +242,24 @@ func _build_rail() -> void:
 	score_row.name = "ScoreRow"
 	_score_value = score_row.get_node("Value") as Label
 	_rail_box.add_child(score_row)
+
+	# 目标进度条：把「还差多少」从数字变成一眼能看的长度
+	_prog_host = Control.new()
+	_prog_host.name = "TargetBar"
+	_prog_host.custom_minimum_size = Vector2(0, 4)
+	_prog_host.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_prog_host.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_rail_box.add_child(_prog_host)
+	var prog_bg := ColorRect.new()
+	prog_bg.color = UiKit.LINE.darkened(0.45)
+	prog_bg.set_anchors_preset(Control.PRESET_FULL_RECT)
+	prog_bg.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_prog_host.add_child(prog_bg)
+	_prog_fill = ColorRect.new()
+	_prog_fill.color = UiKit.ACCENT
+	_prog_fill.size = Vector2(0, 4)
+	_prog_fill.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_prog_host.add_child(_prog_fill)
 
 
 ## 一行 HUD：图标 + 标签 + 数值。**全部走 UiKit.icon_row**，不许散着写。
@@ -416,6 +443,9 @@ func _layout() -> void:
 		_fx_panel.position = Vector2(W * 0.5 - 420.0, PAD + CONSOLE_H * 0.30)
 		_fx_panel.size = Vector2(840, 240)
 
+	if _bg_fx:
+		_bg_fx.setup(Vector2(W, H))
+
 	_layout_hand()
 
 
@@ -565,6 +595,7 @@ func _on_card_clicked(view: CardView) -> void:
 
 	_played.append(card)
 	view.selected = true
+	view.flash()
 	# 控制台流式打出这张牌（花色符号 + 点数）
 	_console.type_in(card.display_name())
 	_layout_hand(true)
@@ -697,6 +728,7 @@ func _refresh_preview() -> void:
 		run.poker_hand.size(), run.hands_left, run.discards_left]
 	_score_value.text = str(run.score)
 	_target_label.text = "本关 %d / %d" % [run.score, level.target_score]
+	_update_progress()
 
 	# 实时把牌型摆在命令行下方：一手牌在出手前就知道值多少
 	if _played.is_empty():
@@ -1015,6 +1047,42 @@ func _animate_score(gained: int) -> void:
 	UiKit.pop(_estimate_label, 1.15, 0.25)
 
 
+## 目标进度条：宽 = 得分/目标；过线变金色并闪一下
+func _update_progress() -> void:
+	if _prog_host == null or _prog_fill == null or level == null:
+		return
+	var target := maxi(1, level.target_score)
+	var ratio := clampf(float(run.score) / float(target), 0.0, 1.0)
+	# 首次刷新时容器还没排版，host.size 是 0 —— 用竖栏内容宽兜底，否则进度条永远 0 宽
+	var avail := _prog_host.size.x
+	if avail < 4.0:
+		avail = RAIL_W - UiKit.PANEL_PAD * 2.0
+	_prog_fill.size = Vector2(avail * ratio, 4.0)
+	var reached := run.score >= target
+	var want := UiKit.GOLD if reached else UiKit.ACCENT
+	if _prog_fill.color != want:
+		_prog_fill.color = want
+		if reached and _fx_enabled:
+			UiKit.pop(_prog_host, 1.0, 0.2)
+
+
+## 结算弹窗：缩放弹入 + 淡入（无头环境直接显示，测试等的是 visible）
+func _pop_overlay() -> void:
+	if _overlay == null:
+		return
+	_overlay.visible = true
+	if not _fx_enabled:
+		return
+	_overlay.pivot_offset = _overlay.size * 0.5
+	_overlay.scale = Vector2(0.92, 0.92)
+	_overlay.modulate.a = 0.0
+	var tw := create_tween()
+	tw.set_parallel(true)
+	tw.tween_property(_overlay, "scale", Vector2.ONE, 0.24) \
+		.set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
+	tw.tween_property(_overlay, "modulate:a", 1.0, 0.16)
+
+
 func _finish_level() -> void:
 	var passed := run.score >= level.target_score
 	if passed:
@@ -1022,14 +1090,14 @@ func _finish_level() -> void:
 		_overlay_body.text = "得分 %d / 目标 %d\n下一步：挑一张卡加进牌库。" % [
 			run.score, level.target_score
 		]
-		_overlay.visible = true
+		_pop_overlay()
 		level_cleared.emit(run.score)
 	else:
 		_overlay_title.text = "未通过"
 		_overlay_body.text = "得分 %d / 目标 %d\n差距 %d 分。\n提示：把语句拼成合法代码——顺序对了才给分。" % [
 			run.score, level.target_score, level.target_score - run.score
 		]
-		_overlay.visible = true
+		_pop_overlay()
 		level_failed.emit(run.score)
 	_busy = false
 
@@ -1049,7 +1117,24 @@ func _on_reroll_pressed() -> void:
 		_status_label.text = "本关弃牌次数用完了。"
 		return
 	var n := _played.size()
+	var tossing: Array[CardView] = []
+	if _fx_enabled:
+		for v in _hand_views:
+			if v != null and _played.has(v.card):
+				tossing.append(v)
+
 	if run.discard_poker(_played):
+		# 弃掉的牌往屏幕下方掉出去，和"打出"往上砸形成对比
+		if not tossing.is_empty():
+			for v in tossing:
+				v.selected = false
+				var tw := v.create_tween()
+				tw.set_parallel(true)
+				tw.tween_property(v, "position", v.position + Vector2(randf_range(-24, 24), 150), 0.24) \
+					.set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_IN)
+				tw.tween_property(v, "rotation", randf_range(-0.3, 0.3), 0.24)
+				tw.tween_property(v, "modulate:a", 0.0, 0.22)
+			await get_tree().create_timer(0.22).timeout
 		_console.set_command(_prefix(), [])
 		_played.clear()
 		_fired_combos.clear()

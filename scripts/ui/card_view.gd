@@ -39,6 +39,13 @@ var hover_scale: float = 1.16
 var _hover_scale: float = 1.0
 var _hover_tween: Tween = null
 
+## 待机浮动：整手牌轻轻呼吸（整数像素位移，不破像素网格）
+var _idle_t := 0.0
+var _bob_y := 0
+## 选中瞬间的金色闪边（0~1 衰减）
+var _sel_flash := 0.0
+var _flash_box: StyleBoxFlat = null
+
 var _paper_box: StyleBoxFlat = null
 var _shadow_box: StyleBoxFlat = null
 var _ring_box: StyleBoxFlat = null
@@ -70,6 +77,13 @@ func _init() -> void:
 	_ring_box.set_corner_radius_all(RADIUS + 2)
 	_ring_box.anti_aliasing = false
 
+	_flash_box = StyleBoxFlat.new()
+	_flash_box.bg_color = Color(0, 0, 0, 0)
+	_flash_box.border_color = UiKit.GOLD
+	_flash_box.set_border_width_all(2)
+	_flash_box.set_corner_radius_all(RADIUS + 2)
+	_flash_box.anti_aliasing = false
+
 	_dim_box = StyleBoxFlat.new()
 	_dim_box.bg_color = Color(0.04, 0.05, 0.08, 0.55)
 	_dim_box.set_corner_radius_all(RADIUS)
@@ -86,6 +100,32 @@ func _ready() -> void:
 	mouse_entered.connect(set_hovered.bind(true))
 	mouse_exited.connect(set_hovered.bind(false))
 	_apply_transform()
+	_idle_t = randf() * TAU
+	set_process(true)
+
+
+func _process(delta: float) -> void:
+	# 待机浮动：选中/变暗的牌不动（它在"出手"状态，别抢戏）
+	if selected or dimmed:
+		if _bob_y != 0:
+			_bob_y = 0
+			queue_redraw()
+	else:
+		_idle_t += delta * 1.7
+		var want := int(round(sin(_idle_t) * 1.6))
+		if want != _bob_y:
+			_bob_y = want
+			queue_redraw()
+
+	if _sel_flash > 0.0:
+		_sel_flash = maxf(0.0, _sel_flash - delta * 4.0)
+		queue_redraw()
+
+
+## 选中瞬间：金色描边闪一下（配合 ArenaScreen 的抬起补间）
+func flash() -> void:
+	_sel_flash = 1.0
+	queue_redraw()
 
 
 func _gui_input(event: InputEvent) -> void:
@@ -119,6 +159,9 @@ func _draw() -> void:
 	if card == null:
 		return
 
+	# 待机浮动用绘制位移实现（不动节点 position，避免和 Arena 的排布补间打架）
+	draw_set_transform(Vector2(0, float(_bob_y)), 0.0, Vector2.ONE)
+
 	var paper_rect := Rect2(Vector2(PAPER_INSET, PAPER_INSET),
 			CARD_SIZE - Vector2(PAPER_INSET, PAPER_INSET) * 2.0)
 
@@ -143,6 +186,10 @@ func _draw() -> void:
 	# 选中：金色描边（白纸上白描边看不见，改用金）
 	if selected:
 		draw_style_box(_ring_box, Rect2(Vector2.ZERO, CARD_SIZE))
+		if _sel_flash > 0.0:
+			_flash_box.border_color = Color(UiKit.GOLD.r, UiKit.GOLD.g, UiKit.GOLD.b,
+					_sel_flash)
+			draw_style_box(_flash_box, Rect2(Vector2(-2, -2), CARD_SIZE + Vector2(4, 4)))
 
 
 ## 缺图降级：纯色纸面 + 大号点数 + 花色符号。**不静默**——Art.tex 已 push_warning。
