@@ -5,6 +5,9 @@ class_name MainMenuScreen
 signal start_run
 signal quit_game
 
+## 环境动效层（漂浮尘埃 + 扫描线 + 视差）
+var _bg_fx: BgFx = null
+
 func _init() -> void:
 	set_anchors_preset(Control.PRESET_FULL_RECT)
 
@@ -23,6 +26,13 @@ func _ready() -> void:
 	veil.set_anchors_preset(Control.PRESET_FULL_RECT)
 	veil.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	add_child(veil)
+
+	# 环境动效：和战斗界面同一套（漂浮尘埃 + 扫描线 + 视差），先挂上再铺内容
+	_bg_fx = BgFx.new()
+	_bg_fx.name = "BgFx"
+	_bg_fx.set_anchors_preset(Control.PRESET_FULL_RECT)
+	add_child(_bg_fx)
+	_bg_fx.setup(size)
 
 	var root := HBoxContainer.new()
 	root.set_anchors_preset(Control.PRESET_FULL_RECT)
