@@ -6,10 +6,12 @@ extends Resource
 ##   红（红心 ♥ / 方块 ♦）→ 加**倍率**
 ##   黑（黑桃 ♠ / 梅花 ♣）→ 加**筹码**
 ##
-## 牌面：中间是玩家选的 AI 娘立绘（按花色换主题），
-##       左上/右下角是花色符号 + 点数，由 CardView 用像素字体绘制。
+## 牌面：中间是**该花色对应的角色**（形象由花色决定，与选了哪位 AI 娘无关），
+##       四角是花色符号 + 点数，由 CardView 叠 `pips-<suit>-<rank>` 层画。
 ##
-## 卡图资源：assets/art/poker-<ai_id>-<suit>.png（4 位 AI娘 × 4 花色 = 16 张）
+## 卡图资源：assets/art/card-<suit>-<rank>.png（角色层）+ pips-<suit>-<rank>.png（角标层），
+##           4 花色 × 13 点数 = 52 张牌，见 tools/make_card_assets.py。
+##           旧版 poker-<ai_id>-<suit>.png（16 张满幅插画）已退出主流程，仅存档。
 
 enum Suit { HEART, DIAMOND, SPADE, CLUB }
 
@@ -89,6 +91,18 @@ func display_name() -> String:
 	return "%s%s" % [suit_symbol(suit), str(rank)]
 
 
-## 卡图资源名（由 CardView 拼 AI 娘 id 后加载）
+## 卡图资源名（旧版满幅插画，4 位 AI娘 × 4 花色 = 16 张）。
+## **已退出主流程**，只留作存档与降级参考；新卡面用 face_name() / pips_name()。
 func art_name(ai_id: String) -> String:
 	return "poker-%s-%s" % [ai_id, suit_slug(suit)]
+
+
+## 角色层：`card-<suit>-<rank>`，只有角色，150×226 透明底。
+## 由 tools/make_card_assets.py 从 docs/shots/ 样张抠出来（形象由**花色**决定）。
+func face_name() -> String:
+	return "card-%s-%d" % [suit_slug(suit), rank]
+
+
+## 角标层：`pips-<suit>-<rank>`，四角花色+点数，150×226 透明底，位置与样张一致。
+func pips_name() -> String:
+	return "pips-%s-%d" % [suit_slug(suit), rank]

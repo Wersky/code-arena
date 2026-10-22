@@ -2,32 +2,47 @@ class_name CardView
 extends Control
 ## 单张**扑克牌**（像素风：全硬边）。
 ##
-## 牌面 = 满幅卡图（AI 娘按花色换主题）+ 四角的花色符号与点数。
-##   左上：花色符号 + 点数
-##   右下：同款，旋转 180°
-##   中下：一条半透明底衬，写 点数 / 颜色效果，保证信息永远读得清
+## 牌面由三层叠成（三层都是 150×226，1:1 对齐，不做几何换算）：
+##   ① 白纸 + 圆角墨边   ← 本脚本用 StyleBoxFlat 画
+##   ② 角色层 `card-<suit>-<rank>.png`   ← tools/make_card_assets.py 从样张抠出来
+##   ③ 角标层 `pips-<suit>-<rank>.png`   ← 同上，四角角标位置与样张像素级一致
 ##
-## 卡图资源：assets/art/poker-<ai_id>-<suit>.png（150×226，一比一直接贴）。
-## 缺图时降级成纯色块 + 大号点数，不报错。
+## 为什么不把角标和纸面烘进一张图：角标要能在不同屏幕缩放下保持硬边，
+## 纸面/边框要在引擎里统一（选中、变暗、悬停都只动引擎图层）。
+## 三层叠回去与 `docs/shots/` 样张逐像素一致（只差清掉的卡边 8px）。
 ##
 ## 卡片坐标由 Arena 的 card_layer 统一管理（不进容器），
-## 手牌↔命令行之间可以做平滑补间。
+## 手牌弧线排布靠 Tween 补间。
+##
+## 资源：assets/art/card-<suit>-<rank>.png / pips-<suit>-<rank>.png（4 花色 × 13 点数）
+## 缺图时降级成纯色纸面 + 大号点数，不报错。
 
 signal clicked(view: CardView)
 
 const CARD_SIZE := Vector2(150, 226)
+const RADIUS := 6                     ## 圆角半径（样张 4x 量到 21px ≈ 1x 5.25，按文档规格取 6）
+const PAPER_INSET := 1.0              ## 纸面距控件边缘
+const PAPER := Color(1.0, 1.0, 1.0)
+const INK := Color(0.094, 0.133, 0.243)   ## #18223E，与样张墨线一致
 
 ## 牌数据
 var card: PokerCard = null
-## 牌面上画哪位 AI 娘
+## 牌面上画哪位 AI 娘（**现在只用于老卡图降级**：新卡面形象由花色决定）
 var ai_id: String = "deepdeek"
 var interactive: bool = true
 var dimmed: bool = false
-## 选中：牌在 _layout_hand 里抬起来，并画一圈亮边
+## 选中：牌在 _layout_hand 里抬起来，并画一圈金色描边
 var selected: bool = false
+
+var hover_scale: float = 1.16
 
 var _hover_scale: float = 1.0
 var _hover_tween: Tween = null
+
+var _paper_box: StyleBoxFlat = null
+var _shadow_box: StyleBoxFlat = null
+var _ring_box: StyleBoxFlat = null
+var _dim_box: StyleBoxFlat = null
 
 
 func _init() -> void:
@@ -36,14 +51,35 @@ func _init() -> void:
 	mouse_filter = Control.MOUSE_FILTER_STOP
 	pivot_offset = CARD_SIZE * 0.5
 
+	_paper_box = StyleBoxFlat.new()
+	_paper_box.bg_color = PAPER
+	_paper_box.border_color = INK
+	_paper_box.set_border_width_all(1)
+	_paper_box.set_corner_radius_all(RADIUS)
+	_paper_box.anti_aliasing = false          # 像素风：圆角也不做抗锯齿
+
+	_shadow_box = StyleBoxFlat.new()
+	_shadow_box.bg_color = UiKit.SHADOW
+	_shadow_box.set_corner_radius_all(RADIUS)
+	_shadow_box.anti_aliasing = false
+
+	_ring_box = StyleBoxFlat.new()
+	_ring_box.bg_color = Color(0, 0, 0, 0)
+	_ring_box.border_color = UiKit.GOLD
+	_ring_box.set_border_width_all(2)
+	_ring_box.set_corner_radius_all(RADIUS + 2)
+	_ring_box.anti_aliasing = false
+
+	_dim_box = StyleBoxFlat.new()
+	_dim_box.bg_color = Color(0.04, 0.05, 0.08, 0.55)
+	_dim_box.set_corner_radius_all(RADIUS)
+	_dim_box.anti_aliasing = false
+
 
 func setup(c: PokerCard, who: String = "deepdeek") -> void:
 	card = c
 	ai_id = who
 	queue_redraw()
-
-
-var hover_scale: float = 1.16
 
 
 func _ready() -> void:
@@ -82,57 +118,43 @@ func _apply_transform() -> void:
 func _draw() -> void:
 	if card == null:
 		return
-	var font := get_theme_default_font()
-	var accent := PokerCard.suit_color(card.suit)
-	var red := PokerCard.is_red(card.suit)
 
-	# 硬边投影
-	draw_rect(Rect2(Vector2(3, 4), CARD_SIZE), Color(0, 0, 0, 0.5))
+	var paper_rect := Rect2(Vector2(PAPER_INSET, PAPER_INSET),
+			CARD_SIZE - Vector2(PAPER_INSET, PAPER_INSET) * 2.0)
 
-	var tex := Art.tex(card.art_name(ai_id))
-	if tex != null:
-		draw_texture_rect(tex, Rect2(Vector2.ZERO, CARD_SIZE), false,
-				Color(1, 1, 1, 0.55 if dimmed else 1.0))
+	# ① 硬边投影 + 白纸
+	draw_style_box(_shadow_box, Rect2(paper_rect.position + Vector2(2, 3), paper_rect.size))
+	draw_style_box(_paper_box, paper_rect)
+
+	# ②③ 角色层 + 角标层（都是整卡尺寸，位置由资源本身决定）
+	var face := Art.tex(card.face_name())
+	if face != null:
+		draw_texture_rect(face, Rect2(Vector2.ZERO, CARD_SIZE), false)
+		var pips := Art.tex(card.pips_name())
+		if pips != null:
+			draw_texture_rect(pips, Rect2(Vector2.ZERO, CARD_SIZE), false)
 	else:
-		draw_rect(Rect2(Vector2.ZERO, CARD_SIZE), UiKit.PANEL_2.lerp(accent, 0.16))
-		# 缺图时把点数画大，保证还是一张能玩的牌
-		draw_string(font, Vector2(CARD_SIZE.x * 0.5 - 26, CARD_SIZE.y * 0.5 + 18),
-				str(card.rank), HORIZONTAL_ALIGNMENT_LEFT, -1, 60, accent)
+		# 缺图降级：白纸上直接画大号点数与花色，保证还是一张能玩的牌
+		_draw_fallback()
 
 	if dimmed:
-		draw_rect(Rect2(Vector2.ZERO, CARD_SIZE), Color(0.04, 0.05, 0.08, 0.55))
+		draw_style_box(_dim_box, paper_rect)
 
-	# 四角：花色 + 点数
-	_draw_corner(font, Vector2(7, 26), accent, 0.0)
-	_draw_corner(font, Vector2(CARD_SIZE.x - 7, CARD_SIZE.y - 8), accent, PI)
-
-	# 底部信息条：点数 ｜ 红=倍率 黑=筹码
-	var foot_h := 26.0
-	var fy := CARD_SIZE.y - foot_h
-	draw_rect(Rect2(Vector2(0, fy), Vector2(CARD_SIZE.x, foot_h)), Color(0.04, 0.055, 0.09, 0.86))
-	draw_rect(Rect2(Vector2(0, fy), Vector2(CARD_SIZE.x, 1)), accent, false, 1.0)
-	draw_string(font, Vector2(8, fy + 18), "点数 %d" % card.rank,
-			HORIZONTAL_ALIGNMENT_LEFT, -1, 12, UiKit.TEXT)
-	var tag := "+3 倍率" if red else "+25 筹码"
-	draw_string(font, Vector2(CARD_SIZE.x - 62, fy + 18), tag,
-			HORIZONTAL_ALIGNMENT_LEFT, -1, 12, accent)
-
-	# 外框：红牌暖色、黑牌冷色；选中时亮白粗边
+	# 选中：金色描边（白纸上白描边看不见，改用金）
 	if selected:
-		draw_rect(Rect2(Vector2.ZERO, CARD_SIZE), Color(1, 1, 1, 0.92), false, 3.0)
-		draw_rect(Rect2(Vector2(3, 3), CARD_SIZE - Vector2(6, 6)), accent, false, 1.0)
-	else:
-		draw_rect(Rect2(Vector2.ZERO, CARD_SIZE), accent, false, 2.0)
+		draw_style_box(_ring_box, Rect2(Vector2.ZERO, CARD_SIZE))
 
 
-## 画一个角标：花色符号 + 点数（rotate = PI 时倒过来画）
-func _draw_corner(font: Font, base: Vector2, color: Color, rot: float) -> void:
-	var sym := PokerCard.suit_symbol(card.suit)
-	var num := str(card.rank)
-	if is_zero_approx(rot):
-		draw_string(font, base + Vector2(-1, 0), sym, HORIZONTAL_ALIGNMENT_LEFT, -1, 14, color)
-		draw_string(font, base + Vector2(-1, 16), num, HORIZONTAL_ALIGNMENT_LEFT, -1, 18, color)
-	else:
-		# 右下角：同款内容倒排（像素卡牌的传统做法，不用旋转矩阵）
-		draw_string(font, base + Vector2(-1, -16), num, HORIZONTAL_ALIGNMENT_LEFT, -1, 18, color)
-		draw_string(font, base + Vector2(-1, 0), sym, HORIZONTAL_ALIGNMENT_LEFT, -1, 14, color)
+## 缺图降级：纯色纸面 + 大号点数 + 花色符号。**不静默**——Art.tex 已 push_warning。
+func _draw_fallback() -> void:
+	var font := get_theme_default_font()
+	var accent := PokerCard.suit_color(card.suit)
+	var num := _rank_label()
+	draw_string(font, Vector2(CARD_SIZE.x * 0.5 - 20, CARD_SIZE.y * 0.5 + 10),
+			num, HORIZONTAL_ALIGNMENT_LEFT, -1, 60, INK)
+	draw_string(font, Vector2(CARD_SIZE.x * 0.5 - 20, CARD_SIZE.y * 0.5 + 52),
+			PokerCard.suit_symbol(card.suit), HORIZONTAL_ALIGNMENT_LEFT, -1, 36, accent)
+
+
+func _rank_label() -> String:
+	return {1: "A", 11: "J", 12: "Q", 13: "K"}.get(card.rank, str(card.rank))

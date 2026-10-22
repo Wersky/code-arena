@@ -830,17 +830,26 @@ func debug_click_continue() -> void:
 	_on_overlay_continue()
 
 
+## 目检钩子：翻牌。
+## ⚠ 旧代码卡玩法遗留——新扑克牌**没有牌背设计**，CardView 也没有 toggle_flip()。
+## 这里改成"有就翻、没有就明确报错返回 false"，不再让 `--shot=flip` 直接崩掉
+## （见踩坑手册坑 40：换玩法后旧目检钩子会变哑炮）。
 func debug_flip_first() -> bool:
 	if _hand_views.is_empty():
 		return false
-	_hand_views[0].toggle_flip()
+	if not _hand_views[0].has_method("toggle_flip"):
+		push_warning("--shot=flip 已失效：扑克卡面没有牌背设计，CardView 无 toggle_flip()")
+		return false
+	_hand_views[0].call("toggle_flip")
 	return true
 
 
 func debug_first_is_back() -> bool:
 	if _hand_views.is_empty():
 		return false
-	return _hand_views[0]._showing_back()
+	if not _hand_views[0].has_method("_showing_back"):
+		return false
+	return bool(_hand_views[0].call("_showing_back"))
 
 
 ## 测试用：模拟悬停第 index 张手牌

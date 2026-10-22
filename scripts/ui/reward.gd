@@ -114,22 +114,26 @@ func _make_option_card(opt: Dictionary) -> Control:
 	v.add_theme_constant_override("separation", UiKit.SP_2)
 	panel.add_child(v)
 
-	# 形象图
-	var art_name := str(opt.get("art", ""))
-	if art_name == "" and opt.has("suit"):
-		art_name = "poker-%s-%s" % [
-			str(run.ai.id) if run.ai != null else "deepdeek",
-			PokerCard.suit_slug(int(opt["suit"]))]
-	var portrait := TextureRect.new()
-	portrait.texture = Art.tex(art_name)
-	portrait.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
-	portrait.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
-	portrait.custom_minimum_size = Vector2(268, 172)
-	portrait.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	if portrait.texture == null:
-		portrait.custom_minimum_size = Vector2(268, 60)
+	# 形象：加牌奖励直接显示**这张牌本身**（与战斗界面同一套 CardView，所见即所得）
+	if opt.has("suit") and opt.has("rank"):
+		var preview := CardView.new()
+		preview.interactive = false
+		preview.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		preview.setup(PokerCard.make(int(opt["suit"]), int(opt["rank"])),
+				str(run.ai.id) if run.ai != null else "deepdeek")
+		preview.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+		v.add_child(preview)
 	else:
-		v.add_child(portrait)
+		var portrait := TextureRect.new()
+		portrait.texture = Art.tex(str(opt.get("art", "")))
+		portrait.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+		portrait.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+		portrait.custom_minimum_size = Vector2(268, 172)
+		portrait.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		if portrait.texture == null:
+			portrait.custom_minimum_size = Vector2(268, 60)
+		else:
+			v.add_child(portrait)
 
 	# 稀有度色条（§8.2 强调色边框）
 	var ribbon := ColorRect.new()
