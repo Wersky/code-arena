@@ -6,8 +6,8 @@ config_version=5
 
 [application]
 
-config/name="提示词擂台 Prompt Arena"
-config/description="2D 肉鸽：拼装提示词组件，闯过一道道 Benchmark 评测。纯鼠标操作。"
+config/name="代码擂台 Code Arena"
+config/description="2D 肉鸽扑克：选一位 AI 娘，把牌凑成德州牌型打出去，筹码 × 倍率过关。纯鼠标操作。"
 run/main_scene="res://scenes/main.tscn"
 config/features=PackedStringArray("4.7")
 
