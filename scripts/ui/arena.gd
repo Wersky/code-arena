@@ -201,6 +201,15 @@ func _build_rail() -> void:
 	rule_note.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	_rail_box.add_child(rule_note)
 
+	# 两个稀有顶阶单独一行（要靠奖励叠出重复牌才可能，不进常规小抄免得挤）
+	var ff := PokerHand.type_base(PokerHand.Type.FLUSH_FIVE)
+	var rf := PokerHand.type_base(PokerHand.Type.ROYAL_FLUSH)
+	var rare_note := UiKit.dim("稀有：同花五条 %d×%d ｜ 皇家同花顺 %d×%d"
+			% [int(ff["chips"]), int(ff["mult"]), int(rf["chips"]), int(rf["mult"])],
+			UiKit.FS_XS)
+	rare_note.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_rail_box.add_child(rare_note)
+
 	_rail_box.add_child(UiKit.rule())
 
 	_turn_label = UiKit.dim("", UiKit.FS_XS)

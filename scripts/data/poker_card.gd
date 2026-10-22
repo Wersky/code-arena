@@ -65,6 +65,17 @@ static func suit_color(s: int) -> Color:
 	return SUIT_COLORS.get(s, Color(0.7, 0.7, 0.7))
 
 
+## 这张牌加多少**筹码**（不是 rank 本身）。
+## 2026-10-22 按主人定：A=14 最大；J/Q/K 三张人头牌都算 10（传统牌感）；其余按面值。
+## 注意 rank 仍是 1~13（id / 显示 / 顺子判定都用它），只有筹码值走这张表。
+static func chip_value(r: int) -> int:
+	if r == 1:
+		return 14
+	if r >= 11:
+		return 10
+	return r
+
+
 ## 红色 = 加倍率，黑色 = 加筹码。这是整个玩法的颜色规则。
 static func is_red(s: int) -> bool:
 	return s == Suit.HEART or s == Suit.DIAMOND

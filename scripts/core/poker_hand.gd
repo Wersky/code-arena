@@ -16,9 +16,12 @@ extends RefCounted
 ##   mult  = 牌型倍率 + Σ 红色倍率 + AI娘倍率加成
 ##   score = chips × mult
 
+## 牌型强弱顺序 = 枚举顺序（从小到大）。2026-10-22 按主人决定在顶部加了两档：
+##   皇家同花顺 > 同花五条 > 五条 > 同花顺
 enum Type {
 	HIGH_CARD, PAIR, TWO_PAIR, THREE_KIND, STRAIGHT,
 	FLUSH, FULL_HOUSE, FOUR_KIND, STRAIGHT_FLUSH, FIVE_KIND,
+	FLUSH_FIVE, ROYAL_FLUSH,
 }
 
 const TYPE_NAMES := {
@@ -32,6 +35,8 @@ const TYPE_NAMES := {
 	Type.FOUR_KIND: "四条",
 	Type.STRAIGHT_FLUSH: "同花顺",
 	Type.FIVE_KIND: "五条",
+	Type.FLUSH_FIVE: "同花五条",
+	Type.ROYAL_FLUSH: "皇家同花顺",
 }
 
 ## 牌型基础值：{chips, mult}
@@ -46,6 +51,9 @@ const TYPE_BASE := {
 	Type.FOUR_KIND: {"chips": 60, "mult": 7},
 	Type.STRAIGHT_FLUSH: {"chips": 100, "mult": 8},
 	Type.FIVE_KIND: {"chips": 120, "mult": 12},
+	## 下面两档只有奖励叠出重复牌才凑得出，数值是**占位**，等主人平衡时再调
+	Type.FLUSH_FIVE: {"chips": 160, "mult": 16},
+	Type.ROYAL_FLUSH: {"chips": 200, "mult": 20},
 }
 
 ## 颜色效果
@@ -87,10 +95,13 @@ static func evaluate_type(cards: Array[PokerCard]) -> int:
 
 	var straight := _is_straight(cards)
 
+	# 五张同点数：同花就是「同花五条」（只有奖励叠出重复牌才可能）
+	if int(groups[0]) == 5:
+		return Type.FLUSH_FIVE if flush else Type.FIVE_KIND
+	if _is_royal(cards):
+		return Type.ROYAL_FLUSH
 	if straight and flush:
 		return Type.STRAIGHT_FLUSH
-	if int(groups[0]) == 5:
-		return Type.FIVE_KIND
 	if int(groups[0]) == 4:
 		return Type.FOUR_KIND
 	if int(groups[0]) == 3 and groups.size() > 1 and int(groups[1]) == 2:
@@ -144,6 +155,59 @@ static func _consecutive(sorted_ranks: Array[int]) -> bool:
 	return true
 
 
+## 皇家同花顺：同花的 10-J-Q-K-A（A 当 14 的那一路）。
+## 与德州一致，它就是同花顺里最高的那一手，本作按主人要求**单列一档**。
+static func _is_royal(cards: Array[PokerCard]) -> bool:
+	if cards.size() != 5:
+		return false
+	var seen := {}
+	for c in cards:
+		seen[c.rank] = true
+	if seen.size() != 5:
+		return false
+	for r in [1, 10, 11, 12, 13]:
+		if not seen.has(r):
+			return false
+	var suit := cards[0].suit
+	for c in cards:
+		if c.suit != suit:
+			return false
+	return _is_straight(cards)
+
+
+## **参与牌型结算的牌**（主人 2026-10-22 定：散牌不算钱）。
+##   高牌     → 只算最大的一张（A 最大，J/Q/K 都算 10）
+##   顺子/同花/同花顺/皇家 → 5 张全算
+##   其余成组牌型（对/两对/三条/葫芦/四条/五条/同花五条）→ 只算"至少两张同点数"的那几组
+static func scoring_cards(cards: Array[PokerCard], t: int = -1) -> Array[PokerCard]:
+	var out: Array[PokerCard] = []
+	if cards.is_empty():
+		return out
+	var typ := t
+	if typ < 0:
+		typ = evaluate_type(cards)
+	match typ:
+		Type.HIGH_CARD:
+			var best: PokerCard = cards[0]
+			for c in cards:
+				if PokerCard.chip_value(c.rank) > PokerCard.chip_value(best.rank):
+					best = c
+			out.append(best)
+			return out
+		Type.STRAIGHT, Type.FLUSH, Type.STRAIGHT_FLUSH, Type.ROYAL_FLUSH:
+			for c in cards:
+				out.append(c)
+			return out
+		_:
+			var counts := {}
+			for c in cards:
+				counts[c.rank] = int(counts.get(c.rank, 0)) + 1
+			for c in cards:
+				if int(counts[c.rank]) >= 2:
+					out.append(c)
+			return out
+
+
 ## 结算。ctx 可带：
 ##   ai_id      —— 决定 AI 娘被动
 ##   bonus_chips / bonus_mult —— 本局累积的永久加成（奖励用）
@@ -165,11 +229,13 @@ static func score(cards: Array[PokerCard], ctx: Dictionary = {}) -> Dictionary:
 	var chips := int(base["chips"])
 	var mult := int(base["mult"])
 
+	# **只算参与牌型的那几张**（主人 2026-10-22 定）：散牌不加点数、不计颜色、也不吃 AI 被动
+	var scoring := scoring_cards(cards, t)
 	var rank_sum := 0
 	var red := 0
 	var black := 0
-	for c in cards:
-		rank_sum += c.rank
+	for c in scoring:
+		rank_sum += PokerCard.chip_value(c.rank)
 		if PokerCard.is_red(c.suit):
 			red += 1
 		else:
@@ -179,9 +245,9 @@ static func score(cards: Array[PokerCard], ctx: Dictionary = {}) -> Dictionary:
 	chips += black * BLACK_CHIPS
 	mult += red * RED_MULT
 
-	# AI 娘被动
+	# AI 娘被动（同样只按参与牌型的牌算）
 	var ai_id := str(out["ai_id"])
-	var ai_bonus := _ai_bonus(ai_id, cards, t)
+	var ai_bonus := _ai_bonus(ai_id, scoring, t)
 	chips += int(ai_bonus["chips"])
 	mult += int(ai_bonus["mult"])
 	if str(ai_bonus["desc"]) != "":
@@ -196,6 +262,7 @@ static func score(cards: Array[PokerCard], ctx: Dictionary = {}) -> Dictionary:
 	out["score"] = chips * int(out["mult"])
 	out["red_count"] = red
 	out["black_count"] = black
+	out["scoring_count"] = scoring.size()
 	return out
 
 
