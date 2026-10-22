@@ -3,7 +3,7 @@ extends SceneTree
 ##
 ## 跑法：
 ##   godot --headless --path . --script res://tests/verify_hands.gd
-## 期望：14 项检查，0 失败。
+## 期望：15 项检查，0 失败。
 ##
 ## 这个文件替代 `docs/04-基础玩法.md` §3 的牌型表做**可执行断言**：
 ## 表里改了数值/新增牌型，这里必须同步——否则文档又会变成"看着对、跑起来不是"。
@@ -44,13 +44,21 @@ func _init() -> void:
 	_expect("A 当最小的顺子 A2345", PokerHand.Type.STRAIGHT,
 			[[0, 1], [1, 2], [2, 3], [3, 4], [0, 5]])
 
-	# ⚠ 已知缺口：A 当最大（10-J-Q-K-A）目前**不认**。
-	# 现状断言，防止"以为它已经支持"。修法见 docs/进度交接.md §2.3。
+	# A 当最大：10-J-Q-K-A 也算顺子（2026-10-22 起，A 既当 1 也当 14）
 	var high_ace: Array[PokerCard] = [
 		PokerCard.make(0, 10), PokerCard.make(1, 11), PokerCard.make(2, 12),
 		PokerCard.make(3, 13), PokerCard.make(0, 1)]
-	_check(PokerHand.evaluate_type(high_ace) != PokerHand.Type.STRAIGHT,
-			"已知缺口：10-J-Q-K-A 目前不算顺子（A 只当 1）")
+	_check(PokerHand.evaluate_type(high_ace) == PokerHand.Type.STRAIGHT,
+			"A 当最大的顺子 10-J-Q-K-A → 顺子（实得 %s）"
+			% PokerHand.type_name(PokerHand.evaluate_type(high_ace)))
+
+	# 皇家同花顺 = 同花色的 10-J-Q-K-A，与德州一致归入同花顺（不单设档）
+	var royal: Array[PokerCard] = [
+		PokerCard.make(0, 10), PokerCard.make(0, 11), PokerCard.make(0, 12),
+		PokerCard.make(0, 13), PokerCard.make(0, 1)]
+	_check(PokerHand.evaluate_type(royal) == PokerHand.Type.STRAIGHT_FLUSH,
+			"皇家同花顺 10-J-Q-K-A 同花 → 同花顺（实得 %s）"
+			% PokerHand.type_name(PokerHand.evaluate_type(royal)))
 
 	# 计分公式：♥3 + ♦3（一对，两张红牌，DeepDeek）→ 16 筹码 × 10 倍率 = 160
 	# 与 docs/04-基础玩法.md §4 的手算示例一致
