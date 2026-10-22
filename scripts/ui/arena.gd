@@ -93,6 +93,19 @@ var _banner: Control = null
 var _banner_text: Label = null
 var _banner_tween: Tween = null
 
+# ── 出牌特效（2026-10-22）─────────────────────────────
+## 无头测试里自动关掉：动画里有 await，headless 下会拖住 smoke_test 的 1.0 秒等待
+var _fx_enabled := true
+var _fx_root: Control = null
+var _fx_flash: ColorRect = null
+var _fx_back: Panel = null
+var _fx_panel: VBoxContainer = null
+var _fx_title: Label = null
+var _fx_formula: Label = null
+var _fx_note: Label = null
+var _fx_total: Label = null
+var _fx_fly: Label = null
+
 # 覆盖层
 var _overlay: PanelContainer = null
 var _overlay_title: Label = null
@@ -153,6 +166,7 @@ func _build_ui() -> void:
 	_card_layer.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	add_child(_card_layer)
 
+	_build_fx()
 	_build_overlay()
 
 
@@ -396,6 +410,11 @@ func _layout() -> void:
 	if _overlay:
 		_overlay.position = Vector2(W * 0.5 - 280.0, H * 0.5 - 170.0)
 		_overlay.size = Vector2(560, 340)
+
+	# 出牌特效的结算台压在控制台区域正中，牌会飞到它下面聚拢
+	if _fx_panel:
+		_fx_panel.position = Vector2(W * 0.5 - 420.0, PAD + CONSOLE_H * 0.30)
+		_fx_panel.size = Vector2(840, 240)
 
 	_layout_hand()
 
@@ -692,6 +711,243 @@ func _refresh_preview() -> void:
 
 
 # ─────────────────────────────────────────────────────────
+#  出牌特效：吸牌 → 砸牌型 → 跳数字 → 分数飞进 HUD
+# ─────────────────────────────────────────────────────────
+## 像素风纪律：只做硬边位移 / 缩放 / 闪烁 / 方块碎屑，
+## **不做模糊、不做渐变光晕**（踩坑手册 22：线性过滤会把像素糊掉）。
+## 整段约 1.0 秒；headless 下 _fx_enabled=false，整段跳过，
+## 所以 smoke_test 里"运行后 1.0 秒出结果窗"的时序不受影响（踩坑手册 40）。
+func _build_fx() -> void:
+	_fx_root = Control.new()
+	_fx_root.name = "FxLayer"
+	_fx_root.set_anchors_preset(Control.PRESET_FULL_RECT)
+	_fx_root.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	add_child(_fx_root)
+
+	_fx_flash = ColorRect.new()
+	_fx_flash.name = "Flash"
+	_fx_flash.set_anchors_preset(Control.PRESET_FULL_RECT)
+	_fx_flash.color = Color(1, 1, 1, 0)
+	_fx_flash.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_fx_root.add_child(_fx_flash)
+
+	# 结算台底板：深色硬边 + 金线框，数字压在上面才读得清（不然会和控制台文字糊在一起）
+	_fx_back = Panel.new()
+	_fx_back.name = "SettleBack"
+	_fx_back.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_fx_back.visible = false
+	var back_sb := StyleBoxFlat.new()
+	back_sb.bg_color = Color(0.043, 0.055, 0.086, 0.93)
+	back_sb.border_color = UiKit.GOLD
+	back_sb.set_border_width_all(2)
+	back_sb.anti_aliasing = false
+	_fx_back.add_theme_stylebox_override("panel", back_sb)
+	_fx_root.add_child(_fx_back)
+
+	_fx_panel = VBoxContainer.new()
+	_fx_panel.name = "SettlePanel"
+	_fx_panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_fx_panel.alignment = BoxContainer.ALIGNMENT_CENTER
+	_fx_panel.add_theme_constant_override("separation", 2)
+	_fx_panel.visible = false
+	_fx_root.add_child(_fx_panel)
+
+	_fx_title = _fx_label(UiKit.FS_L, UiKit.GOLD, 6)
+	_fx_formula = _fx_label(UiKit.FS_M, UiKit.TEXT, 4)
+	_fx_note = _fx_label(UiKit.FS_XS, UiKit.TEXT_DIM, 0)
+	_fx_total = _fx_label(UiKit.FS_XL, UiKit.WHITE, 7)
+
+	_fx_fly = UiKit.label("", UiKit.FS_M, UiKit.GOLD)
+	_fx_fly.visible = false
+	_fx_fly.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_fx_root.add_child(_fx_fly)
+
+	_fx_enabled = DisplayServer.get_name() != "headless"
+
+
+func _fx_label(fs: int, color: Color, outline: int) -> Label:
+	var l := UiKit.label("", fs, color)
+	l.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	l.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	if outline > 0:
+		l.add_theme_constant_override("outline_size", outline)
+		l.add_theme_color_override("font_outline_color", Color(0, 0, 0, 0.9))
+	_fx_panel.add_child(l)
+	return l
+
+
+func _play_fx(res: Dictionary, gained: int) -> void:
+	if _fx_panel == null or _fx_total == null:
+		return
+	var views: Array[CardView] = []
+	for v in _hand_views:
+		if v != null and _played.has(v.card):
+			views.append(v)
+
+	var center := Vector2(size.x * 0.5, size.y * 0.62)
+	var chips := int(res["chips"])
+	var mult := int(res["mult"])
+
+	# ① 选中的牌被"抽"到中央聚成一叠（每张错开 35ms）
+	var i := 0
+	for v in views:
+		# 扇开一点 + 每张轻微错角/错高，看起来是"一把牌拍在桌上"，不是一张卡
+		var spread := (float(i) - float(views.size() - 1) * 0.5) * 46.0
+		var tilt := deg_to_rad(3.5) * (float(i) - float(views.size() - 1) * 0.5) * 0.4
+		var dest := center - Vector2(CARD_W, CARD_H) * 0.5 \
+				+ Vector2(spread, -absf(spread) * 0.06 + i * 1.5)
+		v.z_index = 2 + i
+		var tw := v.create_tween()
+		tw.set_parallel(true)
+		tw.tween_property(v, "position", dest, 0.26).set_delay(i * 0.035) \
+			.set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_OUT)
+		tw.tween_property(v, "rotation", tilt, 0.22).set_delay(i * 0.035)
+		tw.tween_property(v, "scale", Vector2(1.18, 1.18), 0.26).set_delay(i * 0.035)
+		i += 1
+
+	_fx_panel.visible = true
+	_fx_panel.modulate.a = 0.0
+	_fx_title.text = str(res["type_name"])
+	_fx_formula.text = "0 × 0"
+	_fx_note.text = _fx_note_text(res)
+	_fx_total.text = "0"
+	_fx_title.scale = Vector2.ONE
+	_fx_formula.scale = Vector2.ONE
+	_fx_total.scale = Vector2.ONE
+	# 底板跟着文字实际尺寸走（牌型名长短不一），居中压在控制台区域
+	_fx_panel.size = _fx_panel.get_combined_minimum_size()
+	_fx_panel.position = Vector2(size.x * 0.5 - _fx_panel.size.x * 0.5,
+			PAD + CONSOLE_H * 0.34)
+	_fx_back.position = _fx_panel.position - Vector2(28, 16)
+	_fx_back.size = _fx_panel.size + Vector2(56, 32)
+	_fx_back.visible = true
+	_fx_back.modulate.a = 0.0
+
+	var fade_in := create_tween()
+	fade_in.set_parallel(true)
+	fade_in.tween_property(_fx_panel, "modulate:a", 1.0, 0.10)
+	fade_in.tween_property(_fx_back, "modulate:a", 1.0, 0.10)
+
+	# ② 落地：白闪 + 屏抖 + 牌型名弹入 + 一圈碎屑
+	_flash(UiKit.GOLD, 0.20)
+	_shake(6.0, 0.14)
+	_punch(_fx_title, 1.5, 0.20)
+	SparkBurst.burst(_fx_root, center, UiKit.GOLD, 10, 200.0)
+	await get_tree().create_timer(0.14).timeout
+
+	# ③ 筹码 → 倍率 逐个跳数
+	await _count_to(_fx_formula, 0, chips, func(v: int) -> String: return "%d × 0" % v, 0.24)
+	_punch(_fx_formula, 1.10, 0.10)
+	await _count_to(_fx_formula, chips, mult,
+			func(v: int) -> String: return "%d × %d" % [chips, v], 0.22)
+	_flash(UiKit.ACCENT, 0.14)
+
+	# ④ 总分炸开：大弹跳 + 白闪 + 更重的一次屏抖 + 碎屑
+	await _count_to(_fx_total, 0, gained, func(v: int) -> String: return str(v), 0.22)
+	_punch(_fx_total, 1.6, 0.26)
+	_fx_total.modulate = UiKit.GOLD
+	_flash(UiKit.WHITE, 0.26)
+	_shake(10.0, 0.20)
+	SparkBurst.burst(_fx_root, center + Vector2(0, -40), UiKit.GOLD, 20, 320.0)
+	await get_tree().create_timer(0.16).timeout
+
+	# ⑤ 分数飞进右上角的「本关得分」
+	_fly_number(gained)
+
+	# ⑥ 退场：牌与结算台同时淡出，交给 _rebuild_hand_views 收尾
+	var out_tw := create_tween()
+	out_tw.set_parallel(true)
+	out_tw.tween_property(_fx_panel, "modulate:a", 0.0, 0.14)
+	out_tw.tween_property(_fx_back, "modulate:a", 0.0, 0.14)
+	for v in views:
+		out_tw.tween_property(v, "modulate:a", 0.0, 0.12)
+		out_tw.tween_property(v, "scale", Vector2(0.94, 0.94), 0.14)
+	await get_tree().create_timer(0.14).timeout
+	_fx_panel.visible = false
+	_fx_panel.modulate.a = 1.0
+	_fx_back.visible = false
+	_fx_back.modulate.a = 1.0
+	_fx_total.modulate = UiKit.WHITE
+	for v in views:
+		v.modulate.a = 1.0
+
+
+## 把标签上的数字从 from 滚到 to（fmt 决定显示格式）
+func _count_to(lbl: Label, from: int, to: int, fmt: Callable, dur: float) -> void:
+	var tw := create_tween()
+	tw.tween_method(func(v: float) -> void: lbl.text = str(fmt.call(int(v))),
+			float(from), float(to), dur)
+	await tw.finished
+
+
+## 结算台的小字：红牌/黑牌各贡献了多少 + 实际计分几张
+func _fx_note_text(res: Dictionary) -> String:
+	var parts: Array[String] = []
+	var rc := int(res.get("red_count", 0))
+	var bc := int(res.get("black_count", 0))
+	if rc > 0:
+		parts.append("红 ×%d → 倍率 +%d" % [rc, rc * PokerHand.RED_MULT])
+	if bc > 0:
+		parts.append("黑 ×%d → 筹码 +%d" % [bc, bc * PokerHand.BLACK_CHIPS])
+	parts.append("计分 %d 张" % int(res.get("scoring_count", 0)))
+	return " ｜ ".join(parts)
+
+
+## 整屏闪光（硬边、不做模糊）
+func _flash(color: Color, dur: float) -> void:
+	if _fx_flash == null:
+		return
+	_fx_flash.color = Color(color.r, color.g, color.b, 0.30)
+	var tw := create_tween()
+	tw.tween_property(_fx_flash, "color:a", 0.0, maxf(0.10, dur))
+
+
+## 屏抖：抖的是卡层，HUD 与数字保持可读
+func _shake(amp: float, dur: float) -> void:
+	if _card_layer == null:
+		return
+	var steps := 5
+	var tw := create_tween()
+	for i in steps:
+		var k := 1.0 - float(i) / float(steps)
+		var off := Vector2(randf_range(-amp, amp), randf_range(-amp, amp)) * k
+		tw.tween_callback(func() -> void: _card_layer.position = off).set_delay(dur / float(steps))
+	tw.tween_callback(func() -> void: _card_layer.position = Vector2.ZERO)
+
+
+## 弹性放大一下（数字命中时的"砸"感）
+func _punch(ctrl: Control, to_scale: float, dur: float) -> void:
+	if ctrl == null:
+		return
+	ctrl.pivot_offset = ctrl.size * 0.5
+	ctrl.scale = Vector2(to_scale, to_scale)
+	var tw := create_tween()
+	tw.tween_property(ctrl, "scale", Vector2.ONE, dur) \
+		.set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
+
+
+## 得分数字从结算台飞进右上角的「本关得分」
+func _fly_number(total: int) -> void:
+	if _fx_fly == null or _score_value == null or _fx_total == null:
+		return
+	_fx_fly.text = "+%d" % total
+	_fx_fly.visible = true
+	_fx_fly.modulate.a = 1.0
+	_fx_fly.scale = Vector2.ONE
+	_fx_fly.position = _fx_total.global_position + Vector2(0, 6)
+	var target := _score_value.global_position
+	var tw := create_tween()
+	tw.set_parallel(true)
+	tw.tween_property(_fx_fly, "position", target, 0.36) \
+		.set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_IN)
+	tw.tween_property(_fx_fly, "scale", Vector2(0.5, 0.5), 0.36)
+	tw.tween_property(_fx_fly, "modulate:a", 0.0, 0.18).set_delay(0.18)
+	tw.chain().tween_callback(func() -> void:
+		_fx_fly.visible = false
+		_fx_fly.modulate.a = 1.0)
+
+
+# ─────────────────────────────────────────────────────────
 #  运行与结算
 # ─────────────────────────────────────────────────────────
 func _on_run_pressed() -> void:
@@ -711,9 +967,13 @@ func _on_run_pressed() -> void:
 
 	var res := PokerHand.score(_played_cards_now(), _ctx(false))
 	var gained := int(res["score"])
-	run.score += gained
 
 	_print_run_result(res, gained)
+	# 先把这一手"砸"出来，再落账（牌此时还在 _played 里，视图有效）
+	if _fx_enabled:
+		await _play_fx(res, gained)
+
+	run.score += gained
 	_animate_score(gained)
 
 	run.play_poker_hand(_played)

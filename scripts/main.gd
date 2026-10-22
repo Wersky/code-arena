@@ -161,7 +161,8 @@ func _maybe_capture() -> void:
 	if out_path.is_empty():
 		return
 	if screen in ["menu", "arena", "reward", "result", "flow", "flip", "slot", "hover",
-			"typing", "typebreak", "runresult", "memeverify", "aiselect", "poker", "slot"]:
+			"typing", "typebreak", "runresult", "memeverify", "aiselect", "poker", "slot",
+			"fx", "fxfly"]:
 		run.reset_run()
 		if screen == "memeverify":
 			await _verify_meme()
@@ -261,6 +262,28 @@ func _maybe_capture() -> void:
 				arena.debug_run()
 				await get_tree().create_timer(1.2).timeout
 				print("[shot=runresult] 控制台日志：\n%s" % arena.debug_console_log())
+		elif screen == "fxfly":
+			# 出牌特效第二帧：得分数字飞向右上角 HUD
+			_show_level(_levels[0])
+			await get_tree().process_frame
+			var arena_fly := _current as ArenaScreen
+			if arena_fly != null:
+				for i in 4:
+					arena_fly.debug_place_card(i)
+				await get_tree().create_timer(0.35).timeout
+				arena_fly.debug_run()
+				await get_tree().create_timer(1.16).timeout
+		elif screen == "fx":
+			# 出牌特效目检：选 4 张 → 运行 → 停在总分炸开的瞬间
+			_show_level(_levels[0])
+			await get_tree().process_frame
+			var arena_fx := _current as ArenaScreen
+			if arena_fx != null:
+				for i in 4:
+					arena_fx.debug_place_card(i)
+				await get_tree().create_timer(0.35).timeout
+				arena_fx.debug_run()
+				await get_tree().create_timer(0.78).timeout
 		else:
 			_show_menu()
 	for _i in 6:
