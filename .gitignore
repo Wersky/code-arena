@@ -1,0 +1,16 @@
+# Godot 缓存（体积大、可重建）
+.godot/
+*.translation
+
+# 临时目录
+.tmp/
+.tmp-t2/
+*.tmp
+
+# 协作工具的本地状态
+.swarmbridge/
+
+# 系统垃圾
+Thumbs.db
+desktop.ini
+.DS_Store

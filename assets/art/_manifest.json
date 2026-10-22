@@ -1,0 +1,140 @@
+[
+  {
+    "name": "card-task",
+    "status": "OK",
+    "seconds": 27.6,
+    "info": "transparent 437154"
+  },
+  {
+    "name": "card-persona",
+    "status": "OK",
+    "seconds": 29.3,
+    "info": "transparent 586530"
+  },
+  {
+    "name": "card-example",
+    "status": "OK",
+    "seconds": 30.0,
+    "info": "transparent 402124"
+  },
+  {
+    "name": "card-knowledge",
+    "status": "OK",
+    "seconds": 35.2,
+    "info": "transparent 624474"
+  },
+  {
+    "name": "card-format",
+    "status": "OK",
+    "seconds": 50.4,
+    "info": "transparent 397665"
+  },
+  {
+    "name": "card-constraint",
+    "status": "OK",
+    "seconds": 52.3,
+    "info": "transparent 725246"
+  },
+  {
+    "name": "item-gemigo",
+    "status": "OK",
+    "seconds": 39.8,
+    "info": "opaque 1692045"
+  },
+  {
+    "name": "item-grock",
+    "status": "OK",
+    "seconds": 41.9,
+    "info": "opaque 1705852"
+  },
+  {
+    "name": "item-kimo",
+    "status": "OK",
+    "seconds": 40.0,
+    "info": "opaque 2154695"
+  },
+  {
+    "name": "item-kweno",
+    "status": "OK",
+    "seconds": 31.7,
+    "info": "opaque 1688631"
+  },
+  {
+    "name": "item-mistryl",
+    "status": "OK",
+    "seconds": 32.4,
+    "info": "opaque 1674343"
+  },
+  {
+    "name": "item-deepdeek",
+    "status": "OK",
+    "seconds": 39.3,
+    "info": "opaque 1786109"
+  },
+  {
+    "name": "item-sorana",
+    "status": "OK",
+    "seconds": 37.4,
+    "info": "opaque 1610761"
+  },
+  {
+    "name": "hero-reviewer",
+    "status": "OK",
+    "seconds": 33.2,
+    "info": "opaque 1634783"
+  },
+  {
+    "name": "item-chatppt",
+    "status": "OK",
+    "seconds": 93.2,
+    "info": "opaque 1620013"
+  },
+  {
+    "name": "bg-arena",
+    "status": "OK",
+    "seconds": 30.7,
+    "info": "opaque 1787659"
+  },
+  {
+    "name": "bg-map",
+    "status": "OK",
+    "seconds": 34.1,
+    "info": "opaque 1309097"
+  },
+  {
+    "name": "tech-rlhf",
+    "status": "OK",
+    "seconds": 32.0,
+    "info": "transparent 430823"
+  },
+  {
+    "name": "tech-dpo",
+    "status": "OK",
+    "seconds": 29.6,
+    "info": "transparent 296430"
+  },
+  {
+    "name": "item-glmio",
+    "status": "OK",
+    "seconds": 103.2,
+    "info": "opaque 1773844"
+  },
+  {
+    "name": "tech-sft",
+    "status": "OK",
+    "seconds": 33.6,
+    "info": "transparent 510687"
+  },
+  {
+    "name": "tech-distill",
+    "status": "OK",
+    "seconds": 33.7,
+    "info": "transparent 369632"
+  },
+  {
+    "name": "tech-prompteng",
+    "status": "OK",
+    "seconds": 28.1,
+    "info": "transparent 390037"
+  }
+]
