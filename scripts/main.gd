@@ -163,11 +163,15 @@ func _maybe_capture() -> void:
 		return
 	if screen in ["menu", "arena", "reward", "result", "flow", "flip", "slot", "hover",
 			"typing", "typebreak", "runresult", "memeverify", "aiselect", "poker", "slot",
-			"fx", "fxfly", "menuhover", "rig"]:
+			"fx", "fxfly", "menuhover", "rig", "rigwalk"]:
 		run.reset_run()
 		if screen == "rig":
 			# 目检：Q 版角色 walk 的第 0/1/2/3 帧 → 2×2 拼图
 			await _capture_rig(out_path)
+			return
+		if screen == "rigwalk":
+			# 动图：真实播放 walk，24fps 采样 → .tmp/riggif/ 48 张 PNG（ffmpeg 拼 GIF 用）
+			await _capture_rig_walk(out_path)
 			return
 		if screen == "memeverify":
 			await _verify_meme()
@@ -506,6 +510,53 @@ func _leg_montage(cells: Array, canvas_rect: Rect2i, zoom: int) -> Image:
 			if line_y + 1 < out.get_height():
 				out.set_pixel(x, line_y + 1, RIG_GROUND.darkened(0.55))
 	return out
+
+
+## ── walk 动图抓帧 ────────────────────────────────────────────
+## --shot=rigwalk：真实播放 walk，24fps 采样（walk 8fps × 每帧 3 个亚帧，含插值姿态），
+## 抓 2 个循环 = 48 张 PNG 到 res://.tmp/riggif/，交给 ffmpeg 拼成 GIF。
+## 姿态走 debug_seek_walk(帧号/3.0) 逐拍定格——和真实播放逐帧等价，但不会漏采样。
+func _capture_rig_walk(out_path: String) -> void:
+	var host := Control.new()
+	host.set_anchors_preset(Control.PRESET_FULL_RECT)
+	_swap(host)
+
+	var bg := ColorRect.new()
+	bg.color = RIG_BG
+	bg.set_anchors_preset(Control.PRESET_FULL_RECT)
+	host.add_child(bg)
+
+	var rig: ChibiRig = ChibiRigScene.new()
+	rig.scale = Vector2(2, 2)
+	# 2x 画布 384×512，窗口 720 高：top=60 → 脚底 572，影子（到画布 y≈260）不裁
+	rig.position = Vector2(200, 60)
+	host.add_child(rig)
+	rig.setup(RIG_DIR)
+	rig.play("walk")
+
+	# 地线垫在角色后面（树序：bg → ground → rig），脚踩在线上看得更清
+	var ground_y := int(rig.position.y) + RIG_CANVAS.y * 2
+	var ground := ColorRect.new()
+	ground.color = RIG_GROUND
+	ground.position = Vector2(0, ground_y)
+	ground.size = Vector2(4096, 2)
+	ground.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	host.add_child(ground)
+	host.move_child(ground, 1)
+
+	var out_dir := "res://.tmp/riggif"
+	DirAccess.make_dir_recursive_absolute(out_dir)
+	var fps := 24
+	var frames := fps * 2   # 2 个循环
+	for i in frames:
+		rig.debug_seek_walk(float(i) * ChibiRigScene.WALK_FPS / float(fps))
+		for _k in 3:
+			await get_tree().process_frame
+		var crop := Rect2i(Vector2i(rig.position) - Vector2i(20, 16),
+				Vector2i(RIG_CANVAS.x * 2 + 40, RIG_CANVAS.y * 2 + 64))
+		_crop(_grab_viewport(), crop).save_png("%s/w%03d.png" % [out_dir, i])
+	print("[shot=rigwalk] %d 张已保存：%s（fps=%d，时长 %.2f 秒）→ 用 ffmpeg 拼 GIF" % [
+		frames, out_dir, fps, float(frames) / fps])
 
 
 ## 一格在视口里的裁剪矩形：左 pad、上帧号条、右 pad、下 pad。
