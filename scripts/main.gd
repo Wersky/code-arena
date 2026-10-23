@@ -573,8 +573,11 @@ const LOADRUN_FPS := 24
 const LOADRUN_SECS := 4.0
 const LOADRUN_RIG := "res://assets/art/rig/deepdeek-side"       ## 侧面切件（面朝右）
 const LOADRUN_FRONT := "res://assets/art/rig/deepdeek-front/front.png"   ## 正面精灵（备用：平面 twirl 不再用，留给以后多视角方案）
-## 跳舞转圈窗口（进度区间）：经过时做一次 360°，期间条继续走（边走边跳）
-const DANCE_WINDOWS := [Vector2(0.28, 0.46), Vector2(0.62, 0.80)]
+## 跳舞转圈窗口（进度区间）：经过时边前进边自转一圈，期间条继续走
+const DANCE_WINDOWS := [Vector2(0.26, 0.48), Vector2(0.60, 0.82)]
+## 8 视角旋转序列（turnaround sheet 切片；s0=正面 … s4=背面 … 顺时针 45°/帧）
+const SPIN_DIR := "res://assets/art/rig/deepdeek-spin"
+const SPIN_FRAMES := 8
 ## LoadBar 内槽的显示坐标（SLOT 常量 ×2 + bar 位置）
 const LOADRUN_SLOT := Rect2(40, 26, 640, 28)     ## 相对 bar 左上角的内槽矩形
 
@@ -616,6 +619,20 @@ func _capture_loadrun(out_path: String) -> void:
 	dancer.add_child(rig)
 	var rig_shadow := rig.get_node_or_null("Root/Shadow") as CanvasItem
 
+	# 自转序列帧精灵（8 视角；只在跳舞窗口显示，替掉 rig）
+	var spin_frames: Array[Texture2D] = []
+	for k in SPIN_FRAMES:
+		spin_frames.append(load("%s/s%d.png" % [SPIN_DIR, k]) as Texture2D)
+	var spin := Sprite2D.new()
+	spin.name = "Spin"
+	spin.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
+	# 帧画布 192x256、脚底在 y=248 → 节点原点 = 脚底中心
+	spin.centered = false
+	spin.offset = Vector2(-96, -248)
+	spin.scale = Vector2.ONE * LOADRUN_SCALE
+	spin.visible = false
+	host.add_child(spin)
+
 	var out_dir := "res://.tmp/loadrun"
 	DirAccess.make_dir_recursive_absolute(out_dir)
 	var frames := int(LOADRUN_FPS * LOADRUN_SECS)
@@ -625,31 +642,29 @@ func _capture_loadrun(out_path: String) -> void:
 		bar.set_value(v)
 		var edge := LOADRUN_BAR.position.x + LOADRUN_SLOT.position.x + LOADRUN_SLOT.size.x * v
 
-		# ── 跳舞：2D 平面内整体旋转（twirl 后空翻式），不做任何视角切换 ──
-		#   绕腰轴转 TAU（ease 平滑两端），中段腾空跳起 + 影子淡出，
-		#   姿势定格在 run 的腾空帧（腿收拢）——转起来是「翻跟头舞步」。
-		var twirl := 0.0
-		var hop := 0.0
-		var pulse := 1.0
-		var frozen := -1.0
+		# ── 跳舞：8 视角序列帧自转（竖轴旋转，身体始终直立），边前进边转 ──
+		#   进度进入窗口 → 用角度帧轮播一整圈（s0 正 → s2 侧 → s4 背 → s6 侧 → 回s0）；
+		#   期间进度条不停（边走边转），落地带轻微上下弹。
+		var in_dance := false
+		var dance_p := 0.0
 		for w: Vector2 in DANCE_WINDOWS:
-			if v < w.x or v > w.y:
-				continue
-			var p := (v - w.x) / (w.y - w.x)
-			twirl = ease(p, -2.2) * TAU
-			hop = -sin(p * PI) * 22.0
-			pulse = 1.0 + 0.08 * sin(p * PI)
-			frozen = 1.0     ## 定格腾空姿势（腿收拢、臂摆中位）
-
-		dancer.position = Vector2(edge,
-				LOADRUN_BAR.position.y - 126.0 * LOADRUN_SCALE * pulse + hop)
-		dancer.rotation = twirl
-		dancer.scale = Vector2.ONE * (LOADRUN_SCALE * pulse)
-		if rig_shadow != null:
-			rig_shadow.visible = frozen < 0.0     ## 腾空旋转时影子淡出
-		if frozen >= 0.0:
-			rig.debug_seek("run", frozen)
+			if v >= w.x and v <= w.y:
+				in_dance = true
+				dance_p = (v - w.x) / (w.y - w.x)
+		if in_dance:
+			rig.visible = false
+			spin.visible = true
+			spin.texture = spin_frames[mini(int(dance_p * SPIN_FRAMES), SPIN_FRAMES - 1)]
+			var hop := -absf(sin(dance_p * PI * 4.0)) * 6.0     ## 转圈时的小弹跳
+			spin.position = Vector2(edge, LOADRUN_BAR.position.y + hop)
 		else:
+			rig.visible = true
+			spin.visible = false
+			dancer.position = Vector2(edge, LOADRUN_BAR.position.y - 126.0 * LOADRUN_SCALE)
+			dancer.rotation = 0.0
+			dancer.scale = Vector2.ONE * LOADRUN_SCALE
+			if rig_shadow != null:
+				rig_shadow.visible = true
 			rig.debug_seek("run", t * LOADRUN_SECS * ChibiRig.RUN_FPS)
 		for _k in 3:
 			await get_tree().process_frame
