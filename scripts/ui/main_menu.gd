@@ -1,14 +1,22 @@
 extends Control
 class_name MainMenuScreen
-## 主菜单（2026-10-22 重做）：**大标题居中靠上 + 按钮居中靠下**，走"正式游戏标题画面"的路子。
+## 主菜单（2026-10-23 重做 v2）：商业游戏标题画面的构图。
 ##
 ## 版面（1600×900 基准，全部按 size 摆，换分辨率不散）：
-##   小字副题 → 大标题牌（中文大字 + 英文 + 金饰线）→ 内容信息一行
-##   中间留白给背景与立绘
-##   [ ▶ 开始游戏 ]（大按钮，悬停有扫光/箭头/角标）
-##   [    退出    ]
-##   操作提示一行
-##   左下版本号 / 右下版权 / 右下角评审官立绘
+##
+##        ┌──────── 牌匾（生图金框 + 像素大字）────────┐   ← 压在主面板上沿
+##     ┌──┴────────────────────────────────────────────┴──┐
+##     │  一句副题                                        │
+##     │  [图标] 52 张牌   [图标] 10 关   ...             │   ← 生图图标 + 说明
+##     │  ───────────── 金分隔线 ─────────────            │
+##     │        ┌──── 开始游戏（生图底板 ×2）────┐        │
+##     │                  退出游戏                        │
+##     └──────────────────────────────────────────────────┘
+##   v0.9 …                                        © 2026 …
+##
+## 尺寸纪律（主人原话："不要太小，不然背景显得太大"）：
+##   面板宽 ≥ 屏宽 65%，牌匾宽 ≥ 面板宽 75%，主按钮宽 ≥ 面板宽 55%。
+##   所有生图资产按整数倍放大（×2），非整数会把像素格拉得一宽一窄。
 ##
 ## 外部只依赖两个信号：`start_run` / `quit_game`（main.gd 里接的）。
 
@@ -18,12 +26,20 @@ signal quit_game
 ## 环境动效层（漂浮尘埃 + 扫描线 + 视差）
 var _bg_fx: BgFx = null
 
-var _title_block: VBoxContainer = null
-var _btn_block: VBoxContainer = null
-var _hero: TextureRect = null
+var _shadow: NinePatchRect = null
+var _panel: NinePatchRect = null
+var _plaque: TitlePlate = null
+var _kicker: PromptLine = null
+var _feat_row: HBoxContainer = null
+var _divider: TextureRect = null
 var _start_btn: JuiceButton = null
+var _quit_btn: JuiceButton = null
+var _hint: Label = null
 var _foot_left: Label = null
 var _foot_right: Label = null
+
+## 版面尺寸（在 _layout 里算，_build 时先用默认值也能正常显示）
+var _rect_panel := Rect2(280, 300, 1040, 520)
 
 
 func _init() -> void:
@@ -32,9 +48,9 @@ func _init() -> void:
 
 func _ready() -> void:
 	_build_bg()
-	_build_hero()
-	_build_title_block()
-	_build_button_block()
+	_build_panel()
+	_build_plaque()
+	_build_content()
 	_build_footer()
 
 	# CRT 扫描线盖全屏，压在最上面但鼠标透传
@@ -60,7 +76,7 @@ func _build_bg() -> void:
 	add_child(bg)
 
 	var veil := ColorRect.new()
-	veil.color = Color(0.043, 0.055, 0.086, 0.72)
+	veil.color = Color(0.043, 0.055, 0.086, 0.66)
 	veil.set_anchors_preset(Control.PRESET_FULL_RECT)
 	veil.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	add_child(veil)
@@ -72,72 +88,101 @@ func _build_bg() -> void:
 	_bg_fx.setup(size)
 
 
-## 右下角评审官立绘（径向渐隐版，边缘融进背景）
-func _build_hero() -> void:
-	_hero = Art.make_avatar("hero-reviewer-blend", Vector2(660, 660))
-	_hero.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
-	_hero.size = Vector2(660, 660)
-	_hero.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	_hero.modulate = Color(1, 1, 1, 0.92)
-	add_child(_hero)
+# ── 面板 ──────────────────────────────────────────────
+func _build_panel() -> void:
+	# 阴影：把同一张九宫格调成黑色当剪影，比矩形阴影更贴合异形边角
+	_shadow = UiArt.panel(_rect_panel.size)
+	if _shadow != null:
+		_shadow.self_modulate = Color(0, 0, 0, 0.55)
+		add_child(_shadow)
+
+	_panel = UiArt.panel(_rect_panel.size)
+	if _panel != null:
+		add_child(_panel)
 
 
-# ── 标题 ──────────────────────────────────────────────
-func _build_title_block() -> void:
-	_title_block = VBoxContainer.new()
-	_title_block.name = "TitleBlock"
-	_title_block.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	_title_block.add_theme_constant_override("separation", 2)
-	add_child(_title_block)
-
-	var kicker := UiKit.dim("AI 娘 · 德州扑克 · 肉鸽构筑", UiKit.FS_XS)
-	kicker.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	kicker.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
-	_title_block.add_child(kicker)
-
-	var plate := TitlePlate.new()
-	plate.name = "TitlePlate"
-	plate.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
-	_title_block.add_child(plate)
-
-	var stats := UiKit.dim("10 关 ｜ 4 位 AI 娘 ｜ 52 张牌面", UiKit.FS_XS)
-	stats.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	stats.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
-	_title_block.add_child(stats)
+# ── 牌匾 ──────────────────────────────────────────────
+func _build_plaque() -> void:
+	_plaque = TitlePlate.new()
+	_plaque.name = "TitlePlate"
+	_plaque.plate = UiArt.NAME_PLAQUE if UiArt.has("plaque") else ""
+	_plaque.cn_size = 88
+	_plaque.en_size = 30
+	_plaque.custom_minimum_size = Vector2(808, 294)
+	_plaque.size = Vector2(808, 294)
+	add_child(_plaque)
 
 
-# ── 按钮 ──────────────────────────────────────────────
-func _build_button_block() -> void:
-	_btn_block = VBoxContainer.new()
-	_btn_block.name = "ButtonBlock"
-	_btn_block.add_theme_constant_override("separation", 10)
-	add_child(_btn_block)
+# ── 面板内容 ──────────────────────────────────────────
+func _build_content() -> void:
+	# 一条"提示词输入行"：> 正文 ▮ ← 这是全屏最"AI"的细节，别删
+	_kicker = PromptLine.new()
+	_kicker.name = "PromptLine"
+	_kicker.text = "选一位 AI 娘，把牌凑成德州牌型打出去"
+	_kicker.font_size = 22
+	_kicker.prefix_color = UiArt.NEON
+	_kicker.text_color = Color(0.66, 0.74, 0.86)
+	_kicker.caret_color = UiArt.NEON
+	add_child(_kicker)
+
+	_feat_row = HBoxContainer.new()
+	_feat_row.add_theme_constant_override("separation", 56)
+	_feat_row.alignment = BoxContainer.ALIGNMENT_CENTER
+	add_child(_feat_row)
+	for item in [["tokens", "52 张牌"], ["server", "10 关爬塔"],
+			["reticle", "目标分"], ["chip", "4 位 AI 娘"]]:
+		_feat_row.add_child(_feature(item[0], item[1]))
+
 
 	_start_btn = JuiceButton.new()
 	_start_btn.name = "StartButton"
 	_start_btn.text = "开始游戏"
 	_start_btn.primary = true
-	_start_btn.accent = UiKit.GOLD
-	_start_btn.font_size = 36
-	_start_btn.custom_minimum_size = Vector2(520, 78)
-	_start_btn.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+	_start_btn.accent = UiArt.NEON
+	_start_btn.font_size = 56
+	_start_btn.plate = UiArt.NAME_BTN if UiArt.has("btn") else ""
+	var bs := UiArt.display_size("btn")
+	_start_btn.custom_minimum_size = bs
+	_start_btn.size = bs
 	_start_btn.pressed.connect(func() -> void: start_run.emit())
-	_btn_block.add_child(_start_btn)
+	add_child(_start_btn)
 
-	var quit_btn := JuiceButton.new()
-	quit_btn.name = "QuitButton"
-	quit_btn.text = "退出"
-	quit_btn.accent = UiKit.ACCENT
-	quit_btn.font_size = 24
-	quit_btn.custom_minimum_size = Vector2(380, 54)
-	quit_btn.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
-	quit_btn.pressed.connect(func() -> void: quit_game.emit())
-	_btn_block.add_child(quit_btn)
+	_quit_btn = JuiceButton.new()
+	_quit_btn.name = "QuitButton"
+	_quit_btn.text = "退出游戏"
+	_quit_btn.bare = true
+	_quit_btn.font_size = 24
+	_quit_btn.custom_minimum_size = Vector2(360, 44)
+	_quit_btn.size = Vector2(360, 44)
+	_quit_btn.pressed.connect(func() -> void: quit_game.emit())
+	add_child(_quit_btn)
 
-	var hint := UiKit.dim("纯鼠标操作：点手牌选牌 → 点「运行」出牌", UiKit.FS_XS)
-	hint.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	hint.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
-	_btn_block.add_child(hint)
+	# 面板底部一行操作提示（不抢戏，但新手看得见）
+	_hint = UiKit.dim("纯鼠标操作 ｜ 点手牌选牌 → 点「运行」出牌", 15, Color(0.45, 0.55, 0.68))
+	_hint.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	add_child(_hint)
+
+
+## 一个「图标 + 说明」的小单元
+func _feature(icon_name: String, caption: String) -> Control:
+	var col := VBoxContainer.new()
+	col.add_theme_constant_override("separation", 2)
+	col.alignment = BoxContainer.ALIGNMENT_CENTER
+
+	var ic := UiArt.icon(icon_name, 88.0)
+	if ic != null:
+		ic.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+		col.add_child(ic)
+	else:
+		var ph := Control.new()
+		ph.custom_minimum_size = Vector2(88, 88)
+		col.add_child(ph)
+
+	var lb := UiKit.dim(caption, 16, UiKit.TEXT_DIM)
+	lb.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	lb.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+	col.add_child(lb)
+	return col
 
 
 # ── 页脚 ──────────────────────────────────────────────
@@ -171,20 +216,60 @@ func _layout() -> void:
 	if s.x < 1.0 or s.y < 1.0:
 		return
 
-	var tw := 960.0
-	_title_block.position = Vector2(s.x * 0.5 - tw * 0.5, 44.0)
-	_title_block.size = Vector2(tw, 300.0)
+	# 面板：宽度吃掉屏宽的 65%，高度按 2:1 走
+	var pw := roundf(minf(1040.0, s.x * 0.65))
+	var ph := roundf(minf(520.0, s.y * 0.58))
+	var px := roundf((s.x - pw) * 0.5)
+	var py := roundf(s.y * 0.335)
+	_rect_panel = Rect2(px, py, pw, ph)
 
-	var bw := 560.0
-	_btn_block.position = Vector2(s.x * 0.5 - bw * 0.5, s.y - 336.0)
-	_btn_block.size = Vector2(bw, 240.0)
+	if _panel != null:
+		_panel.position = _rect_panel.position
+		_panel.size = _rect_panel.size
+	if _shadow != null:
+		_shadow.position = _rect_panel.position + Vector2(10, 14)
+		_shadow.size = _rect_panel.size
 
-	# 立绘靠右下，尽量不压住中间的按钮列
-	_hero.position = Vector2(s.x - 700.0, s.y - 690.0)
+	# 牌匾：用资产的整数倍尺寸（非整数会拉出粗细不一的像素格），压在面板上沿
+	var plaque_sz := UiArt.display_size("plaque")
+	var plaque_w := plaque_sz.x
+	var plaque_h := plaque_sz.y
+	if _plaque != null:
+		# 必须同时改 custom_minimum_size：Control 的 size 会被它顶住，不改就一直是旧尺寸
+		_plaque.custom_minimum_size = Vector2(plaque_w, plaque_h)
+		_plaque.size = Vector2(plaque_w, plaque_h)
+		_plaque.position = Vector2(roundf((s.x - plaque_w) * 0.5),
+				roundf(py - plaque_h + 22.0))
+		# 牌匾大字随牌匾一起缩放（保证字始终撑满内腔）
+		_plaque.cn_size = int(roundf(plaque_w * 0.115))
+		_plaque.en_size = int(roundf(plaque_w * 0.042))
 
-	_foot_left.position = Vector2(28.0, s.y - 30.0)
+	# 面板内腔的纵向节拍（相对面板顶 py；面板 520 高）
+	var cx := roundf(s.x * 0.5)
+	if _kicker != null:
+		_kicker.position = Vector2(px, py + 46.0)
+		_kicker.size = Vector2(pw, 32)
+
+	var feat_w := 760.0
+	if _feat_row != null:
+		_feat_row.position = Vector2(roundf(cx - feat_w * 0.5), py + 82.0)
+		_feat_row.size = Vector2(feat_w, 124)
+
+	if _start_btn != null:
+		var bs := UiArt.display_size("btn")
+		_start_btn.position = Vector2(roundf(cx - bs.x * 0.5), py + 220.0)
+		_start_btn.size = bs
+
+	if _quit_btn != null:
+		_quit_btn.position = Vector2(roundf(cx - 180.0), py + 404.0)
+
+	if _hint != null:
+		_hint.position = Vector2(px, py + 464.0)
+		_hint.size = Vector2(pw, 22)
+
+	_foot_left.position = Vector2(px, s.y - 34.0)
 	_foot_left.size = Vector2(320, 20)
-	_foot_right.position = Vector2(s.x - 348.0, s.y - 30.0)
+	_foot_right.position = Vector2(px + pw - 320.0, s.y - 34.0)
 	_foot_right.size = Vector2(320, 20)
 
 	if _bg_fx:

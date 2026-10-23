@@ -15,14 +15,20 @@ static var _theme: Theme = null
 static func font() -> FontFile:
 	if _font != null:
 		return _font
-	if not FileAccess.file_exists(FONT_PATH):
+	# 注意：导出包里 .ttf 源文件被重映射成 .godot/imported/*.fontdata，
+	# `FileAccess.file_exists("res://....ttf")` 会判 false（编辑器内却是 true），
+	# 所以这里只能用 ResourceLoader 判断 + load()。踩坑 46。
+	if not ResourceLoader.exists(FONT_PATH):
 		push_warning("像素字体缺失，回退默认字体：%s" % FONT_PATH)
 		return null
-	var f := FontFile.new()
-	var err := f.load_dynamic_font(FONT_PATH)
-	if err != OK:
-		push_warning("像素字体加载失败（%d），回退默认字体" % err)
+	var base := load(FONT_PATH) as FontFile
+	if base == null:
+		push_warning("像素字体加载失败，回退默认字体：%s" % FONT_PATH)
 		return null
+	# 复制一份再改属性，避免污染 ResourceLoader 缓存里的共享实例
+	var f: FontFile = base.duplicate() as FontFile
+	if f == null:
+		f = base
 	# 像素风三件套：不抗锯齿、不 hinting、不做子像素定位
 	f.antialiasing = TextServer.FONT_ANTIALIASING_NONE
 	f.hinting = TextServer.HINTING_NONE
