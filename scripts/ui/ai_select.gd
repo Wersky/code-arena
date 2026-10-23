@@ -20,10 +20,14 @@ const BOX_H := 226.0
 const BOX_GAP := 24.0        ## = UiKit.SP_5
 const TITLE_GAP := 40.0      ## 标题与整排之间的空隙
 const ROW_LIFT := 40.0       ## 整排相对垂直中心的让位
+## ChibiRig 显示尺寸：画布 192×256 × 0.5（= 原始 48×64 美术的 ×2 整数放大）
+const _RIG_VIS_W := 96.0
+const _RIG_VIS_H := 128.0
 
 var _ais: Array[AiData] = []
 var _frames: Array[PanelContainer] = []
 var _styles: Array[StyleBoxFlat] = []
+var _rigs := {}              ## index -> ChibiRig（有切件骨架的角色用活立绘，其余静态图）
 var _row: HBoxContainer = null
 var _title: Label = null
 var _hint: Label = null
@@ -184,7 +188,7 @@ func _build_box(index: int) -> Control:
 	holder.size = Vector2(BOX_W - 24, 142)
 	holder.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	content.add_child(holder)
-	_fill_portrait(holder, ai)
+	_fill_portrait(holder, ai, index)
 
 	# 家族 + 被动（被动是选人的唯一依据，必须看得见）
 	var passive := PokerHand.ai_passive_text(ai.id)
@@ -230,7 +234,24 @@ func _build_box(index: int) -> Control:
 
 
 ## 形象位填充：已解锁 = 自己的形象（缺图降级占位框）；未解锁 = ai-locked.png 剪影
-func _fill_portrait(holder: Control, ai: AiData) -> void:
+## 有切件骨架（assets/art/rig/<id>/rig.json + parts/）的角色用 ChibiRig 播活立绘
+## （idle 呼吸，悬停 shake），没有的退回静态立绘——按角色天然降级，绝不报错。
+func _fill_portrait(holder: Control, ai: AiData, index: int = -1) -> void:
+	var rig_dir := "res://assets/art/rig/%s" % ai.id
+	if not ai.locked and index >= 0 \
+			and FileAccess.file_exists(rig_dir.path_join("rig.json")):
+		var rig := ChibiRig.new()
+		rig.name = "ChibiRig"
+		rig.setup(rig_dir)
+		# rig 画布 192×256，按 0.5 显示 = 原始 48×64 美术的 ×2 整数放大（资产规矩）。
+		# 96×128 在 126×142 的形象位里居中。
+		rig.scale = Vector2(0.5, 0.5)
+		rig.position = Vector2((holder.size.x - _RIG_VIS_W) * 0.5,
+				(holder.size.y - _RIG_VIS_H) * 0.5)
+		holder.add_child(rig)
+		_rigs[index] = rig
+		return
+
 	var path := ""
 	if ai.locked:
 		path = AiPool.locked_silhouette()
@@ -331,6 +352,10 @@ func _on_box_hover(index: int) -> void:
 	var tint: Color = ai.tint_color if ai != null else UiKit.ACCENT
 	_set_border(index, tint)
 	_tween_scale(frame, 1.04)
+	# 有活立绘的角色：悬停时摇一次头（一次性动作，播完自动回 idle）
+	var rig: ChibiRig = _rigs.get(index)
+	if rig != null and is_instance_valid(rig):
+		rig.play("shake")
 
 
 func _on_box_unhover(index: int) -> void:
