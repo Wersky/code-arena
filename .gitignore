@@ -14,3 +14,6 @@
 Thumbs.db
 desktop.ini
 .DS_Store
+
+# 导出的游戏本体（105 MB，别进仓库）
+dist/
