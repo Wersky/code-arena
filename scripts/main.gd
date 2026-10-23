@@ -571,7 +571,10 @@ const LOADRUN_BAR := Rect2(280, 590, 720, 80)   ## 进度条位置与尺寸（72
 const LOADRUN_SCALE := 0.6                       ## 角色显示缩放（0.6 = 115×154）
 const LOADRUN_FPS := 24
 const LOADRUN_SECS := 4.0
-const LOADRUN_RIG := "res://assets/art/rig/deepdeek-side"   ## 侧面切件（面朝右）
+const LOADRUN_RIG := "res://assets/art/rig/deepdeek-side"       ## 侧面切件（面朝右）
+const LOADRUN_FRONT := "res://assets/art/rig/deepdeek-front/front.png"   ## 正面精灵（跳舞转身用）
+## 跳舞转圈窗口（进度区间）：经过时做一次 360°，期间条继续走（边走边跳）
+const DANCE_WINDOWS := [Vector2(0.28, 0.46), Vector2(0.62, 0.80)]
 ## LoadBar 内槽的显示坐标（SLOT 常量 ×2 + bar 位置）
 const LOADRUN_SLOT := Rect2(40, 26, 640, 28)     ## 相对 bar 左上角的内槽矩形
 
@@ -586,12 +589,12 @@ func _capture_loadrun(out_path: String) -> void:
 	bg.set_anchors_preset(Control.PRESET_FULL_RECT)
 	host.add_child(bg)
 
-	# 标题（进度条上方左侧）
+	# 标题（进度条上方，抬高避开跳舞的角色）
 	var title := Label.new()
 	title.text = "进入游戏"
 	title.add_theme_font_size_override("font_size", 22)
 	title.add_theme_color_override("font_color", Color("#9fb0d8"))
-	title.position = Vector2(LOADRUN_BAR.position.x, LOADRUN_BAR.position.y - 44)
+	title.position = Vector2(LOADRUN_BAR.position.x, LOADRUN_BAR.position.y - 116)
 	host.add_child(title)
 
 	# 生图进度条（track 框 + 引擎填充）
@@ -607,6 +610,13 @@ func _capture_loadrun(out_path: String) -> void:
 	rig.setup(LOADRUN_RIG)
 	rig.play("run")
 
+	# 正面精灵（360° 转身时朝向镜头的那一视图；暂由设定图正面充当）
+	var front := Sprite2D.new()
+	front.texture = load(LOADRUN_FRONT)
+	front.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
+	front.visible = false
+	host.add_child(front)
+
 	var out_dir := "res://.tmp/loadrun"
 	DirAccess.make_dir_recursive_absolute(out_dir)
 	var frames := int(LOADRUN_FPS * LOADRUN_SECS)
@@ -615,12 +625,59 @@ func _capture_loadrun(out_path: String) -> void:
 		var v := minf(t * 1.06, 1.0)                   ## 前 94% 走完，结尾停一小拍
 		bar.set_value(v)
 		var edge := LOADRUN_BAR.position.x + LOADRUN_SLOT.position.x + LOADRUN_SLOT.size.x * v
-		rig.position.x = edge - RIG_CANVAS.x * LOADRUN_SCALE * 0.5   ## 角色横向居中在边缘上
+		var center_y := LOADRUN_BAR.position.y - RIG_CANVAS.y * LOADRUN_SCALE * 0.5 + 1.2
+
+		# ── 跳舞转圈编排：p∈[0,1] = 一整圈（四视图账篷柱）──────────
+		#   右侧收窄 → 正面（亮·跳舞 hop/摆动）→ 左侧镜像 → 背面（暂用正面压暗）
+		#   → 快速翻回右侧；窗口结束时正好回到 scale +1，无缝接回跑步
+		var side_sx := 1.0
+		var show_front := false
+		var front_sx := 1.0
+		var front_dark := false
+		var hop := 0.0
+		var sway := 0.0
+		for w: Vector2 in DANCE_WINDOWS:
+			if v < w.x or v > w.y:
+				continue
+			var p := (v - w.x) / (w.y - w.x)
+			if p < 0.22:                     ## 右侧 → 收窄转向镜头
+				side_sx = lerpf(1.0, 0.08, p / 0.22)
+			elif p < 0.40:                   ## 正面（亮）：跳舞
+				show_front = true
+				var q := (p - 0.22) / 0.18
+				front_sx = lerpf(0.08, 1.0, minf(q * 2.5, 1.0)) if q < 0.4 \
+						else lerpf(1.0, 0.08, (q - 0.4) / 0.6)
+				hop = -absf(sin(q * PI * 3.0)) * 14.0
+				sway = sin(q * PI * 4.0) * 0.15
+			elif p < 0.62:                   ## 左侧镜像展开再收拢
+				side_sx = lerpf(-0.08, -1.0, (p - 0.40) / 0.11) if (p - 0.40) < 0.11 \
+						else lerpf(-1.0, -0.08, ((p - 0.40) - 0.11) / 0.11)
+			elif p < 0.80:                   ## 背面（压暗的正面占位，后面可出背面图）
+				show_front = true
+				front_dark = true
+				var q2 := (p - 0.62) / 0.18
+				front_sx = lerpf(0.08, 1.0, minf(q2 * 2.5, 1.0)) if q2 < 0.4 \
+						else lerpf(1.0, 0.08, (q2 - 0.4) / 0.6)
+			else:                            ## 翻回右侧（-0.08 → +1 过零即转身）
+				side_sx = lerpf(-0.08, 1.0, (p - 0.80) / 0.20)
+
+		rig.visible = not show_front
+		front.visible = show_front
+		if show_front:
+			front.scale = Vector2(LOADRUN_SCALE * front_sx, LOADRUN_SCALE)
+			front.modulate = Color(0.45, 0.5, 0.62) if front_dark else Color.WHITE
+			front.rotation = sway
+			front.position = Vector2(edge, center_y + hop)
+		else:
+			var sx := LOADRUN_SCALE * side_sx
+			rig.scale = Vector2(sx, LOADRUN_SCALE)
+			# 缩放绕「画布中心 x」而非原点：origin = center - 96*sx
+			rig.position = Vector2(edge - RIG_CANVAS.x * 0.5 * sx, LOADRUN_BAR.position.y - RIG_CANVAS.y * LOADRUN_SCALE)
 		rig.debug_seek("run", t * LOADRUN_SECS * ChibiRig.RUN_FPS)
 		for _k in 3:
 			await get_tree().process_frame
 		# 裁剪带：只留角色 + 进度条附近（GIF 体积友好）
-		var crop := Rect2i(160, int(LOADRUN_BAR.position.y) - 170, 960, 270)
+		var crop := Rect2i(160, int(LOADRUN_BAR.position.y) - 180, 960, 285)
 		_crop(_grab_viewport(), crop).save_png("%s/l%03d.png" % [out_dir, i])
 	print("[shot=loadrun] %d 张已保存：%s（fps=%d，时长 %.1f 秒）→ 用 ffmpeg 拼 GIF" % [
 		frames, out_dir, LOADRUN_FPS, LOADRUN_SECS])
