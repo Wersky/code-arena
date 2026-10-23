@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 """make_spin_frames.py — 8 视角舞蹈转面表 → 游戏用旋转序列帧。
 
-输入: D:/zcode-work/pictures/output/2026-10-23-deepdeek-spin-sheet.png
+输入: D:/zcode-work/pictures/output/2026-10-23-deepdeek-spin-sheet-v2.png
       （1248x832，一行 8 格，每格 156 宽，品红底）
 输出: assets/art/rig/deepdeek-spin/s0.png .. s7.png
       每帧 192x256 画布、统一缩放（全局取最大身高）、脚底对齐、水平居中
@@ -13,7 +13,7 @@ import os
 import numpy as np
 from PIL import Image
 
-SRC = r"D:/zcode-work/pictures/output/2026-10-23-deepdeek-spin-sheet.png"
+SRC = r"D:/zcode-work/pictures/output/2026-10-23-deepdeek-spin-sheet-v2.png"
 ROOT = r"D:/zcode-work/godot/projects/prompt-arena"
 OUT = os.path.join(ROOT, "assets", "art", "rig", "deepdeek-spin")
 CELLS = 8
