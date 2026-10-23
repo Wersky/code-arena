@@ -572,7 +572,7 @@ const LOADRUN_SCALE := 0.6                       ## 角色显示缩放（0.6 = 1
 const LOADRUN_FPS := 24
 const LOADRUN_SECS := 4.0
 const LOADRUN_RIG := "res://assets/art/rig/deepdeek-side"       ## 侧面切件（面朝右）
-const LOADRUN_FRONT := "res://assets/art/rig/deepdeek-front/front.png"   ## 正面精灵（跳舞转身用）
+const LOADRUN_FRONT := "res://assets/art/rig/deepdeek-front/front.png"   ## 正面精灵（备用：平面 twirl 不再用，留给以后多视角方案）
 ## 跳舞转圈窗口（进度区间）：经过时做一次 360°，期间条继续走（边走边跳）
 const DANCE_WINDOWS := [Vector2(0.28, 0.46), Vector2(0.62, 0.80)]
 ## LoadBar 内槽的显示坐标（SLOT 常量 ×2 + bar 位置）
@@ -602,20 +602,19 @@ func _capture_loadrun(out_path: String) -> void:
 	bar.position = LOADRUN_BAR.position
 	host.add_child(bar)
 
-	# Q 版角色：脚踩进度条顶边，x 跟着填充边缘走
+	# Q 版角色：挂在「舞者 wrapper」下，画布中心对齐 wrapper 原点，
+	# 这样旋转/缩放/位移全部绕身体中心，跑步与跳舞共用一套定位。
 	var rig: ChibiRig = ChibiRigScene.new()
-	rig.scale = Vector2(LOADRUN_SCALE, LOADRUN_SCALE)
-	rig.position = Vector2(LOADRUN_BAR.position.x, LOADRUN_BAR.position.y - RIG_CANVAS.y * LOADRUN_SCALE)
-	host.add_child(rig)
 	rig.setup(LOADRUN_RIG)
 	rig.play("run")
 
-	# 正面精灵（360° 转身时朝向镜头的那一视图；暂由设定图正面充当）
-	var front := Sprite2D.new()
-	front.texture = load(LOADRUN_FRONT)
-	front.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
-	front.visible = false
-	host.add_child(front)
+	# 舞者 wrapper：跳舞时绕「腰轴」做平面内整体旋转（twirl）。
+	var dancer := Node2D.new()
+	dancer.name = "Dancer"
+	host.add_child(dancer)
+	rig.position = Vector2(-RIG_CANVAS.x * 0.5, -RIG_CANVAS.y * 0.5)
+	dancer.add_child(rig)
+	var rig_shadow := rig.get_node_or_null("Root/Shadow") as CanvasItem
 
 	var out_dir := "res://.tmp/loadrun"
 	DirAccess.make_dir_recursive_absolute(out_dir)
@@ -625,59 +624,37 @@ func _capture_loadrun(out_path: String) -> void:
 		var v := minf(t * 1.06, 1.0)                   ## 前 94% 走完，结尾停一小拍
 		bar.set_value(v)
 		var edge := LOADRUN_BAR.position.x + LOADRUN_SLOT.position.x + LOADRUN_SLOT.size.x * v
-		var center_y := LOADRUN_BAR.position.y - RIG_CANVAS.y * LOADRUN_SCALE * 0.5 + 1.2
 
-		# ── 跳舞转圈编排：p∈[0,1] = 一整圈（四视图账篷柱）──────────
-		#   右侧收窄 → 正面（亮·跳舞 hop/摆动）→ 左侧镜像 → 背面（暂用正面压暗）
-		#   → 快速翻回右侧；窗口结束时正好回到 scale +1，无缝接回跑步
-		var side_sx := 1.0
-		var show_front := false
-		var front_sx := 1.0
-		var front_dark := false
+		# ── 跳舞：2D 平面内整体旋转（twirl 后空翻式），不做任何视角切换 ──
+		#   绕腰轴转 TAU（ease 平滑两端），中段腾空跳起 + 影子淡出，
+		#   姿势定格在 run 的腾空帧（腿收拢）——转起来是「翻跟头舞步」。
+		var twirl := 0.0
 		var hop := 0.0
-		var sway := 0.0
+		var pulse := 1.0
+		var frozen := -1.0
 		for w: Vector2 in DANCE_WINDOWS:
 			if v < w.x or v > w.y:
 				continue
 			var p := (v - w.x) / (w.y - w.x)
-			if p < 0.22:                     ## 右侧 → 收窄转向镜头
-				side_sx = lerpf(1.0, 0.08, p / 0.22)
-			elif p < 0.40:                   ## 正面（亮）：跳舞
-				show_front = true
-				var q := (p - 0.22) / 0.18
-				front_sx = lerpf(0.08, 1.0, minf(q * 2.5, 1.0)) if q < 0.4 \
-						else lerpf(1.0, 0.08, (q - 0.4) / 0.6)
-				hop = -absf(sin(q * PI * 3.0)) * 14.0
-				sway = sin(q * PI * 4.0) * 0.15
-			elif p < 0.62:                   ## 左侧镜像展开再收拢
-				side_sx = lerpf(-0.08, -1.0, (p - 0.40) / 0.11) if (p - 0.40) < 0.11 \
-						else lerpf(-1.0, -0.08, ((p - 0.40) - 0.11) / 0.11)
-			elif p < 0.80:                   ## 背面（压暗的正面占位，后面可出背面图）
-				show_front = true
-				front_dark = true
-				var q2 := (p - 0.62) / 0.18
-				front_sx = lerpf(0.08, 1.0, minf(q2 * 2.5, 1.0)) if q2 < 0.4 \
-						else lerpf(1.0, 0.08, (q2 - 0.4) / 0.6)
-			else:                            ## 翻回右侧（-0.08 → +1 过零即转身）
-				side_sx = lerpf(-0.08, 1.0, (p - 0.80) / 0.20)
+			twirl = ease(p, -2.2) * TAU
+			hop = -sin(p * PI) * 22.0
+			pulse = 1.0 + 0.08 * sin(p * PI)
+			frozen = 1.0     ## 定格腾空姿势（腿收拢、臂摆中位）
 
-		rig.visible = not show_front
-		front.visible = show_front
-		if show_front:
-			front.scale = Vector2(LOADRUN_SCALE * front_sx, LOADRUN_SCALE)
-			front.modulate = Color(0.45, 0.5, 0.62) if front_dark else Color.WHITE
-			front.rotation = sway
-			front.position = Vector2(edge, center_y + hop)
+		dancer.position = Vector2(edge,
+				LOADRUN_BAR.position.y - 126.0 * LOADRUN_SCALE * pulse + hop)
+		dancer.rotation = twirl
+		dancer.scale = Vector2.ONE * (LOADRUN_SCALE * pulse)
+		if rig_shadow != null:
+			rig_shadow.visible = frozen < 0.0     ## 腾空旋转时影子淡出
+		if frozen >= 0.0:
+			rig.debug_seek("run", frozen)
 		else:
-			var sx := LOADRUN_SCALE * side_sx
-			rig.scale = Vector2(sx, LOADRUN_SCALE)
-			# 缩放绕「画布中心 x」而非原点：origin = center - 96*sx
-			rig.position = Vector2(edge - RIG_CANVAS.x * 0.5 * sx, LOADRUN_BAR.position.y - RIG_CANVAS.y * LOADRUN_SCALE)
-		rig.debug_seek("run", t * LOADRUN_SECS * ChibiRig.RUN_FPS)
+			rig.debug_seek("run", t * LOADRUN_SECS * ChibiRig.RUN_FPS)
 		for _k in 3:
 			await get_tree().process_frame
 		# 裁剪带：只留角色 + 进度条附近（GIF 体积友好）
-		var crop := Rect2i(160, int(LOADRUN_BAR.position.y) - 180, 960, 285)
+		var crop := Rect2i(160, int(LOADRUN_BAR.position.y) - 200, 960, 300)
 		_crop(_grab_viewport(), crop).save_png("%s/l%03d.png" % [out_dir, i])
 	print("[shot=loadrun] %d 张已保存：%s（fps=%d，时长 %.1f 秒）→ 用 ffmpeg 拼 GIF" % [
 		frames, out_dir, LOADRUN_FPS, LOADRUN_SECS])
