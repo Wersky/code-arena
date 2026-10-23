@@ -571,6 +571,7 @@ const LOADRUN_BAR := Rect2(240, 600, 800, 14)   ## 进度条位置与尺寸（�
 const LOADRUN_SCALE := 0.6                       ## 角色显示缩放（0.6 = 115×154）
 const LOADRUN_FPS := 24
 const LOADRUN_SECS := 4.0
+const LOADRUN_RIG := "res://assets/art/rig/deepdeek-side"   ## 侧面切件（面朝右）
 
 
 func _capture_loadrun(out_path: String) -> void:
@@ -603,7 +604,7 @@ func _capture_loadrun(out_path: String) -> void:
 	rig.scale = Vector2(LOADRUN_SCALE, LOADRUN_SCALE)
 	rig.position = Vector2(LOADRUN_BAR.position.x, LOADRUN_BAR.position.y - RIG_CANVAS.y * LOADRUN_SCALE)
 	host.add_child(rig)
-	rig.setup(RIG_DIR)
+	rig.setup(LOADRUN_RIG)
 	rig.play("run")
 
 	var out_dir := "res://.tmp/loadrun"
