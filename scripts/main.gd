@@ -567,11 +567,13 @@ func _capture_rig_walk(out_path: String) -> void:
 ## --shot=loadrun：进度条 0→100%（4 秒），Q 版 DeepSeek 用 run 动作跟着填充边缘跑。
 ## 24fps 抓 96 张 PNG 到 res://.tmp/loadrun/，ffmpeg 拼 GIF。
 ## 确定性抓帧：每帧直接 set_value + debug_seek("run", t*RUN_FPS)，和真实播放逐帧等价。
-const LOADRUN_BAR := Rect2(240, 600, 800, 14)   ## 进度条位置与尺寸（窗口坐标）
+const LOADRUN_BAR := Rect2(280, 590, 720, 80)   ## 进度条位置与尺寸（720x80 = 资产 360x40 ×2）
 const LOADRUN_SCALE := 0.6                       ## 角色显示缩放（0.6 = 115×154）
 const LOADRUN_FPS := 24
 const LOADRUN_SECS := 4.0
 const LOADRUN_RIG := "res://assets/art/rig/deepdeek-side"   ## 侧面切件（面朝右）
+## LoadBar 内槽的显示坐标（SLOT 常量 ×2 + bar 位置）
+const LOADRUN_SLOT := Rect2(40, 26, 640, 28)     ## 相对 bar 左上角的内槽矩形
 
 
 func _capture_loadrun(out_path: String) -> void:
@@ -592,11 +594,9 @@ func _capture_loadrun(out_path: String) -> void:
 	title.position = Vector2(LOADRUN_BAR.position.x, LOADRUN_BAR.position.y - 44)
 	host.add_child(title)
 
-	# 分段像素进度条（现成组件）
-	var bar := PixelBar.new()
+	# 生图进度条（track 框 + 引擎填充）
+	var bar := LoadBar.new()
 	bar.position = LOADRUN_BAR.position
-	bar.size = LOADRUN_BAR.size
-	bar.bar_h = int(LOADRUN_BAR.size.y)
 	host.add_child(bar)
 
 	# Q 版角色：脚踩进度条顶边，x 跟着填充边缘走
@@ -614,13 +614,13 @@ func _capture_loadrun(out_path: String) -> void:
 		var t := float(i) / float(frames - 1)          ## 0..1
 		var v := minf(t * 1.06, 1.0)                   ## 前 94% 走完，结尾停一小拍
 		bar.set_value(v)
-		var edge := LOADRUN_BAR.position.x + LOADRUN_BAR.size.x * v
+		var edge := LOADRUN_BAR.position.x + LOADRUN_SLOT.position.x + LOADRUN_SLOT.size.x * v
 		rig.position.x = edge - RIG_CANVAS.x * LOADRUN_SCALE * 0.5   ## 角色横向居中在边缘上
 		rig.debug_seek("run", t * LOADRUN_SECS * ChibiRig.RUN_FPS)
 		for _k in 3:
 			await get_tree().process_frame
 		# 裁剪带：只留角色 + 进度条附近（GIF 体积友好）
-		var crop := Rect2i(160, int(LOADRUN_BAR.position.y) - 180, 960, 230)
+		var crop := Rect2i(160, int(LOADRUN_BAR.position.y) - 170, 960, 270)
 		_crop(_grab_viewport(), crop).save_png("%s/l%03d.png" % [out_dir, i])
 	print("[shot=loadrun] %d 张已保存：%s（fps=%d，时长 %.1f 秒）→ 用 ffmpeg 拼 GIF" % [
 		frames, out_dir, LOADRUN_FPS, LOADRUN_SECS])

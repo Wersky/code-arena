@@ -74,7 +74,9 @@ for x in range(W):
     char[zone, x] &= ~shadow_like[zone, x]
 
 # ── 侧窗内取最大连通块，甩掉文字碎片 ──
-x0w, x1w = 360, 620
+## 窗口右界必须是 685：侧面垂发实际延伸到 x≈670，之前用 620 把背侧切出了直边缺口；
+## 680..700 是侧面与背面两图之间的空白间隙
+x0w, x1w = 360, 685
 win = char[:, x0w:x1w]
 seen = np.zeros_like(win, dtype=bool)
 best = None
