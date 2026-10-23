@@ -49,18 +49,18 @@ const W_SKIRT_X := 3.0      ## 裙摆横摆
 const W_SKIRT_BOB := 4.0    ## 裙摆 bob（按躯干 6:10 缩到 ±2/4）
 const W_TAIL_A := 7.0       ## 尾巴甩（follow-through，比裙摆更滞后）
 const W_TAIL_BOB := 4.0     ## 尾巴 bob
-## ── run 参数表（进度条跑动用；比 walk 快、弹、有腾空）──────────
-const R_LEG_LIFT := 16.0    ## 摆动腿前抬（walk 12 → run 16）
-const R_LEG_X := 11.0       ## 跨步幅度（walk 7 → run 11）
-const R_LEG_X_IN := 5.0     ## 着地帧后腿内收
-const R_LEG_PASS_X := 3.0   ## 摆动相位前探
-const R_LEG_TOE := 6.0      ## 蹬地腿踮脚
-const R_FLIGHT := 5.0       ## 腾空相：双脚都微离地（run 的标志）
-const R_BOB_UP := 6.0       ## 抬腿帧上浮
-const R_BOB_DN := 10.0      ## 着地帧下沉（合计 16，比 walk 的 10 大）
-const R_HEAD_NOD := 2.5     ## 点头幅度
-const R_TORSO_TILT := 4.0   ## 躯干左右倾（跑动的 waddle）
-const R_ARM := 12.0         ## 摆臂（walk 6 → run 12，跑步摆臂明显）
+## ── run 参数表（依据像素动画跑圈经验重写）──────────────────
+## 跑 ≠ 快走：触地/腾空交替、身体触地压低腾空弹高（反 pogo）、躯干持续前倾、
+## 手臂与腿反相摆。侧面切件的腿在裙下只有 ~21px，纯平移读不出来，
+## 所以步幅 = 绕髋旋转（剪刀）+ 左右交替位移的叠加。
+const R_LEG_ROT := 22.0     ## 触地帧剪刀角（前腿 +22 / 后腿 -22，绕髋）
+const R_LEG_ROT_AIR := 8.0  ## 腾空帧双腿收拢角
+const R_STRIDE := 6.0       ## 触地帧左右交替位移（和旋转叠加成步幅）
+const R_LEG_LIFT_AIR := 4.0 ## 腾空帧双脚离地
+const R_BOB_LOW := 7.0      ## 触地帧身体压低
+const R_BOB_HIGH := 9.0     ## 腾空帧身体弹高（低-高差 16，比 walk 的 10 大）
+const R_LEAN := 4.0         ## 躯干持续前倾（deg；前倾是跑和走的分水岭）
+const R_ARM_PUMP := 16.0    ## 摆臂角（绕肩，与腿反相）
 const R_SKIRT_A := 8.0      ## 裙摆甩
 const R_SKIRT_X := 5.0
 const R_SKIRT_BOB := 6.0
@@ -377,40 +377,43 @@ func _make_walk() -> Animation:
 	return a
 
 
-## run：4 帧 / 两步，12fps。结构同 walk，但幅度全面放大 + 腾空相：
-## 摆动腿抬 16、跨步 11，着地帧（f1/f3）双脚都微离地 5（run 的标志是有一瞬双脚悬空），
-## bob 合计 16、摆臂 12、裙摆尾巴 follow-through 更夸张。影子整体更小更淡（滞空时间更长）。
+## run：4 帧 = 触地 / 腾空 ×2（像素跑圈标准结构）。
+##   f0 触地：前腿前伸后腿后蹬（剪刀 ±22° + 交替位移），身体压到最低，影子最大最实
+##   f1 腾空：双腿收拢双脚离地，身体弹到最高（真跑的标志——walk 永远有一脚在地上）
+##   f2/f3：镜像重复
+## 躯干持续前倾 R_LEAN（绕裙摆轴心，头会往前探）；手臂绕肩与腿反相摆。
 func _make_run() -> Animation:
 	var a := Animation.new()
 	a.length = RUN_FRAME_DUR * float(WALK_FRAMES)
 	a.loop_mode = Animation.LOOP_LINEAR
 	var d := RUN_FRAME_DUR
 	var lin := Animation.INTERPOLATION_LINEAR
-	# ① 腿：与 walk 同构，幅度放大；f1/f3 双脚 -R_FLIGHT = 腾空
-	_add(a, "leg_l", "position:x", [-R_LEG_PASS_X, -R_LEG_X, -R_LEG_PASS_X, R_LEG_X_IN, -R_LEG_PASS_X], d, lin)
-	_add(a, "leg_l", "position:y", [-R_LEG_LIFT, -R_FLIGHT, -R_FLIGHT, -R_LEG_TOE, -R_LEG_LIFT], d, lin)
-	_add(a, "leg_r", "position:x", [R_LEG_PASS_X, -R_LEG_X_IN, R_LEG_PASS_X, R_LEG_X, R_LEG_PASS_X], d, lin)
-	_add(a, "leg_r", "position:y", [0, -R_LEG_TOE, -R_LEG_LIFT, -R_FLIGHT, 0], d, lin)
-	# ② 躯干 + 头：bob 放大、waddle ±4、点头 2.5
-	_add(a, "torso", "position:y", [-R_BOB_UP, R_BOB_DN, -R_BOB_UP, R_BOB_DN, -R_BOB_UP], d)
-	_add(a, "torso", "rotation", [0, R_TORSO_TILT, 0, -R_TORSO_TILT, 0], d)
-	_add(a, "head", "position:y", [-R_BOB_UP, R_BOB_DN, -R_BOB_UP, R_BOB_DN, -R_BOB_UP], d)
-	_add(a, "head", "rotation", [-R_HEAD_NOD, 0, R_HEAD_NOD, 0, -R_HEAD_NOD], d)
-	# ③ 手臂：大幅摆动（跑步摆臂），相位滞后躯干 1 帧
-	_add(a, "arm_l", "position:y", [-R_BOB_UP, R_BOB_DN, -R_BOB_UP, R_BOB_DN, -R_BOB_UP], d)
-	_add(a, "arm_r", "position:y", [-R_BOB_UP, R_BOB_DN, -R_BOB_UP, R_BOB_DN, -R_BOB_UP], d)
-	_add(a, "arm_l", "rotation", [-R_ARM, 0, R_ARM, 0, -R_ARM], d)
-	_add(a, "arm_r", "rotation", [R_ARM, 0, -R_ARM, 0, R_ARM], d)
-	# ④ 裙摆 / 尾巴：follow-through 放大
+	# ① 腿：剪刀旋转 + 交替位移 + 腾空抬升（三轨叠加成步幅）；第 5 键 = 回绕帧
+	_add(a, "leg_l", "rotation", [-R_LEG_ROT, -R_LEG_ROT_AIR, R_LEG_ROT, -R_LEG_ROT_AIR, -R_LEG_ROT], d, lin)
+	_add(a, "leg_r", "rotation", [R_LEG_ROT, R_LEG_ROT_AIR, -R_LEG_ROT, R_LEG_ROT_AIR, R_LEG_ROT], d, lin)
+	_add(a, "leg_l", "position:x", [-R_STRIDE, 0.0, R_STRIDE, 0.0, -R_STRIDE], d, lin)
+	_add(a, "leg_r", "position:x", [R_STRIDE, 0.0, -R_STRIDE, 0.0, R_STRIDE], d, lin)
+	_add(a, "leg_l", "position:y", [0.0, -R_LEG_LIFT_AIR, 0.0, -R_LEG_LIFT_AIR, 0.0], d, lin)
+	_add(a, "leg_r", "position:y", [0.0, -R_LEG_LIFT_AIR, 0.0, -R_LEG_LIFT_AIR, 0.0], d, lin)
+	# ② 躯干 + 头：触地压低 / 腾空弹高（反 pogo——头的高度有轻重节奏才像有体重）
+	_add(a, "torso", "position:y", [R_BOB_LOW, -R_BOB_HIGH, R_BOB_LOW, -R_BOB_HIGH, R_BOB_LOW], d)
+	_add(a, "torso", "rotation", [R_LEAN + 0.8, R_LEAN, R_LEAN + 0.8, R_LEAN, R_LEAN + 0.8], d)
+	_add(a, "head", "position:y", [R_BOB_LOW, -R_BOB_HIGH, R_BOB_LOW, -R_BOB_HIGH, R_BOB_LOW], d)
+	# ③ 手臂：绕肩摆，与同侧腿反相（右腿前 → 右臂后）
+	_add(a, "arm_l", "rotation", [R_ARM_PUMP, R_ARM_PUMP * 0.3, -R_ARM_PUMP, R_ARM_PUMP * 0.3, R_ARM_PUMP], d)
+	_add(a, "arm_r", "rotation", [-R_ARM_PUMP, -R_ARM_PUMP * 0.3, R_ARM_PUMP, -R_ARM_PUMP * 0.3, -R_ARM_PUMP], d)
+	_add(a, "arm_l", "position:y", [R_BOB_LOW, -R_BOB_HIGH, R_BOB_LOW, -R_BOB_HIGH, R_BOB_LOW], d)
+	_add(a, "arm_r", "position:y", [R_BOB_LOW, -R_BOB_HIGH, R_BOB_LOW, -R_BOB_HIGH, R_BOB_LOW], d)
+	# ④ 裙摆 / 尾巴：follow-through 滞后一拍（正面 rig 用，侧 rig 缺件自动跳过）
 	_add(a, "skirt", "position:y", [-R_SKIRT_BOB * 0.5, R_SKIRT_BOB, -R_SKIRT_BOB * 0.5, R_SKIRT_BOB, -R_SKIRT_BOB * 0.5], d)
-	_add(a, "skirt", "position:x", [-R_SKIRT_X, 0, R_SKIRT_X, 0, -R_SKIRT_X], d)
-	_add(a, "skirt", "rotation", [-R_SKIRT_A, 0, R_SKIRT_A, 0, -R_SKIRT_A], d)
+	_add(a, "skirt", "position:x", [-R_SKIRT_X, 0.0, R_SKIRT_X, 0.0, -R_SKIRT_X], d)
+	_add(a, "skirt", "rotation", [-R_SKIRT_A, 0.0, R_SKIRT_A, 0.0, -R_SKIRT_A], d)
 	_add(a, "tail", "position:y", [-R_TAIL_BOB * 0.5, R_TAIL_BOB, -R_TAIL_BOB * 0.5, R_TAIL_BOB, -R_TAIL_BOB * 0.5], d)
-	_add(a, "tail", "rotation", [R_TAIL_A, 0, -R_TAIL_A, 0, R_TAIL_A], d)
-	# ⑤ 影子：滞空多 → 更小更淡
-	_add(a, "shadow", "scale:x", [0.72, 0.92, 0.72, 0.92, 0.72], d)
-	_add(a, "shadow", "scale:y", [0.72, 0.92, 0.72, 0.92, 0.72], d)
-	_add(a, "shadow", "modulate:a", [0.5, 0.7, 0.5, 0.7, 0.5], d)
+	_add(a, "tail", "rotation", [R_TAIL_A, 0.0, -R_TAIL_A, 0.0, R_TAIL_A], d)
+	# ⑤ 影子：触地大而实 / 腾空小而淡（滞空感的另一半）
+	_add(a, "shadow", "scale:x", [1.0, 0.72, 1.0, 0.72, 1.0], d)
+	_add(a, "shadow", "scale:y", [1.0, 0.72, 1.0, 0.72, 1.0], d)
+	_add(a, "shadow", "modulate:a", [0.75, 0.5, 0.75, 0.5, 0.75], d)
 	return a
 
 
