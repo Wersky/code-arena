@@ -19,6 +19,10 @@ const WALK_FPS := 8.0
 const WALK_FRAME_DUR := 1.0 / WALK_FPS
 const WALK_FRAMES := 4
 
+## run 帧率：4 帧（两步）循环，比 walk 快 1.5 倍、幅度更大、有腾空相
+const RUN_FPS := 12.0
+const RUN_FRAME_DUR := 1.0 / RUN_FPS
+
 ## ── walk 参数表（角度 deg / 位移 canvas px；真实切件是 48×64 的 4 倍放大，
 ##    所以 1「美术像素」= 4 canvas px）─────────────────────────────
 ## 帧序：
@@ -45,6 +49,23 @@ const W_SKIRT_X := 3.0      ## 裙摆横摆
 const W_SKIRT_BOB := 4.0    ## 裙摆 bob（按躯干 6:10 缩到 ±2/4）
 const W_TAIL_A := 7.0       ## 尾巴甩（follow-through，比裙摆更滞后）
 const W_TAIL_BOB := 4.0     ## 尾巴 bob
+## ── run 参数表（进度条跑动用；比 walk 快、弹、有腾空）──────────
+const R_LEG_LIFT := 16.0    ## 摆动腿前抬（walk 12 → run 16）
+const R_LEG_X := 11.0       ## 跨步幅度（walk 7 → run 11）
+const R_LEG_X_IN := 5.0     ## 着地帧后腿内收
+const R_LEG_PASS_X := 3.0   ## 摆动相位前探
+const R_LEG_TOE := 6.0      ## 蹬地腿踮脚
+const R_FLIGHT := 5.0       ## 腾空相：双脚都微离地（run 的标志）
+const R_BOB_UP := 6.0       ## 抬腿帧上浮
+const R_BOB_DN := 10.0      ## 着地帧下沉（合计 16，比 walk 的 10 大）
+const R_HEAD_NOD := 2.5     ## 点头幅度
+const R_TORSO_TILT := 4.0   ## 躯干左右倾（跑动的 waddle）
+const R_ARM := 12.0         ## 摆臂（walk 6 → run 12，跑步摆臂明显）
+const R_SKIRT_A := 8.0      ## 裙摆甩
+const R_SKIRT_X := 5.0
+const R_SKIRT_BOB := 6.0
+const R_TAIL_A := 10.0
+const R_TAIL_BOB := 6.0
 ## 地面影子（不进 rig.json，纯引擎侧）
 const SHADOW_W := 88        ## 椭圆宽（只包住脚下一小圈，太宽像块黑斑）
 const SHADOW_H := 15        ## 椭圆高
@@ -153,13 +174,15 @@ func set_speed(f: float) -> void:
 		_anim.speed_scale = _speed
 
 
-# ── 仅供截图钩子：把 walk 定格在第 frame 帧（0..3，可传小数做亚帧检查）并回显姿态 ──
-func debug_seek_walk(frame: float) -> Dictionary:
-	if _anim == null or not _anim.has_animation("walk"):
+# ── 仅供截图钩子：把动作定格在第 frame 帧并回显姿态 ──
+## anim="walk"/"run"（按各自 fps 换算时间）；frame 是动作帧序号，可传小数做亚帧检查。
+func debug_seek(anim: String, frame: float) -> Dictionary:
+	if _anim == null or not _anim.has_animation(anim):
 		return {}
-	_anim.play("walk")
+	var fps := RUN_FPS if anim == "run" else WALK_FPS
+	_anim.play(anim)
 	_anim.speed_scale = 0.0
-	_anim.seek(fposmod(frame, float(WALK_FRAMES)) * WALK_FRAME_DUR, true)
+	_anim.seek(fposmod(frame, float(WALK_FRAMES)) / fps, true)
 	var pose := {"root_y": snappedf(_root.position.y, 0.01)}
 	for nm in _parts:
 		var p: Node2D = _parts[nm]
@@ -167,6 +190,10 @@ func debug_seek_walk(frame: float) -> Dictionary:
 		# dy = 该件相对 pivot 的纵向偏移（正 = 往下）；腿的 dy 决定脚是否离地
 		pose["dy_" + nm] = snappedf(p.position.y - _pivot_y[nm], 0.01)
 	return pose
+
+
+func debug_seek_walk(frame: float) -> Dictionary:
+	return debug_seek("walk", frame)
 
 
 # ── 数据加载 ──────────────────────────────────────────
@@ -285,6 +312,7 @@ func _build_animations() -> void:
 	add_child(_anim)
 	var lib := AnimationLibrary.new()
 	lib.add_animation("walk", _make_walk())
+	lib.add_animation("run", _make_run())
 	lib.add_animation("idle", _make_idle())
 	lib.add_animation("shake", _make_shake())
 	lib.add_animation("attack", _make_attack())
@@ -346,6 +374,43 @@ func _make_walk() -> Animation:
 	_add(a, "shadow", "scale:x", [0.85, 1.0, 0.85, 1.0, 0.85], d)
 	_add(a, "shadow", "scale:y", [0.85, 1.0, 0.85, 1.0, 0.85], d)
 	_add(a, "shadow", "modulate:a", [0.55, 0.75, 0.55, 0.75, 0.55], d)
+	return a
+
+
+## run：4 帧 / 两步，12fps。结构同 walk，但幅度全面放大 + 腾空相：
+## 摆动腿抬 16、跨步 11，着地帧（f1/f3）双脚都微离地 5（run 的标志是有一瞬双脚悬空），
+## bob 合计 16、摆臂 12、裙摆尾巴 follow-through 更夸张。影子整体更小更淡（滞空时间更长）。
+func _make_run() -> Animation:
+	var a := Animation.new()
+	a.length = RUN_FRAME_DUR * float(WALK_FRAMES)
+	a.loop_mode = Animation.LOOP_LINEAR
+	var d := RUN_FRAME_DUR
+	var lin := Animation.INTERPOLATION_LINEAR
+	# ① 腿：与 walk 同构，幅度放大；f1/f3 双脚 -R_FLIGHT = 腾空
+	_add(a, "leg_l", "position:x", [-R_LEG_PASS_X, -R_LEG_X, -R_LEG_PASS_X, R_LEG_X_IN, -R_LEG_PASS_X], d, lin)
+	_add(a, "leg_l", "position:y", [-R_LEG_LIFT, -R_FLIGHT, -R_FLIGHT, -R_LEG_TOE, -R_LEG_LIFT], d, lin)
+	_add(a, "leg_r", "position:x", [R_LEG_PASS_X, -R_LEG_X_IN, R_LEG_PASS_X, R_LEG_X, R_LEG_PASS_X], d, lin)
+	_add(a, "leg_r", "position:y", [0, -R_LEG_TOE, -R_LEG_LIFT, -R_FLIGHT, 0], d, lin)
+	# ② 躯干 + 头：bob 放大、waddle ±4、点头 2.5
+	_add(a, "torso", "position:y", [-R_BOB_UP, R_BOB_DN, -R_BOB_UP, R_BOB_DN, -R_BOB_UP], d)
+	_add(a, "torso", "rotation", [0, R_TORSO_TILT, 0, -R_TORSO_TILT, 0], d)
+	_add(a, "head", "position:y", [-R_BOB_UP, R_BOB_DN, -R_BOB_UP, R_BOB_DN, -R_BOB_UP], d)
+	_add(a, "head", "rotation", [-R_HEAD_NOD, 0, R_HEAD_NOD, 0, -R_HEAD_NOD], d)
+	# ③ 手臂：大幅摆动（跑步摆臂），相位滞后躯干 1 帧
+	_add(a, "arm_l", "position:y", [-R_BOB_UP, R_BOB_DN, -R_BOB_UP, R_BOB_DN, -R_BOB_UP], d)
+	_add(a, "arm_r", "position:y", [-R_BOB_UP, R_BOB_DN, -R_BOB_UP, R_BOB_DN, -R_BOB_UP], d)
+	_add(a, "arm_l", "rotation", [-R_ARM, 0, R_ARM, 0, -R_ARM], d)
+	_add(a, "arm_r", "rotation", [R_ARM, 0, -R_ARM, 0, R_ARM], d)
+	# ④ 裙摆 / 尾巴：follow-through 放大
+	_add(a, "skirt", "position:y", [-R_SKIRT_BOB * 0.5, R_SKIRT_BOB, -R_SKIRT_BOB * 0.5, R_SKIRT_BOB, -R_SKIRT_BOB * 0.5], d)
+	_add(a, "skirt", "position:x", [-R_SKIRT_X, 0, R_SKIRT_X, 0, -R_SKIRT_X], d)
+	_add(a, "skirt", "rotation", [-R_SKIRT_A, 0, R_SKIRT_A, 0, -R_SKIRT_A], d)
+	_add(a, "tail", "position:y", [-R_TAIL_BOB * 0.5, R_TAIL_BOB, -R_TAIL_BOB * 0.5, R_TAIL_BOB, -R_TAIL_BOB * 0.5], d)
+	_add(a, "tail", "rotation", [R_TAIL_A, 0, -R_TAIL_A, 0, R_TAIL_A], d)
+	# ⑤ 影子：滞空多 → 更小更淡
+	_add(a, "shadow", "scale:x", [0.72, 0.92, 0.72, 0.92, 0.72], d)
+	_add(a, "shadow", "scale:y", [0.72, 0.92, 0.72, 0.92, 0.72], d)
+	_add(a, "shadow", "modulate:a", [0.5, 0.7, 0.5, 0.7, 0.5], d)
 	return a
 
 
