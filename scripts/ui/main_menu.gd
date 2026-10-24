@@ -47,6 +47,7 @@ func _init() -> void:
 
 
 func _ready() -> void:
+	SfxNode.music("bgm_main")
 	_build_bg()
 	_build_panel()
 	_build_plaque()
@@ -144,7 +145,9 @@ func _build_content() -> void:
 	var bs := UiArt.display_size("btn")
 	_start_btn.custom_minimum_size = bs
 	_start_btn.size = bs
-	_start_btn.pressed.connect(func() -> void: start_run.emit())
+	_start_btn.pressed.connect(func() -> void:
+		SfxNode.play("ui_click")
+		start_run.emit())
 	add_child(_start_btn)
 
 	_quit_btn = JuiceButton.new()
@@ -154,7 +157,9 @@ func _build_content() -> void:
 	_quit_btn.font_size = 24
 	_quit_btn.custom_minimum_size = Vector2(360, 44)
 	_quit_btn.size = Vector2(360, 44)
-	_quit_btn.pressed.connect(func() -> void: quit_game.emit())
+	_quit_btn.pressed.connect(func() -> void:
+		SfxNode.play("ui_click")
+		quit_game.emit())
 	add_child(_quit_btn)
 
 	# 面板底部一行操作提示（不抢戏，但新手看得见）

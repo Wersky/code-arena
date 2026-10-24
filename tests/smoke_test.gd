@@ -21,6 +21,7 @@ func _initialize() -> void:
 	_test_poker_hands()
 	_test_poker_scoring()
 	_test_poker_deck()
+	await _test_sfx()
 	await _test_ui()
 	await _test_arena_flow()
 	await _test_level_seeds_and_flip()
@@ -374,6 +375,44 @@ func _test_poker_scoring() -> void:
 	_eq(int(bonus["chips"]), 136, "永久筹码 +100 生效")
 	_eq(int(bonus["mult"]), 2, "永久倍率 +1 生效")
 	_eq(int(bonus["score"]), 272, "加成后的总分 = 136×2")
+
+
+## 音效：文件齐全、能加载、循环设置正确、无实例时静态入口不崩
+func _test_sfx() -> void:
+	print("[音效]")
+	var names := ["ui_click", "card_select", "card_deselect", "discard", "deal",
+		"score_tick", "score_land", "hand_small", "hand_big", "win", "lose"]
+	for n in names:
+		var path := "res://assets/audio/sfx/%s.wav" % n
+		var ok := ResourceLoader.exists(path)
+		_check(ok, "音效存在：%s" % n)
+		if ok:
+			_check(load(path) is AudioStreamWAV, "音效可加载：%s" % n)
+
+	var bgm := load("res://assets/audio/music/bgm_main.wav")
+	_check(bgm is AudioStreamWAV, "BGM 可加载（bgm_main.wav）")
+	if bgm is AudioStreamWAV:
+		_check(bgm.get_length() > 10.0, "BGM 长度 > 10 秒（%.1fs）" % bgm.get_length())
+
+	# 无实例（测试进程没有 autoload）：静态入口必须是空操作而不是崩
+	SfxNode.play("ui_click")
+	SfxNode.music("bgm_main")
+	SfxNode.stop_music()
+	SfxNode.set_music_volume_db(-6.0)
+	_check(SfxNode.I == null, "测试进程里 SfxNode.I 为空（静态入口走空操作）")
+
+	# 手动实例化：登记、循环、播放
+	var node := SfxNode.new()
+	root.add_child(node)
+	await process_frame
+	_check(SfxNode.I == node, "实例 _ready 后登记到 SfxNode.I")
+	node._music("bgm_main")
+	var st := node._music_player.stream as AudioStreamWAV
+	_check(st != null and st.loop_mode == AudioStreamWAV.LOOP_FORWARD, "BGM 已设为无缝循环")
+	node._play("card_select", 0.0)
+	_check(node._pool[0].playing, "play() 后播放器在出声")
+	node.queue_free()
+	await process_frame
 
 
 # ── UI 构建 ────────────────────────────────────────────

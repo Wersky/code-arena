@@ -198,6 +198,7 @@ func _on_pick(opt: Dictionary) -> void:
 	if _taken:
 		return
 	_taken = true
+	SfxNode.play("card_select")
 	if str(opt.get("kind", "")) == "add_card":
 		run.add_poker_card(int(opt.get("suit", 0)), int(opt.get("rank", 1)))
 	chosen.emit()

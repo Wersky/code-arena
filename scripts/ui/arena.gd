@@ -582,6 +582,7 @@ func _on_card_clicked(view: CardView) -> void:
 	if _played.has(card):
 		_played.erase(card)
 		view.selected = false
+		SfxNode.play("card_deselect")
 		_console.finish_all()
 		_console.set_command(_prefix(), _segment_names())
 		_layout_hand(true)
@@ -595,6 +596,7 @@ func _on_card_clicked(view: CardView) -> void:
 
 	_played.append(card)
 	view.selected = true
+	SfxNode.play("card_select")
 	view.flash()
 	# 控制台流式打出这张牌（花色符号 + 点数）
 	_console.type_in(card.display_name())
@@ -633,6 +635,7 @@ func _on_back_pressed() -> void:
 	_layout_hand(true)
 	_refresh_preview()
 	_status_label.text = "已去掉最后一张 %s。" % card.display_name()
+	SfxNode.play("card_deselect")
 
 
 ## 把某张牌对应的视图标记为未选中
@@ -859,11 +862,17 @@ func _play_fx(res: Dictionary, gained: int) -> void:
 	fade_in.set_parallel(true)
 	fade_in.tween_property(_fx_panel, "modulate:a", 1.0, 0.10)
 	fade_in.tween_property(_fx_back, "modulate:a", 1.0, 0.10)
+	SfxNode.play("deal")
 
 	# ② 落地：白闪 + 屏抖 + 牌型名弹入 + 一圈碎屑
 	_flash(UiKit.GOLD, 0.20)
 	_shake(6.0, 0.14)
 	_punch(_fx_title, 1.5, 0.20)
+	var tier := int(res.get("type", 0))
+	if tier >= PokerHand.Type.THREE_KIND:
+		SfxNode.play("hand_big")
+	elif tier >= PokerHand.Type.PAIR:
+		SfxNode.play("hand_small")
 	SparkBurst.burst(_fx_root, center, UiKit.GOLD, 10, 200.0)
 	await get_tree().create_timer(0.14).timeout
 
@@ -878,6 +887,7 @@ func _play_fx(res: Dictionary, gained: int) -> void:
 	await _count_to(_fx_total, 0, gained, func(v: int) -> String: return str(v), 0.22)
 	_punch(_fx_total, 1.6, 0.26)
 	_fx_total.modulate = UiKit.GOLD
+	SfxNode.play("score_land")
 	_flash(UiKit.WHITE, 0.26)
 	_shake(10.0, 0.20)
 	SparkBurst.burst(_fx_root, center + Vector2(0, -40), UiKit.GOLD, 20, 320.0)
@@ -907,7 +917,13 @@ func _play_fx(res: Dictionary, gained: int) -> void:
 ## 把标签上的数字从 from 滚到 to（fmt 决定显示格式）
 func _count_to(lbl: Label, from: int, to: int, fmt: Callable, dur: float) -> void:
 	var tw := create_tween()
-	tw.tween_method(func(v: float) -> void: lbl.text = str(fmt.call(int(v))),
+	var last := from
+	tw.tween_method(func(v: float) -> void:
+		var iv := int(v)
+		if iv != last:
+			last = iv
+			SfxNode.play("score_tick", -8.0)
+		lbl.text = str(fmt.call(iv)),
 			float(from), float(to), dur)
 	await tw.finished
 
@@ -1086,6 +1102,7 @@ func _pop_overlay() -> void:
 func _finish_level() -> void:
 	var passed := run.score >= level.target_score
 	if passed:
+		SfxNode.play("win")
 		_overlay_title.text = "通过"
 		_overlay_body.text = "得分 %d / 目标 %d\n下一步：挑一张卡加进牌库。" % [
 			run.score, level.target_score
@@ -1093,6 +1110,7 @@ func _finish_level() -> void:
 		_pop_overlay()
 		level_cleared.emit(run.score)
 	else:
+		SfxNode.play("lose")
 		_overlay_title.text = "未通过"
 		_overlay_body.text = "得分 %d / 目标 %d\n差距 %d 分。\n提示：把语句拼成合法代码——顺序对了才给分。" % [
 			run.score, level.target_score, level.target_score - run.score
@@ -1143,6 +1161,7 @@ func _on_reroll_pressed() -> void:
 		_refresh_top()
 		_refresh_preview()
 		_status_label.text = "弃掉 %d 张，补回来了。" % n
+	SfxNode.play("discard")
 
 
 func debug_place_card(index: int) -> bool:

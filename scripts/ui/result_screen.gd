@@ -64,7 +64,9 @@ func setup(title: String, body: String, buttons: Array) -> void:
 		var accent := bool(b.get("accent", false))
 		var btn := UiKit.accent_button(text, UiKit.FS_S) if accent else UiKit.button(text, UiKit.FS_S)
 		btn.custom_minimum_size = Vector2(320, 50)
-		btn.pressed.connect(_on_button.bind(id))
+		btn.pressed.connect(func() -> void:
+			SfxNode.play("ui_click")
+			_on_button(id))
 		_btn_box.add_child(btn)
 		_ids.append(id)
 

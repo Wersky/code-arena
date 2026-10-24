@@ -11,6 +11,14 @@ config/description="2D 肉鸽扑克：选一位 AI 娘，把牌凑成德州牌�
 run/main_scene="res://scenes/main.tscn"
 config/features=PackedStringArray("4.7")
 
+[autoload]
+
+Sfx="*res://scripts/core/sfx.gd"
+
+[audio]
+
+buses/default_bus_layout="res://default_bus_layout.tres"
+
 [display]
 
 window/size/viewport_width=1600

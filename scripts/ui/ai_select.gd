@@ -133,7 +133,9 @@ func _build() -> void:
 
 	_back = UiKit.button("← 返回主菜单", UiKit.FS_XS)
 	_back.custom_minimum_size = Vector2(160, 32)
-	_back.pressed.connect(func() -> void: cancelled.emit())
+	_back.pressed.connect(func() -> void:
+		SfxNode.play("ui_click")
+		cancelled.emit())
 	add_child(_back)
 
 
