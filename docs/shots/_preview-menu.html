@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>代码擂台 · 主界面 v3 预览</title>
+<style>
+  :root{
+    --bg:#070a12; --panel:#0d1424; --line:#1d2a44;
+    --cyan:#37d8f0; --violet:#a46cff; --magenta:#ff5fa8; --text:#dbe6f5; --dim:#7c8ba6;
+  }
+  *{box-sizing:border-box}
+  body{
+    margin:0; padding:28px 28px 48px; background:
+      radial-gradient(1200px 600px at 50% -10%, #10203a 0%, transparent 60%),
+      var(--bg);
+    color:var(--text);
+    font-family:"Segoe UI","PingFang SC","Microsoft YaHei",system-ui,sans-serif;
+  }
+  header{max-width:1180px;margin:0 auto 22px}
+  h1{font-size:20px;margin:0 0 6px;letter-spacing:.04em}
+  h1 b{color:var(--cyan);font-weight:600}
+  p.sub{margin:0;color:var(--dim);font-size:13px;line-height:1.7}
+  .kbd{font-family:Consolas,monospace;color:var(--cyan);font-size:12px}
+
+  .stack{max-width:1180px;margin:0 auto}
+  .card{
+    background:var(--panel); border:1px solid var(--line);
+    border-radius:2px; padding:14px; margin-bottom:22px;
+    position:relative;
+  }
+  .card::before,.card::after{
+    content:"";position:absolute;width:14px;height:14px;
+    border:2px solid var(--cyan);opacity:.55;
+  }
+  .card::before{left:-1px;top:-1px;border-right:0;border-bottom:0}
+  .card::after{right:-1px;bottom:-1px;border-left:0;border-top:0}
+  .cap{
+    display:flex;align-items:baseline;gap:10px;
+    margin:0 0 10px;font-size:13px;color:var(--dim);
+  }
+  .cap b{color:var(--text);font-weight:600;font-size:14px}
+  .tag{
+    font-size:11px;padding:2px 7px;border:1px solid var(--line);
+    color:var(--cyan);border-radius:2px;letter-spacing:.05em;
+  }
+  img{width:100%;display:block;image-rendering:auto;border:0}
+  .pair{display:grid;grid-template-columns:1fr 1fr;gap:18px}
+  @media (max-width:900px){.pair{grid-template-columns:1fr}}
+  .note{
+    max-width:1180px;margin:0 auto;color:var(--dim);font-size:12.5px;line-height:1.9;
+    border-left:2px solid var(--violet);padding:2px 0 2px 14px;
+  }
+  .note b{color:var(--text)}
+</style>
+</head>
+<body>
+<header>
+  <h1>代码擂台 · 主界面 <b>v3（AI 控制台风）</b></h1>
+  <p class="sub">
+    下面三张都是游戏里直接截的原图，不是效果图。第三张是从导出的 exe 里拍的，
+    用来证明打包后和仓库里跑的一模一样。点图可以放大。
+  </p>
+</header>
+
+<div class="stack">
+  <div class="card">
+    <div class="cap"><b>① 常态</b><span class="tag">1600×900</span>
+      <span>牌匾压面板上沿；终端提示行 <span class="kbd">&gt; … ▮</span> 的光标在闪</span></div>
+    <a href="menu-ai.png" target="_blank"><img src="menu-ai.png" alt="主菜单 常态"></a>
+  </div>
+
+  <div class="card">
+    <div class="cap"><b>② 按钮悬停</b><span class="tag">HOVER</span>
+      <span>底板提亮偏冷白 + 青色剪影光 + 扫光 + ▶◀ 收拢 + 文字转青</span></div>
+    <a href="menu-ai-hover.png" target="_blank"><img src="menu-ai-hover.png" alt="主菜单 悬停"></a>
+  </div>
+
+  <div class="card">
+    <div class="cap"><b>③ 从导出的 exe 里实拍</b><span class="tag">code-arena.exe</span>
+      <span>贴图、字体、动效全部就位 —— 打包没掉东西</span></div>
+    <a href="export-menu-ai.png" target="_blank"><img src="export-menu-ai.png" alt="导出包截图"></a>
+  </div>
+</div>
+
+<div class="note">
+  这版刻意把主体做大：<b>面板占屏宽 65%、屏高 58%，整组 UI 占屏高 78%</b>，
+  背景只露四周一圈 —— 上一版面板只有 33% 宽，所以背后空得发慌。<br>
+  所有贴图都是生图出的，按 <b>×2 整数放大</b>贴上去（非整数会把像素格拉得一宽一窄）。<br>
+  对局界面还是老样式，下一步按同一套语言铺下去。
+</div>
+</body>
+</html>
