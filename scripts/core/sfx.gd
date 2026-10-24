@@ -92,6 +92,8 @@ func _music(music_name: String) -> void:
 		wav.loop_mode = AudioStreamWAV.LOOP_FORWARD
 		wav.loop_begin = 0
 		wav.loop_end = wav.data.size() / 2
+	elif st is AudioStreamMP3:
+		(st as AudioStreamMP3).loop = true
 	_music_player.stream = st
 	_music_player.volume_db = _music_volume_db
 	_music_player.play()
