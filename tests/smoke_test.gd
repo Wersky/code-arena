@@ -24,6 +24,7 @@ func _initialize() -> void:
 	await _test_sfx()
 	await _test_ui()
 	await _test_arena_flow()
+	await _test_sort_and_companion()
 	await _test_level_seeds_and_flip()
 	await _test_screen_router()
 	print("\n==== %d 项检查，%d 项失败 ====" % [_checks, _fails])
@@ -496,6 +497,76 @@ func _test_arena_flow() -> void:
 	])
 	_check(run.score > 0, "整关累计得分 > 0（%d）" % run.score)
 	arena.queue_free()
+
+
+# ── 右下角排序按钮 + 右侧 AI 娘吉祥物 ──────────────────
+func _test_sort_and_companion() -> void:
+	print("[排序与AI娘]")
+	var run := RunState.new()
+	run.reset_run()
+	run.set_ai(AiPool.get_ai("deepdeek"))
+	var arena := ArenaScreen.new()
+	arena.setup(run, LevelPool.get_level("L1"))
+	root.add_child(arena)
+	await process_frame
+
+	# 排序按钮挂在右下工具条里
+	var side := _find_named(arena, "BottomSide")
+	_check(side != null, "右下工具条已构建")
+	var suit_btn: Button = null
+	var rank_btn: Button = null
+	if side != null:
+		for c in side.get_children():
+			if c is HBoxContainer:
+				for b in c.get_children():
+					if b is Button:
+						if "花色" in (b as Button).text:
+							suit_btn = b
+						elif "点数" in (b as Button).text:
+							rank_btn = b
+	_check(suit_btn != null, "按花色排序按钮存在")
+	_check(rank_btn != null, "按点数排序按钮存在")
+
+	# 换一手已知牌，验证两种排序的顺序与数据层同步
+	arena.debug_set_hand(["H3", "S12", "D5", "C8", "H13", "S2", "D11", "C6"])
+	arena.debug_sort_hand("rank")
+	var ids: Array = arena.debug_hand_ids()
+	_check(ids == ["H13", "S12", "D11", "C8", "C6", "D5", "H3", "S2"],
+			"按点数排序：点数从大到小（%s）" % ",".join(ids))
+	var data_ids: Array = []
+	for c in run.poker_hand:
+		data_ids.append(c.id())
+	_check(data_ids == ids, "排序后 run.poker_hand 与视图顺序一致")
+
+	arena.debug_sort_hand("suit")
+	ids = arena.debug_hand_ids()
+	_check(ids == ["S12", "S2", "H13", "H3", "C8", "C6", "D11", "D5"],
+			"按花色排序：♠♥♣♦ 分组、组内点数降序（%s）" % ",".join(ids))
+
+	# 选中的牌排序后保持选中
+	arena.debug_place_card(0)
+	arena.debug_sort_hand("rank")
+	_check(arena.debug_played_count() == 1, "排序不改变已选牌")
+
+	# 右侧 AI 娘：deepdeek → 睡觉 Q 版
+	var comp := arena.get_node_or_null("AiCompanion")
+	_check(comp != null, "右侧 AI 娘已挂载")
+	if comp is AiCompanion:
+		_check((comp as AiCompanion).debug_mode() == "sleep", "deepdeek 显示睡觉 Q 版")
+	arena.queue_free()
+
+	# 其他 AI → 立绘漂浮模式
+	var run2 := RunState.new()
+	run2.reset_run()
+	run2.set_ai(AiPool.get_ai("kweno"))
+	var arena2 := ArenaScreen.new()
+	arena2.setup(run2, LevelPool.get_level("L1"))
+	root.add_child(arena2)
+	await process_frame
+	var comp2 := arena2.get_node_or_null("AiCompanion")
+	if comp2 is AiCompanion:
+		_check((comp2 as AiCompanion).debug_mode() == "portrait", "kweno 显示立绘漂浮")
+	arena2.queue_free()
 
 
 # ── 每关独立种子 & 卡牌翻转 ──────────────────────────

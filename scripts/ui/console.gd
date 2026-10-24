@@ -46,7 +46,9 @@ const TYPE_MAX_TIME := 1.2
 
 ## 日志行统一前缀（所有历史行都对齐到这一列）与统一行高
 const LOG_PREFIX := "> "
-const LOG_LINE_H := UiKit.LOG_LINE_H
+## 字号与行高（2026-10-24 主人要求调大：12/18 → 16/26）
+const FONT_SIZE := 16
+const LOG_LINE_H := 26
 
 var _prefix := "prompt"
 ## 已完整显示的片段（顺序 = 玩家点击顺序）
@@ -130,7 +132,7 @@ func _build() -> void:
 	_cmd_scroll.name = "CmdScroll"
 	_cmd_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_AUTO
 	_cmd_scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
-	_cmd_scroll.custom_minimum_size = Vector2(0, 24)
+	_cmd_scroll.custom_minimum_size = Vector2(0, 30)
 	v.add_child(_cmd_scroll)
 
 	_cmd_row = HBoxContainer.new()
@@ -161,7 +163,7 @@ func _build() -> void:
 func _mk_label(text: String, color: Color) -> Label:
 	var l := Label.new()
 	l.text = text
-	l.add_theme_font_size_override("font_size", UiKit.FS_XS)
+	l.add_theme_font_size_override("font_size", FONT_SIZE)
 	l.add_theme_color_override("font_color", color)
 	l.add_theme_constant_override("line_spacing", UiKit.LINE_SPACING)
 	l.mouse_filter = Control.MOUSE_FILTER_IGNORE

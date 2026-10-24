@@ -87,6 +87,19 @@ var _status_label: Label = null
 var _run_button: Button = null
 var _reroll_button: Button = null
 var _back_button: Button = null
+var _sort_suit_button: Button = null
+var _sort_rank_button: Button = null
+
+# 右侧 AI 娘吉祥物（装饰层）
+var _companion: AiCompanion = null
+
+## 花色排序的分组序：♠ ♥ ♣ ♦（同组内点数从大到小）
+const SUIT_ORDER := {
+	PokerCard.Suit.SPADE: 0,
+	PokerCard.Suit.HEART: 1,
+	PokerCard.Suit.CLUB: 2,
+	PokerCard.Suit.DIAMOND: 3,
+}
 
 # 连携横幅（绶带）
 var _banner: Control = null
@@ -168,6 +181,7 @@ func _build_ui() -> void:
 	_build_right_hud()
 	_build_bottom()
 	_build_banner()
+	_build_companion()
 
 	_card_layer = Control.new()
 	_card_layer.name = "CardLayer"
@@ -351,6 +365,32 @@ func _build_bottom() -> void:
 	_reroll_button.pressed.connect(_on_reroll_pressed)
 	row.add_child(_reroll_button)
 
+	# 排序行（最贴角的一行）：花色 / 点数
+	var sort_row := HBoxContainer.new()
+	sort_row.add_theme_constant_override("separation", UiKit.SP_2)
+	side.add_child(sort_row)
+
+	_sort_suit_button = UiKit.button("♠♥ 按花色", UiKit.FS_XS)
+	_sort_suit_button.custom_minimum_size = Vector2(0, 28)
+	_sort_suit_button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_sort_suit_button.pressed.connect(_on_sort_suit_pressed)
+	sort_row.add_child(_sort_suit_button)
+
+	_sort_rank_button = UiKit.button("按点数", UiKit.FS_XS)
+	_sort_rank_button.custom_minimum_size = Vector2(0, 28)
+	_sort_rank_button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_sort_rank_button.pressed.connect(_on_sort_rank_pressed)
+	sort_row.add_child(_sort_rank_button)
+
+
+## 右侧 AI 娘：右上 HUD 下方、右下按钮上方之间的空档里待着
+func _build_companion() -> void:
+	_companion = AiCompanion.new()
+	_companion.name = "AiCompanion"
+	add_child(_companion)
+	if run != null:
+		_companion.setup(run.ai)
+
 
 ## 结构横幅：ui-ribbon.png 九宫格 + 居中的文案
 func _build_banner() -> void:
@@ -427,8 +467,13 @@ func _layout() -> void:
 
 	var side := get_node_or_null("BottomSide") as Control
 	if side:
-		side.position = Vector2(W - PAD - SIDE_W, H - 150.0)
-		side.size = Vector2(SIDE_W, 120)
+		side.position = Vector2(W - PAD - SIDE_W, H - 156.0)
+		side.size = Vector2(SIDE_W, 132)
+
+	if _companion:
+		var c_top := PAD + CONSOLE_H + UiKit.SP_4
+		_companion.position = Vector2(W - PAD - SIDE_W, c_top)
+		_companion.size = Vector2(SIDE_W, (H - 156.0) - c_top - 8.0)
 
 	if _banner:
 		_banner.position = Vector2((W - BANNER_W) * 0.5, PAD)
@@ -478,13 +523,117 @@ func _layout_hand(animate: bool = true) -> void:
 			target.y -= HOVER_LIFT
 		var target_rot := 0.0 if view.selected else (ang * (0.55 if view == _hovered else 1.0))
 		if animate:
-			var tw := view.create_tween()
+			var tw := _hand_tween(view)
 			tw.set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_OUT)
 			tw.tween_property(view, "position", target, 0.18)
 			tw.parallel().tween_property(view, "rotation", target_rot, 0.18)
 		else:
 			view.position = target
 			view.rotation = target_rot
+
+
+## 造一张手牌位移动画，并顶掉这张卡上还没播完的旧动画（避免两个 tween 抢同一个属性）
+func _hand_tween(view: CardView) -> Tween:
+	if view.has_meta("hand_tween"):
+		var old: Tween = view.get_meta("hand_tween")
+		if old != null and old.is_valid():
+			old.kill()
+	var tw := view.create_tween()
+	view.set_meta("hand_tween", tw)
+	return tw
+
+
+# ─────────────────────────────────────────────────────────
+#  手牌排序（右下角按钮）
+# ─────────────────────────────────────────────────────────
+func _on_sort_suit_pressed() -> void:
+	_sort_hand("suit")
+
+
+func _on_sort_rank_pressed() -> void:
+	_sort_hand("rank")
+
+
+## 排序：重排手牌数组 + 卡片错峰飞到新弧位（平滑动画）。选中的牌保持选中。
+func _sort_hand(mode: String) -> void:
+	if _busy or _overlay.visible:
+		return
+	if _hand_views.size() < 2:
+		return
+	SfxNode.play("ui_click")
+
+	var order: Array[CardView] = _hand_views.duplicate()
+	if mode == "suit":
+		order.sort_custom(_view_lt_suit)
+	else:
+		order.sort_custom(_view_lt_rank)
+	_hand_views = order
+
+	# 数据层跟着排（之后抽牌 / 弃牌的顺序才一致）
+	var cards: Array[PokerCard] = []
+	for v in order:
+		cards.append(v.card)
+	run.poker_hand.assign(cards)
+
+	# 动画：每张卡按新位置序错峰起飞，BACK 缓出带一点弹性
+	var n := _hand_views.size()
+	for i in n:
+		var view := _hand_views[i]
+		var arc := _arc_point(i, n)
+		var pos: Vector2 = arc["pos"]
+		var ang: float = arc["angle"]
+		view.pivot_offset = Vector2(CARD_W * 0.5, CARD_H)
+		var target := pos - Vector2(CARD_W * 0.5, CARD_H)
+		if view.selected:
+			target.y -= SELECT_LIFT
+		elif view == _hovered:
+			target.y -= HOVER_LIFT
+		var target_rot := 0.0 if view.selected else (ang * (0.55 if view == _hovered else 1.0))
+		var tw := _hand_tween(view)
+		tw.set_parallel(true)
+		tw.tween_property(view, "position", target, 0.34).set_delay(i * 0.028) \
+			.set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
+		tw.tween_property(view, "rotation", target_rot, 0.34).set_delay(i * 0.028) \
+			.set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_OUT)
+	_status_label.text = "已按%s排序。" % ("花色" if mode == "suit" else "点数")
+
+
+func _view_lt_suit(a: CardView, b: CardView) -> bool:
+	var sa := int(SUIT_ORDER.get(a.card.suit, 9))
+	var sb := int(SUIT_ORDER.get(b.card.suit, 9))
+	if sa != sb:
+		return sa < sb
+	return a.card.rank > b.card.rank
+
+
+func _view_lt_rank(a: CardView, b: CardView) -> bool:
+	if a.card.rank != b.card.rank:
+		return a.card.rank > b.card.rank
+	return int(SUIT_ORDER.get(a.card.suit, 9)) < int(SUIT_ORDER.get(b.card.suit, 9))
+
+
+func _set_sort_buttons(enabled: bool) -> void:
+	if _sort_suit_button != null:
+		_sort_suit_button.disabled = not enabled
+	if _sort_rank_button != null:
+		_sort_rank_button.disabled = not enabled
+
+
+## 测试钩子：触发一次排序（"suit" / "rank"）
+func debug_sort_hand(mode: String) -> void:
+	if mode == "suit":
+		_on_sort_suit_pressed()
+	elif mode == "rank":
+		_on_sort_rank_pressed()
+
+
+## 测试钩子：手牌卡序列（按视图顺序取 card id，如 "H3"）
+func debug_hand_ids() -> Array:
+	var out: Array = []
+	for v in _hand_views:
+		if v != null and v.card != null:
+			out.append(v.card.id())
+	return out
 
 
 # ─────────────────────────────────────────────────────────
@@ -1009,6 +1158,7 @@ func _on_run_pressed() -> void:
 		return
 	_busy = true
 	_run_button.disabled = true
+	_set_sort_buttons(false)
 
 	# 打字没完就运行 → 立刻补全
 	_console.finish_all()
@@ -1039,6 +1189,7 @@ func _on_run_pressed() -> void:
 	else:
 		_busy = false
 		_run_button.disabled = false
+		_set_sort_buttons(true)
 		_refresh_preview()
 
 
