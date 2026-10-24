@@ -39,7 +39,7 @@ const POKER_RANKS := 13
 ## 一副完整扑克的张数（写死给断言用，避免两边算错）
 const POKER_DECK_SIZE := 52
 ## 每回合发几张到手牌
-const POKER_HAND_SIZE := 5
+const POKER_HAND_SIZE := 8
 ## 一次最多打几张
 const POKER_PLAY_LIMIT := 5
 

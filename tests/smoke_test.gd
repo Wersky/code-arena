@@ -136,11 +136,11 @@ func _test_level_pool() -> void:
 	for l in levels:
 		# 扑克玩法单手 40~1000 分，整关目标分必须落在这个尺度里
 		# 刻度随计分口径变（散牌不计分后整缩小约 6 倍），区间跟着换，防的是"手写大数字塞回来"
-		_check(l.target_score >= 100 and l.target_score <= 1200,
-			"%s 目标分落在扑克尺度区间 100~1200（实得 %d）" % [l.id, l.target_score])
+		_check(l.target_score >= 600 and l.target_score <= 2500,
+			"%s 目标分落在扑克尺度区间 600~2500（实得 %d）" % [l.id, l.target_score])
 		# 目标分 / 出牌次数 = 每手要求的分数，必须低于单手上限（约 1200）
 		var per_hand := float(l.target_score) / float(l.turns)
-		_check(per_hand <= 1200.0, "%s 每手要求 %.1f 分 ≤ 单手上限 1200" % [l.id, per_hand])
+		_check(per_hand <= 250.0, "%s 每手要求 %.1f 分 ≤ 单手上限 250" % [l.id, per_hand])
 
 
 func _test_item_pool() -> void:
