@@ -108,11 +108,15 @@ func _music_stop() -> void:
 func _stream(name: String, dir: String) -> AudioStream:
 	if _streams.has(name):
 		return _streams[name]
-	var path := "%s/%s.wav" % [dir, name]
-	if not ResourceLoader.exists(path):
-		push_warning("SfxNode：找不到音频 %s" % path)
-		return null
-	var st := load(path) as AudioStream
-	if st != null:
-		_streams[name] = st
+	# 同名优先 wav，没有再试 mp3（BGM 现在是 mp3，音效仍是 wav）
+	var st: AudioStream = null
+	for ext in [".wav", ".mp3"]:
+		var path := "%s/%s%s" % [dir, name, ext]
+		if ResourceLoader.exists(path):
+			st = load(path) as AudioStream
+			if st != null:
+				_streams[name] = st
+			break
+	if st == null:
+		push_warning("SfxNode：找不到音频 %s/%s.(wav|mp3)" % [dir, name])
 	return st
