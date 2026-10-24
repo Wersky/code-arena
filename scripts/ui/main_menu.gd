@@ -47,7 +47,7 @@ func _init() -> void:
 
 
 func _ready() -> void:
-	SfxNode.music("bgm_gemini")
+	SfxNode.music("bgm_gemini2")
 	_build_bg()
 	_build_panel()
 	_build_plaque()
