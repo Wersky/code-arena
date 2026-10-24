@@ -17,6 +17,7 @@ import struct
 import wave
 
 SR = 22050
+TAU = math.pi * 2.0
 HERE = os.path.dirname(os.path.abspath(__file__))
 PROJ = os.path.dirname(HERE)
 SFX_DIR = os.path.join(PROJ, "assets", "audio", "sfx")
@@ -43,26 +44,32 @@ def env(t: float, dur: float, a=0.005, r=None) -> float:
     return math.exp(-(t - a) / max(r * 0.35, 1e-4))
 
 
-def square(f: float, dur: float, vol=0.5, duty=0.5, decay=None) -> list:
+def square(f: float, dur: float, vol=0.5, duty=0.5, decay=None,
+           vib_hz=0.0, vib_rate=5.0) -> list:
     n = int(SR * dur)
     out = []
     ph = 0.0
     for i in range(n):
-        ph += f / SR
+        t = i / SR
+        fi = f + (vib_hz * math.sin(TAU * vib_rate * t) if vib_hz else 0.0)
+        ph += fi / SR
         v = 1.0 if (ph % 1.0) < duty else -1.0
-        out.append(v * vol * env(i / SR, dur, r=decay))
+        out.append(v * vol * env(t, dur, r=decay))
     return out
 
 
-def tri(f: float, dur: float, vol=0.5, decay=None) -> list:
+def tri(f: float, dur: float, vol=0.5, decay=None,
+          vib_hz=0.0, vib_rate=5.0) -> list:
     n = int(SR * dur)
     out = []
     ph = 0.0
     for i in range(n):
-        ph += f / SR
+        t = i / SR
+        fi = f + (vib_hz * math.sin(TAU * vib_rate * t) if vib_hz else 0.0)
+        ph += fi / SR
         p = ph % 1.0
         v = 4.0 * abs(p - 0.5) - 1.0
-        out.append(v * vol * env(i / SR, dur, r=decay))
+        out.append(v * vol * env(t, dur, r=decay))
     return out
 
 
@@ -118,7 +125,16 @@ def arp(names, nd=0.07, wave=square, vol=0.5) -> list:
     return seq(evs)
 
 
+def normalize(samples: list, peak: float = 0.85) -> list:
+    m = max(1e-6, max(abs(v) for v in samples))
+    if m > peak:
+        k = peak / m
+        samples = [v * k for v in samples]
+    return samples
+
+
 def save(name: str, samples: list, subdir: str = "sfx") -> None:
+    samples = normalize(samples)
     d = os.path.join(PROJ, "assets", "audio", subdir)
     os.makedirs(d, exist_ok=True)
     path = os.path.join(d, name + ".wav")
@@ -164,69 +180,142 @@ def build_sfx() -> None:
 
 
 def build_music() -> None:
-    """bgm_main：8 小节循环，C 大调，118 BPM。
-    三角波贝斯（每拍）+ 方波主旋律 + 白噪打击（反拍 hat）。
-    结尾对齐小节线，无缝循环。
+    """bgm_main：68 秒大循环 · 「赌博秘境」式催眠。
+
+    设计思路（要的就是让人不想停）：
+    · 安达卢西亚进行 Am-G-F-E——一级级往下坠再拉回来，天然的"再来一把"感
+    · 32 小节 AABA+回转的结构：循环点藏在回转小节里，听不出接缝
+    · 八分音符琶音垫（chip shimmer）从头铺到尾—— hypnotic 底座
+    · B 段换和弦 Lift 一下，A' 段主旋律升八度——重复里有变化
+    · swing：反拍全部后拖 10%，赌场 lounge 的慵懒
+    · 主旋律带 5Hz 振颤——微微的"晕"，像喝了两杯
     """
-    bpm = 118.0
-    beat = 60.0 / bpm                     # 一拍的秒数
+    bpm = 112.0
+    beat = 60.0 / bpm
     bar = beat * 4
-    total_bars = 8
-    total = int(SR * bar * total_bars)
+    bars = 32
+    total = int(SR * bar * bars)
+    sw = 0.10 * beat               # swing：反拍后拖量
 
-    # 和弦进行：C  Am  F  G ｜ C  Am  F  G（卡牌游戏的"稳"）
-    chords = [
-        ["C3", "E3", "G3"],
-        ["A2", "C3", "E3"],
-        ["F2", "A2", "C3"],
-        ["G2", "B2", "D3"],
-    ] * 2
+    CH = {
+        "Am": ["A2", "A3", "C4", "E4"],
+        "G":  ["G2", "G3", "B3", "D4"],
+        "F":  ["F2", "F3", "A3", "C4"],
+        "E":  ["E2", "E3", "G#3", "B3"],
+    }
+    # 32 小节和声：前奏 A A B A' 回转，全部走 Am-G-F-E
+    prog = (["Am", "G", "F", "E"] * 8)
 
-    # 主旋律（音名, 起拍, 时值拍数）——五声为主，避免难听的半音碰撞
-    melody = [
-        ("G4", 0.0, 0.5), ("C5", 0.5, 0.5), ("E5", 1.0, 1.0), ("D5", 2.0, 0.5),
-        ("C5", 2.5, 0.5), ("G4", 3.0, 1.0),
-        ("A4", 4.0, 0.5), ("C5", 4.5, 0.5), ("E5", 5.0, 1.0), ("A4", 6.0, 1.0),
-        ("G4", 7.0, 1.0), ("E4", 8.0, 1.0),
-        ("F4", 8.0, 0.5), ("A4", 8.5, 0.5), ("C5", 9.0, 1.0), ("A4", 10.0, 0.5),
-        ("G4", 10.5, 0.5), ("F4", 11.0, 1.0),
-        ("G4", 12.0, 0.5), ("B4", 12.5, 0.5), ("D5", 13.0, 1.0), ("B4", 14.0, 0.5),
-        ("G4", 14.5, 0.5), ("C5", 15.0, 1.0),
-        ("E5", 16.0, 0.5), ("G5", 16.5, 0.5), ("E5", 17.0, 1.0), ("C5", 18.0, 0.5),
-        ("D5", 18.5, 0.5), ("E5", 19.0, 1.0),
-        ("A4", 20.0, 1.0), ("C5", 21.0, 0.5), ("B4", 21.5, 0.5), ("A4", 22.0, 0.5),
-        ("G4", 22.5, 0.5), ("E4", 23.0, 1.0),
-        ("F4", 24.0, 0.5), ("A4", 24.5, 0.5), ("C5", 25.0, 1.0), ("D5", 26.0, 0.5),
-        ("C5", 26.5, 0.5), ("A4", 27.0, 1.0),
-        ("B4", 28.0, 0.5), ("D5", 28.5, 0.5), ("G5", 29.0, 1.0), ("E5", 30.0, 0.5),
-        ("D5", 30.5, 0.5), ("C5", 31.0, 1.0),
-    ]
+    def sec(b):        # 小节号 → 段落
+        if b < 4:  return "intro"
+        if b < 12: return "A"
+        if b < 20: return "B"
+        if b < 28: return "A2"
+        return "out"
 
     evs = []
-    # 贝斯：每小节根音 ×4 拍（八分音符律动）
-    for b in range(total_bars):
-        root = chords[b % len(chords)][0]
+
+    # ── 贝斯：每拍根音，第 4 个八分跳八度（walking 感）──
+    for b in range(bars):
+        if sec(b) == "out":      # 回转段：四分音符一步步走下来
+            evs.append((b * bar, tri(note(CH[prog[b]][0]), beat * 0.9, vol=0.34)))
+            continue
+        root = note(CH[prog[b]][0])
         for e in range(8):
-            t = b * bar + e * beat * 0.5
-            f = note(root) * (2.0 if e % 4 == 3 else 1.0)
+            t = b * bar + e * beat * 0.5 + (sw if e % 2 else 0.0)
+            f = root * (2.0 if e % 4 == 3 else 1.0)
             evs.append((t, tri(f, beat * 0.42, vol=0.30)))
 
-    # 和声垫：每小节三和弦整小节（音量很低）
-    for b in range(total_bars):
-        for nm in chords[b % len(chords)]:
-            evs.append((b * bar, tri(note(nm) * 2.0, bar * 0.96, vol=0.08)))
+    # ── 和声垫：整小节，音量极低 ──
+    for b in range(bars):
+        if sec(b) == "intro":
+            continue
+        for nm in CH[prog[b]][1:]:
+            evs.append((b * bar, tri(note(nm), bar * 0.96, vol=0.07)))
 
-    # 主旋律
-    for nm, start_beat, dur_beats in melody:
-        evs.append((start_beat * beat,
-                    square(note(nm), dur_beats * beat * 0.9, vol=0.22, duty=0.35)))
+    # ── 琶音垫（chip shimmer）：八分音符滚和弦，A / A' 段铺满 ──
+    ARP = {"Am": ["A4","C5","E5","C5"], "G": ["G4","B4","D5","B4"],
+           "F": ["F4","A4","C5","A4"],  "E": ["E4","G#4","B4","G#4"]}
+    for b in range(bars):
+        if sec(b) not in ("A", "A2"):
+            continue
+        for e in range(8):
+            t = b * bar + e * beat * 0.5 + (sw if e % 2 else 0.0)
+            nm = ARP[prog[b]][e % 4] if e % 2 == 0 else ARP[prog[b]][3 - e % 4]
+            oct_up = 2.0 if (sec(b) == "A2" and e >= 4) else 1.0
+            evs.append((t, square(note(nm) * oct_up, beat * 0.4,
+                                  vol=0.13, duty=0.3)))
 
-    # 打击：每拍 kick（低频短三角）+ 反拍 hat（白噪）
-    for b in range(total_bars):
-        for q in range(4):
-            t = b * bar + q * beat
-            evs.append((t, tri(70.0, 0.09, vol=0.42)))
-            evs.append((t + beat * 0.5, noise(0.03, vol=0.10)))
+    # ── 主旋律（hook）：带振颤的方波 ──
+    def lead(t_beats, nm, dur_beats, vol=0.24, oct_up=False):
+        evs.append((t_beats * beat,
+                    square(note(nm) * (2.0 if oct_up else 1.0),
+                           dur_beats * beat * 0.92, vol=vol, duty=0.35,
+                           vib_hz=5.0, vib_rate=5.5)))
+
+    # A 段（小节 4-11）：两个小节一句，跟着和声下坠
+    A_PHRASES = [
+        [("C5",1),("B4",1),("A4",2), ("B4",1),("D5",1),("B4",2)],      # Am→G
+        [("A4",1),("C5",1),("A4",2), ("G#4",2),("E4",2)],              # F→E
+        [("E5",1),("D5",1),("C5",2), ("B4",1),("D5",1),("G4",2)],      # Am→G
+        [("C5",1),("A4",1),("F4",2), ("E4",3),("rest",1)],             # F→E
+    ]
+    for pi, phr in enumerate(A_PHRASES):
+        t0 = (4 + pi * 2) * 4          # 小节起点（拍）
+        for nm, d in phr:
+            if nm != "rest":
+                lead(t0, nm, d)
+            t0 += d
+
+    # B 段（12-19）：旋律飞起来
+    B_PHRASES = [
+        [("A4",2),("G4",2)], [("B4",2),("A4",2)],
+        [("C5",1),("D5",1),("E5",2)], [("E5",4)],
+        [("F5",2),("E5",2)], [("D5",2),("B4",2)],
+        [("G#4",2),("B4",2)], [("E5",3),("rest",1)],
+    ]
+    for bi, phr in enumerate(B_PHRASES):
+        t0 = (12 + bi) * 4
+        for nm, d in phr:
+            if nm != "rest":
+                lead(t0, nm, d, vol=0.26)
+            t0 += d
+
+    # A' 段（20-27）：同一句 hook 升八度（音量压一点，不刺）
+    for pi, phr in enumerate(A_PHRASES):
+        t0 = (20 + pi * 2) * 4
+        for nm, d in phr:
+            if nm != "rest":
+                lead(t0, nm, d, vol=0.17, oct_up=True)
+            t0 += d
+
+    # 回转（28-31）：鼓抽掉，旋律一句向上的 tag 拉回循环点
+    for nm, d, off in [("C5",1,0),("D5",1,1),("E5",2,2),
+                        ("D5",1,4),("B4",1,5),("E4",2,6)]:
+        lead(30 * 4 + off, nm, d, vol=0.22)
+
+    # ── 打击 ──
+    for b in range(bars):
+        s_ = sec(b)
+        # kick：1、3；B/A' 加"2 的反拍"推一把
+        for q in [0, 2]:
+            evs.append((b * bar + q * beat, tri(70.0, 0.09, vol=0.42)))
+        if s_ in ("B", "A2"):
+            evs.append((b * bar + 1.5 * beat + sw, tri(62.0, 0.08, vol=0.30)))
+        if s_ == "out":
+            continue
+        # hat：全部八分，反拍带 swing 且加重
+        for e in range(8):
+            t = b * bar + e * beat * 0.5 + (sw if e % 2 else 0.0)
+            evs.append((t, noise(0.028, vol=0.13 if e % 2 else 0.08)))
+        # 赌场脉冲：2、4 拍的高音木鱼
+        for q in [1, 3]:
+            evs.append((b * bar + q * beat,
+                        square(note("E6"), 0.03, vol=0.10, duty=0.2)))
+        # B 段军噪
+        if s_ == "B":
+            for q in [1, 3]:
+                evs.append((b * bar + q * beat, noise(0.07, vol=0.16)))
 
     save("bgm_main", seq(evs, total=total), subdir="music")
 
