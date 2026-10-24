@@ -582,11 +582,6 @@ const SPIN_FRAMES := 8
 const LOADRUN_SLOT := Rect2(40, 26, 640, 28)     ## 相对 bar 左上角的内槽矩形
 
 
-## smoothstep：缓起缓落，跳舞自转的角度曲线用
-func _ease_in_out(k: float) -> float:
-	return k * k * (3.0 - 2.0 * k)
-
-
 func _capture_loadrun(out_path: String) -> void:
 	var host := Control.new()
 	host.set_anchors_preset(Control.PRESET_FULL_RECT)
@@ -638,18 +633,6 @@ func _capture_loadrun(out_path: String) -> void:
 	spin.visible = false
 	host.add_child(spin)
 
-	# 贴地椭圆影子：跳起时缩小变淡——"离地感"靠它才成立
-	var spin_shadow := Polygon2D.new()
-	spin_shadow.name = "SpinShadow"
-	var ellipse := PackedVector2Array()
-	for k in 24:
-		var a := TAU * float(k) / 24.0
-		ellipse.append(Vector2(cos(a) * 30.0, sin(a) * 8.0))
-	spin_shadow.polygon = ellipse
-	spin_shadow.color = Color(0, 0, 0, 0.30)
-	spin_shadow.visible = false
-	host.add_child(spin_shadow)
-
 	var out_dir := "res://.tmp/loadrun"
 	DirAccess.make_dir_recursive_absolute(out_dir)
 	var frames := int(LOADRUN_FPS * LOADRUN_SECS)
@@ -664,65 +647,19 @@ func _capture_loadrun(out_path: String) -> void:
 		#   期间进度条不停（边走边转），落地带轻微上下弹。
 		var in_dance := false
 		var dance_p := 0.0
-		var dance_idx := 0
-		for wi in DANCE_WINDOWS.size():
-			var w: Vector2 = DANCE_WINDOWS[wi]
+		for w: Vector2 in DANCE_WINDOWS:
 			if v >= w.x and v <= w.y:
 				in_dance = true
 				dance_p = (v - w.x) / (w.y - w.x)
-				dance_idx = wi
 		if in_dance:
 			rig.visible = false
 			spin.visible = true
-			spin_shadow.visible = true
-			# 第二段更来劲：转两圈、弹更高、晃更大
-			var loops := 1 + dance_idx
-			var energy := 1.0 + 0.3 * dance_idx
-
-			# ── 三段式编排（帧角 0=s0 正面 … 0.25=s2 朝右 … 0.5=s4 背面）──
-			#   亮相：从跑步朝向(s2)转过来看你，蹲一下蓄力
-			#   自转：缓起缓落的整圈，配连续正弦弹跳 + 落点挤压 + 侧倾
-			#   收势：转回 s2 朝右——和跑步精灵同朝向，换回来不跳戏
-			var angle := 0.0
-			var bob := 0.0        ## 正=向下（蹲），负=向上（跳）
-			var squash := 0.0     ## 0..1，落点挤压量
-			var sway := 0.0       ## 侧倾（弧度）
-			if dance_p < 0.18:
-				var k: float = _ease_in_out(dance_p / 0.18)
-				angle = 0.25 * (1.0 - k)
-				var crouch := sin(dance_p / 0.18 * PI)
-				bob = crouch * 6.0
-				squash = crouch * 0.10
-			elif dance_p < 0.82:
-				var k := (dance_p - 0.18) / 0.64
-				angle = _ease_in_out(k) * float(loops)
-				var hops := 2.0 * loops
-				var lift := (1.0 - cos(k * TAU * hops)) * 0.5
-				bob = -lift * 14.0 * energy
-				squash = (1.0 - lift) * 0.10 * energy
-				sway = sin(k * TAU * hops) * 0.05 * energy
-			else:
-				var k: float = _ease_in_out((dance_p - 0.82) / 0.18)
-				angle = 0.25 * k
-				var land := sin((dance_p - 0.82) / 0.18 * PI)
-				bob = -land * 6.0 * energy
-				squash = land * 0.08
-
-			spin.texture = spin_frames[int(round(angle * SPIN_FRAMES)) % SPIN_FRAMES]
-			spin.scale = Vector2((1.0 + squash) * LOADRUN_SCALE,
-					(1.0 - squash) * LOADRUN_SCALE)
-			spin.rotation = sway
-			spin.position = Vector2(edge, LOADRUN_BAR.position.y + bob)
-
-			# 影子跟着离地高度缩放
-			var air := clampf(-bob / (14.0 * energy), 0.0, 1.0)
-			spin_shadow.position = Vector2(edge, LOADRUN_BAR.position.y + 6.0)
-			spin_shadow.scale = Vector2.ONE * (1.0 - 0.35 * air)
-			spin_shadow.modulate = Color(1, 1, 1, 1.0 - 0.6 * air)
+			spin.texture = spin_frames[mini(int(dance_p * SPIN_FRAMES), SPIN_FRAMES - 1)]
+			var hop := -absf(sin(dance_p * PI * 4.0)) * 6.0     ## 转圈时的小弹跳
+			spin.position = Vector2(edge, LOADRUN_BAR.position.y + hop)
 		else:
 			rig.visible = true
 			spin.visible = false
-			spin_shadow.visible = false
 			dancer.position = Vector2(edge, LOADRUN_BAR.position.y - 126.0 * LOADRUN_SCALE)
 			dancer.rotation = 0.0
 			dancer.scale = Vector2.ONE * LOADRUN_SCALE
