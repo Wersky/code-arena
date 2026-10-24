@@ -307,11 +307,11 @@ def build_music() -> None:
         # hat：全部八分，反拍带 swing 且加重
         for e in range(8):
             t = b * bar + e * beat * 0.5 + (sw if e % 2 else 0.0)
-            evs.append((t, noise(0.028, vol=0.13 if e % 2 else 0.08)))
+            evs.append((t, noise(0.028, vol=0.09 if e % 2 else 0.06)))
         # 赌场脉冲：2、4 拍的高音木鱼
         for q in [1, 3]:
             evs.append((b * bar + q * beat,
-                        square(note("E6"), 0.03, vol=0.10, duty=0.2)))
+                        square(note("E6"), 0.03, vol=0.05, duty=0.2)))
         # B 段军噪
         if s_ == "B":
             for q in [1, 3]:
