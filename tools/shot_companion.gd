@@ -105,6 +105,11 @@ func _run() -> void:
 		var orb_ok := oi > fi and fi >= 0
 		print("[%s] 费用球是子节点且绘制在框之上（Frame#%d CostOrb#%d）" % [
 			"OK" if orb_ok else "FAIL", fi, oi])
+		var orb_node: Control = v0.get_node_or_null("CostOrb") as Control
+		var frame_node: Control = v0.get_node_or_null("Frame") as Control
+		if orb_node != null and frame_node != null:
+			print("[cost] 数字 rect=%s ｜ 框 rect=%s ｜ 卡=%s" % [
+				str(orb_node.get_rect()), str(frame_node.get_rect()), str(v0.get_rect())])
 
 	# ⑦ 导出第一张卡面贴图（生成立绘）供人工目检
 	if cards.size() > 0:

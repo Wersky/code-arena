@@ -64,10 +64,21 @@ func setup(c: StsCard) -> void:
 			_frame.texture = ft as Texture2D
 	add_child(_frame)
 
-	# ② 顶栏卡名：类型色 + 黑描边（描边让像素字在花纹上读得清）
+	# ② 顶栏：费用数字（左）+ 卡名（中，给费用让出左侧）
+	cost_lbl = UiKit.label(str(c.cost), UiKit.FS_S, C_COST)
+	cost_lbl.name = "CostOrb"
+	cost_lbl.position = Vector2(4, 0)
+	cost_lbl.size = Vector2(26, NAME_H)
+	cost_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	cost_lbl.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	cost_lbl.add_theme_constant_override("outline_size", 4)
+	cost_lbl.add_theme_color_override("font_outline_color", Color(0.02, 0.03, 0.06, 0.95))
+	cost_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	add_child(cost_lbl)
+
 	_name_lbl = UiKit.label(StsCardPool.card_name(c.id), UiKit.FS_XS, kcolor)
-	_name_lbl.position = Vector2(4, 4)
-	_name_lbl.size = Vector2(W - 8, NAME_H)
+	_name_lbl.position = Vector2(32, 4)
+	_name_lbl.size = Vector2(W - 36, NAME_H)
 	_name_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	_name_lbl.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	_name_lbl.add_theme_constant_override("outline_size", 3)
@@ -111,19 +122,6 @@ func setup(c: StsCard) -> void:
 	_desc_lbl.add_theme_color_override("font_outline_color", Color(0.02, 0.03, 0.06, 0.9))
 	_desc_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	add_child(_desc_lbl)
-
-	# ⑤ 能量费用：**纯文本数字**（2026-10-25 主人钦定：不要球底/圆环，仅文字；
-	#    黑描边保证压在框图花纹上仍读得清）。必须是子节点——画在框贴图之上。
-	var cost_lbl := UiKit.label(str(c.cost), UiKit.FS_S, C_COST)
-	cost_lbl.name = "CostOrb"
-	cost_lbl.position = Vector2(6, 4)
-	cost_lbl.size = Vector2(30, 26)
-	cost_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	cost_lbl.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-	cost_lbl.add_theme_constant_override("outline_size", 4)
-	cost_lbl.add_theme_color_override("font_outline_color", Color(0.02, 0.03, 0.06, 0.95))
-	cost_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	add_child(cost_lbl)
 
 	mouse_entered.connect(_on_hover.bind(true))
 	mouse_exited.connect(_on_hover.bind(false))
