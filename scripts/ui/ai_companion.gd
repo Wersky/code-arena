@@ -18,6 +18,10 @@ const SLEEP_SCALE := 4
 const Z_DURS := [2.4, 3.0, 3.6]
 const Z_RISE := 22.0
 
+## 生成的睡觉立绘（2026-10-25 主人钦定的 DeepSeek 专属形象，
+## 由「蓝白鲸纹女仆像素角色设定图」图生图而来；画里已自带 ZZZ）
+const SLEEP_ASSET := "res://assets/art/ai-deepdeek-sleep.png"
+
 ## 深蓝调色板（与 chibi_rig 占位件一致，保持一套 DeepSeek 系颜色）
 const C_OUT := Color("#1B2246")
 const C_BLUE := Color("#4D6BFE")
@@ -35,6 +39,7 @@ var _ai: AiData = null
 var _art: TextureRect = null
 var _zs: Array[Label] = []
 var _mode := ""   ## "sleep" / "portrait"
+var _art_generated := false   ## 睡觉图用的是生成立绘（true）还是程序化回退（false）
 
 
 func _init() -> void:
@@ -65,13 +70,28 @@ func _teardown() -> void:
 	_art = null
 	_zs.clear()
 	_mode = ""
+	_art_generated = false
 
 
 # ─────────────────────────────────────────────────────────
 #  造型
 # ─────────────────────────────────────────────────────────
-## Q 版睡觉小人：头枕小枕、身上盖毯、脚从毯边露一点，整幅画在 64×46 美术像素上
+## Q 版睡觉小人：优先用生成的立绘（主人钦定的专属形象）；资产缺失时回退程序化像素画
 func _make_sleep_sprite() -> TextureRect:
+	var rect := TextureRect.new()
+	rect.name = "Art"
+	rect.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	if ResourceLoader.exists(SLEEP_ASSET):
+		var t: Resource = load(SLEEP_ASSET)
+		if t is Texture2D:
+			rect.texture = t as Texture2D
+			# 生成图是高密度像素画、显示时大幅缩小——线性过滤更稳，NEAREST 会丢细描边
+			rect.texture_filter = CanvasItem.TEXTURE_FILTER_LINEAR
+			rect.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+			rect.stretch_mode = TextureRect.STRETCH_SCALE
+			_art_generated = true
+			return rect
+	_art_generated = false
 	var img := Image.create_empty(SLEEP_W, SLEEP_H, false, Image.FORMAT_RGBA8)
 	img.fill(Color(0, 0, 0, 0))
 	# 小枕头（头下面那只：中蓝 + 顶上一条亮边，和深蓝坐垫拉开层次）
@@ -135,12 +155,12 @@ func _make_sleep_sprite() -> TextureRect:
 	_blob(img, Rect2i(17, 21, 2, 1), C_BLUSH, Color(0, 0, 0, 0), false)
 	_blob(img, Rect2i(13, 22, 3, 1), C_MOUTH, Color(0, 0, 0, 0), false)
 
-	var rect := TextureRect.new()
-	rect.name = "Art"
-	rect.texture = ImageTexture.create_from_image(img)
-	rect.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
-	rect.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	return rect
+	var fallback := TextureRect.new()
+	fallback.name = "Art"
+	fallback.texture = ImageTexture.create_from_image(img)
+	fallback.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
+	fallback.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	return fallback
 
 
 ## 其他 AI：直接用立绘，轻轻漂
@@ -165,10 +185,10 @@ func _make_portrait(ai: AiData) -> TextureRect:
 func _place_children() -> void:
 	if _art == null:
 		return
-	var art_size := Vector2(SLEEP_W, SLEEP_H) * SLEEP_SCALE if _mode == "sleep" \
-			else _art.custom_minimum_size
+	var art_size := _art_display_size()
 	# 底部留 8px 呼吸空间；睡觉小人偏左一点点，Zzz 从头顶飘
 	var cx := size.x * (0.44 if _mode == "sleep" else 0.5)
+	_art.size = art_size
 	_art.pivot_offset = Vector2(art_size.x * 0.5, art_size.y if _mode == "sleep" else art_size.y * 0.5)
 	_art.position = Vector2(cx - art_size.x * 0.5, size.y - art_size.y - 8.0)
 
@@ -177,6 +197,19 @@ func _place_children() -> void:
 		z.pivot_offset = z.get_minimum_size() * 0.5
 		z.position = Vector2(cx - art_size.x * 0.35 + i * 14.0,
 				size.y - art_size.y - 18.0 - i * 12.0)
+
+
+## 当前造型在盒子里的显示尺寸
+func _art_display_size() -> Vector2:
+	if _mode == "portrait":
+		return _art.custom_minimum_size
+	if not _art_generated or _art.texture == null:
+		return Vector2(SLEEP_W, SLEEP_H) * SLEEP_SCALE
+	# 生成立绘：按原始宽高比缩进盒子（高不超过 300）
+	var aspect := float(_art.texture.get_width()) / float(_art.texture.get_height())
+	var max_h := minf(size.y - 16.0, 300.0)
+	var w := minf(size.x - 8.0, max_h * aspect)
+	return Vector2(w, w / aspect)
 
 
 # ─────────────────────────────────────────────────────────
@@ -190,20 +223,21 @@ func _start_anim() -> void:
 			.set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN_OUT)
 		tw.tween_property(_art, "scale:y", 1.0, 1.7) \
 			.set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN_OUT)
-		# Zzz：三个 Z 错相上飘、渐隐
-		for i in Z_DURS.size():
-			var z := Label.new()
-			z.text = "Z"
-			z.add_theme_font_size_override("font_size", [18, 14, 11][i])
-			z.add_theme_color_override("font_color", C_Z)
-			z.add_theme_constant_override("outline_size", 4)
-			z.add_theme_color_override("font_outline_color", Color(0, 0, 0, 0.85))
-			z.mouse_filter = Control.MOUSE_FILTER_IGNORE
-			add_child(z)
-			_zs.append(z)
-		_place_children()
-		for i in _zs.size():
-			_loop_z(_zs[i], Z_DURS[i])
+		# Zzz：三个 Z 错相上飘、渐隐（生成立绘画里已自带 ZZZ，就不叠加了）
+		if not _art_generated:
+			for i in Z_DURS.size():
+				var z := Label.new()
+				z.text = "Z"
+				z.add_theme_font_size_override("font_size", [18, 14, 11][i])
+				z.add_theme_color_override("font_color", C_Z)
+				z.add_theme_constant_override("outline_size", 4)
+				z.add_theme_color_override("font_outline_color", Color(0, 0, 0, 0.85))
+				z.mouse_filter = Control.MOUSE_FILTER_IGNORE
+				add_child(z)
+				_zs.append(z)
+			_place_children()
+			for i in _zs.size():
+				_loop_z(_zs[i], Z_DURS[i])
 	else:
 		# 立绘漂浮：缩放 + 微转（pivot 在中心，位置不会被锚点拉回去）
 		var tw := _art.create_tween().set_loops()

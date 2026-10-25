@@ -69,7 +69,8 @@ func _run() -> void:
 	var art := comp.get_node_or_null("Art") as TextureRect
 	if art != null and art.texture != null:
 		var img := art.texture.get_image()
-		img.resize(img.get_width() * 4, img.get_height() * 4, Image.INTERPOLATE_NEAREST)
+		if img.get_width() <= 512:
+			img.resize(img.get_width() * 4, img.get_height() * 4, Image.INTERPOLATE_NEAREST)
 		var abs := ProjectSettings.globalize_path(OUT_SLEEP)
 		img.save_png(abs)
 		print("[OK] 睡觉小人贴图已导出：%s（%d×%d）" % [abs, img.get_width(), img.get_height()])
