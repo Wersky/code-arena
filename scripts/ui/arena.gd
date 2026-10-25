@@ -6,7 +6,7 @@ class_name ArenaScreen
 ##   左侧竖栏   面板（标题条装饰）＋ 图标列 / 标签列 / **数值列** 三列对齐
 ##   中上       BAT 风格控制台框（PromptConsole）——梗卡在这里被"敲"出来
 ##   右上       预计分 / 本关分 / 代码结构（右边缘统一钉在屏幕右边距 − 24）
-##   下方       梗卡沿圆弧扇形展开，悬停时该卡放大
+##   下方       手牌横向一排平铺（不旋转、不遮挡），悬停时该卡放大
 ##
 ## 机制（新）：
 ##   点手牌 → 梗卡离手 → 控制台**流式打出梗名**
@@ -35,10 +35,10 @@ const STATUS_W := 700.0          ## 状态栏宽
 const BANNER_W := 720.0          ## 连携横幅宽
 const BANNER_H := 32.0           ## 连携横幅高
 
-# ── 圆弧扇形参数（手感不变，别回退）─────────────────────
-const ARC_RADIUS := 1150.0        # 半径越大弧越平
-const ARC_MAX_ANGLE := 0.30       # 最外侧卡的角度（弧度）
-const ARC_BOTTOM := 30.0          # 中间那张卡离屏幕底边的距离
+# ── 手牌横排参数（2026-10-25 主人钦定：取消圆弧，横向平铺不遮挡）────
+const HAND_BOTTOM := 30.0         # 卡的底边离屏幕底边的距离
+const HAND_GAP := 10.0            # 相邻两卡的间隔（可用宽度不足时自动收窄）
+const HAND_MIN_GAP := -34.0       # 间隔下限：允许轻叠 34px，也不许跑出牌区
 const SELECT_LIFT := 36.0     # 选中时抬起
 const HOVER_LIFT := 30.0          # 悬停时抬起的距离
 const HOVER_SCALE := 1.16         # 悬停时的放大倍率
@@ -494,42 +494,40 @@ func _layout() -> void:
 	_layout_hand()
 
 
-## 圆弧扇形：中间最低，两边抬高并外旋
-func _arc_point(i: int, n: int) -> Dictionary:
-	var mid := (n - 1) * 0.5
-	var a := 0.0
+## 手牌槽位：横向一排、底边对齐、不旋转。
+## 牌区 = 左栏右缘 → 右列左缘，总宽不够时自动收窄间隔（下限允许轻叠）。
+func _hand_slot(i: int, n: int) -> Dictionary:
+	var left := CONSOLE_X
+	var right := size.x - PAD - SIDE_W
+	var avail := right - left
+	var gap := HAND_GAP
 	if n > 1:
-		a = (float(i) - mid) / mid * ARC_MAX_ANGLE
-	var pivot_x := size.x * 0.5
-	var pivot_y := (size.y - ARC_BOTTOM) - ARC_RADIUS
-	var px := pivot_x + ARC_RADIUS * sin(a)
-	var py := pivot_y + ARC_RADIUS * cos(a)
-	return {"pos": Vector2(px, py), "angle": a}
+		gap = clampf((avail - CARD_W * n) / float(n - 1), HAND_MIN_GAP, HAND_GAP)
+	var total := CARD_W * n + gap * float(n - 1)
+	var x := (left + right) * 0.5 - total * 0.5 + i * (CARD_W + gap)
+	return {"pos": Vector2(x, size.y - HAND_BOTTOM - CARD_H), "angle": 0.0}
 
 
 func _layout_hand(animate: bool = true) -> void:
 	var n := _hand_views.size()
 	for i in n:
 		var view := _hand_views[i]
-		var arc := _arc_point(i, n)
-		var pos: Vector2 = arc["pos"]
-		var ang: float = arc["angle"]
-		# 卡以"底边中点"为支点贴到弧上，旋转跟随弧线
+		var slot := _hand_slot(i, n)
+		var target: Vector2 = slot["pos"]
+		# 抬升/悬停以"底边中点"为支点
 		view.pivot_offset = Vector2(CARD_W * 0.5, CARD_H)
-		var target := pos - Vector2(CARD_W * 0.5, CARD_H)
 		if view.selected:
 			target.y -= SELECT_LIFT
 		elif view == _hovered:
 			target.y -= HOVER_LIFT
-		var target_rot := 0.0 if view.selected else (ang * (0.55 if view == _hovered else 1.0))
 		if animate:
 			var tw := _hand_tween(view)
 			tw.set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_OUT)
 			tw.tween_property(view, "position", target, 0.18)
-			tw.parallel().tween_property(view, "rotation", target_rot, 0.18)
+			tw.parallel().tween_property(view, "rotation", 0.0, 0.18)
 		else:
 			view.position = target
-			view.rotation = target_rot
+			view.rotation = 0.0
 
 
 ## 造一张手牌位移动画，并顶掉这张卡上还没播完的旧动画（避免两个 tween 抢同一个属性）
@@ -575,25 +573,22 @@ func _sort_hand(mode: String) -> void:
 		cards.append(v.card)
 	run.poker_hand.assign(cards)
 
-	# 动画：每张卡按新位置序错峰起飞，BACK 缓出带一点弹性
+	# 动画：每张卡按新槽位序错峰起飞，BACK 缓出带一点弹性
 	var n := _hand_views.size()
 	for i in n:
 		var view := _hand_views[i]
-		var arc := _arc_point(i, n)
-		var pos: Vector2 = arc["pos"]
-		var ang: float = arc["angle"]
+		var slot := _hand_slot(i, n)
+		var target: Vector2 = slot["pos"]
 		view.pivot_offset = Vector2(CARD_W * 0.5, CARD_H)
-		var target := pos - Vector2(CARD_W * 0.5, CARD_H)
 		if view.selected:
 			target.y -= SELECT_LIFT
 		elif view == _hovered:
 			target.y -= HOVER_LIFT
-		var target_rot := 0.0 if view.selected else (ang * (0.55 if view == _hovered else 1.0))
 		var tw := _hand_tween(view)
 		tw.set_parallel(true)
 		tw.tween_property(view, "position", target, 0.34).set_delay(i * 0.028) \
 			.set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
-		tw.tween_property(view, "rotation", target_rot, 0.34).set_delay(i * 0.028) \
+		tw.tween_property(view, "rotation", 0.0, 0.34).set_delay(i * 0.028) \
 			.set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_OUT)
 	_status_label.text = "已按%s排序。" % ("花色" if mode == "suit" else "点数")
 

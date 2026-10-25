@@ -76,6 +76,31 @@ func _run() -> void:
 		print("[OK] 睡觉小人贴图已导出：%s（%d×%d）" % [abs, img.get_width(), img.get_height()])
 	else:
 		print("[FAIL] 睡觉小人贴图导出失败")
+
+	# ⑤ 手牌横排：全部落在牌区（左栏右缘 → 右列左缘）、不旋转、底边对齐
+	var cards: Array = []
+	var layer := arena.get_node_or_null("CardLayer")
+	if layer != null:
+		for c in layer.get_children():
+			if c is CardView:
+				cards.append(c)
+	var in_zone := true
+	var no_rot := true
+	var same_bottom := true
+	var bottom := -1.0
+	for c in cards:
+		var cv := c as CardView
+		if absf(cv.rotation) > 0.001:
+			no_rot = false
+		if cv.position.x < 267.0 or cv.position.x + 150.0 > 1577.0:
+			in_zone = false
+		if bottom < 0.0:
+			bottom = cv.position.y
+		elif absf(cv.position.y - bottom) > 0.5:
+			same_bottom = false
+	print("[%s] 手牌 %d 张横排：全部落在牌区 268..1576 内" % ["OK" if in_zone else "FAIL", cards.size()])
+	print("[%s] 手牌全部不旋转" % ("OK" if no_rot else "FAIL"))
+	print("[%s] 手牌底边对齐" % ("OK" if same_bottom else "FAIL"))
 	host.queue_free()
 
 
