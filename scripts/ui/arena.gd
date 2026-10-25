@@ -1,128 +1,91 @@
 extends Control
 class_name ArenaScreen
-## 战斗界面：一张 Benchmark 评测任务。
+## 战斗界面：一场杀戮尖塔式战斗（2026-10-25 大改，取代德州扑克）。
 ##
-## 布局（主人草图 图2，整改后）：
-##   左侧竖栏   面板（标题条装饰）＋ 图标列 / 标签列 / **数值列** 三列对齐
-##   中上       BAT 风格控制台框（PromptConsole）——梗卡在这里被"敲"出来
-##   右上       预计分 / 本关分 / 代码结构（右边缘统一钉在屏幕右边距 − 24）
-##   下方       手牌横向一排平铺（不旋转、不遮挡），悬停时该卡放大
+## 布局：
+##   左侧竖栏   玩家状态（HP / 格挡 / 能量 / 牌堆 / 回合）
+##   中上       BAT 风格控制台（PromptConsole）——战斗日志，出牌流式敲卡名
+##   中下舞台   敌人像素形象 + 意图 + HP 条（程序化画的小怪，按关卡换色）
+##   右上       敌人信息（名字 / HP / 意图）
+##   右侧       AI 娘吉祥物（deepdeek 睡觉 Q 版）
+##   下方       手牌横向一排（点击打出），右下「结束回合」
 ##
-## 机制（新）：
-##   点手牌 → 梗卡离手 → 控制台**流式打出梗名**
-##           → 凑成连携时控制台打出 `→ 触发连携【无限续饭】…` + 绶带横幅 + AI娘吐槽
-##   点「▶ 运行」 → MemeCombo.evaluate 结算 → 控制台打印分数明细 + AI娘回应。
-##
-## 纪律：本文件**不含任何计分规则**——只负责收集"打了哪几张梗卡"，
-## 把结果交给 MemeCombo.evaluate，再把返回的明细渲染出来。
+## 纪律：本文件**不含任何战斗规则**——数值结算全在 StsCombat，
+## 这里只把返回的事件渲染成动画和日志。
 
 signal level_cleared(final_score: int)
 signal level_failed(final_score: int)
-## 玩家在结算弹窗上点了「继续」——由主控决定去奖励界面还是回地图
 signal advance_requested
 
-const HAND_SIZE := 8
 const CARD_W := 150.0
 const CARD_H := 226.0
 const PAD := 24.0
 
-# ── 布局刻度（契约 F.2.2）─────────────────────────────
-const RAIL_W := 220.0            ## 左侧竖栏宽
-const CONSOLE_X := 268.0         ## = PAD + RAIL_W + PAD
-const CONSOLE_H := 300.0         ## 控制台框高
-const SIDE_W := 320.0            ## 右侧 HUD 宽
-const STATUS_W := 700.0          ## 状态栏宽
-const BANNER_W := 720.0          ## 连携横幅宽
-const BANNER_H := 32.0           ## 连携横幅高
+# ── 布局刻度 ───────────────────────────────────────────
+const RAIL_W := 220.0
+const CONSOLE_X := 268.0
+const CONSOLE_H := 300.0
+const SIDE_W := 320.0
+const STATUS_W := 700.0
 
-# ── 手牌横排参数（2026-10-25 主人钦定：取消圆弧，横向平铺不遮挡）────
-const HAND_BOTTOM := 30.0         # 卡的底边离屏幕底边的距离
-const HAND_GAP := 10.0            # 相邻两卡的间隔（可用宽度不足时自动收窄）
-const HAND_MIN_GAP := -34.0       # 间隔下限：允许轻叠 34px，也不许跑出牌区
-const SELECT_LIFT := 36.0     # 选中时抬起
-const HOVER_LIFT := 30.0          # 悬停时抬起的距离
-const HOVER_SCALE := 1.16         # 悬停时的放大倍率
+# ── 手牌横排参数 ───────────────────────────────────────
+const HAND_BOTTOM := 30.0
+const HAND_GAP := 10.0
+const HAND_MIN_GAP := -34.0
+const HOVER_LIFT := 30.0
 
-## 每回合最多打几张（与 RunState.HAND_LIMIT 一致）
-const MAX_PARTS := RunState.POKER_PLAY_LIMIT
-
-## 命中结构时控制台的短评（不带角色，纯工具口吻）
-const GENERIC_LINES := [
-	"顺序对上了。",
-	"这段成型了。",
-	"结构成立。",
-]
+# ── 敌人舞台 ───────────────────────────────────────────
+const STAGE_TOP := 348.0
+const STAGE_BOTTOM := 812.0
 
 var run: RunState = null
 var level: LevelData = null
+var combat: StsCombat = null
 
 var _console: PromptConsole = null
 var _card_layer: Control = null
-var _hand_views: Array[CardView] = []
-## 已打出的代码卡
-var _played: Array[PokerCard] = []
+var _hand_views: Array[StsCardView] = []
 var _busy: bool = false
-var _hovered: CardView = null
-## 已经播报过的结构加成（同一项不重复弹横幅）
-var _fired_combos: Array[String] = []
-var _line_idx: int = 0
+var _hovered: StsCardView = null
 
-# 左侧竖栏
+# 左侧竖栏（玩家状态）
 var _rail: PanelContainer = null
 var _rail_box: VBoxContainer = null
 var _brief_label: Label = null
+var _hp_label: Label = null
+var _hp_fill: ColorRect = null
+var _hp_host: Control = null
+var _block_label: Label = null
+var _energy_label: Label = null
+var _piles_label: Label = null
 var _turn_label: Label = null
-var _score_value: Label = null
-var _hud_rows: Dictionary = {}      ## key → HBoxContainer（Icon / Key / Value）
 
-# 右侧 HUD
-var _estimate_label: Label = null
-var _target_label: Label = null
-var _hits_label: Label = null
+# 右上敌人 HUD
+var _enemy_name_label: Label = null
+var _enemy_hp_label: Label = null
+var _enemy_fill: ColorRect = null
+var _enemy_hp_host: Control = null
+var _enemy_block_label: Label = null
+var _intent_label: Label = null
 
-# 状态栏
-var _status_label: Label = null
+# 舞台敌人
+var _enemy_root: Control = null
+var _enemy_sprite: TextureRect = null
+var _enemy_shadow: ColorRect = null
 
 # 底部
-var _run_button: Button = null
-var _reroll_button: Button = null
-var _back_button: Button = null
-var _sort_suit_button: Button = null
-var _sort_rank_button: Button = null
+var _status_label: Label = null
+var _end_turn_button: Button = null
 
-# 右侧 AI 娘吉祥物（装饰层）
+# AI 娘
 var _companion: AiCompanion = null
 
-## 花色排序的分组序：♠ ♥ ♣ ♦（同组内点数从大到小）
-const SUIT_ORDER := {
-	PokerCard.Suit.SPADE: 0,
-	PokerCard.Suit.HEART: 1,
-	PokerCard.Suit.CLUB: 2,
-	PokerCard.Suit.DIAMOND: 3,
-}
-
-# 连携横幅（绶带）
-var _banner: Control = null
-var _banner_text: Label = null
-var _banner_tween: Tween = null
-
-# ── 出牌特效（2026-10-22）─────────────────────────────
-## 无头测试里自动关掉：动画里有 await，headless 下会拖住 smoke_test 的 1.0 秒等待
+# 特效层
 var _fx_enabled := true
-var _bg_fx: BgFx = null
-var _prog_host: Control = null
-var _prog_fill: ColorRect = null
 var _fx_root: Control = null
 var _fx_flash: ColorRect = null
-var _fx_back: Panel = null
-var _fx_panel: VBoxContainer = null
-var _fx_title: Label = null
-var _fx_formula: Label = null
-var _fx_note: Label = null
-var _fx_total: Label = null
-var _fx_fly: Label = null
 
-# 覆盖层
+# 覆盖层（结算弹窗）
 var _overlay: PanelContainer = null
 var _overlay_title: Label = null
 var _overlay_body: Label = null
@@ -132,15 +95,11 @@ func _init() -> void:
 	set_anchors_preset(Control.PRESET_FULL_RECT)
 	_console = PromptConsole.new()
 	_console.name = "PromptConsole"
-	_console.segment_clicked.connect(_on_console_segment_clicked)
 
 
-## setup(run_state, lv)
-## 基础玩法**没有 AI 娘**：提示符固定为 "prompt"。
 func setup(run_state: RunState, lv: LevelData) -> void:
 	run = run_state
 	level = lv
-	_console.set_prefix(_prefix())
 
 
 func _ready() -> void:
@@ -148,7 +107,7 @@ func _ready() -> void:
 	resized.connect(_layout)
 	await get_tree().process_frame
 	_layout()
-	_start_level()
+	_start_battle()
 
 
 # ─────────────────────────────────────────────────────────
@@ -163,24 +122,22 @@ func _build_ui() -> void:
 	bg.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	add_child(bg)
 
-	# 压暗层轻一点，让像素场景透出来
 	var veil := ColorRect.new()
 	veil.color = Color(0.043, 0.055, 0.086, 0.52)
 	veil.set_anchors_preset(Control.PRESET_FULL_RECT)
 	veil.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	add_child(veil)
 
-	# 环境动效：漂浮尘埃 + 扫描线 + 鼠标视差（压暗层之上、HUD 之下，不抢内容）
-	_bg_fx = BgFx.new()
-	_bg_fx.name = "BgFx"
-	_bg_fx.set_anchors_preset(Control.PRESET_FULL_RECT)
-	add_child(_bg_fx)
+	var fx_bg := BgFx.new()
+	fx_bg.name = "BgFx"
+	fx_bg.set_anchors_preset(Control.PRESET_FULL_RECT)
+	add_child(fx_bg)
 
 	_build_rail()
 	_build_console_area()
 	_build_right_hud()
+	_build_stage()
 	_build_bottom()
-	_build_banner()
 	_build_companion()
 
 	_card_layer = Control.new()
@@ -193,7 +150,7 @@ func _build_ui() -> void:
 	_build_overlay()
 
 
-## 左侧竖栏：面板（标题条装饰）＋ 图标列 / 标签列 / 数值列（三列严格对齐）
+## 左侧竖栏：玩家状态
 func _build_rail() -> void:
 	_rail = PanelContainer.new()
 	_rail.name = "HudLeft"
@@ -207,84 +164,54 @@ func _build_rail() -> void:
 	_rail_box.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_rail.add_child(_rail_box)
 
-	# 标题条：ui-titlebar 装饰 + 标题文字叠在凹槽里
-	var head := UiKit.title_bar("L1 · 日常翻译", 0.0, HORIZONTAL_ALIGNMENT_LEFT, UiKit.TEXT)
+	var head := UiKit.title_bar("L1 · 战斗", 0.0, HORIZONTAL_ALIGNMENT_LEFT, UiKit.TEXT)
 	head.name = "RailTitle"
 	_rail_box.add_child(head)
 
 	_brief_label = UiKit.dim("", UiKit.FS_XS)
 	_brief_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	_brief_label.custom_minimum_size = Vector2(0, 0)
 	_rail_box.add_child(_brief_label)
 
 	_rail_box.add_child(UiKit.rule())
 
-	# 三行 HUD：图标列 + 标签列 + 数值列（数值列右对齐到内容区右边缘 − 12）
-	_hud_row("level", UiKit.TEX_ICON_LEVEL, "关卡", "L1")
-	_hud_row("round", UiKit.TEX_ICON_COMPUTE, "出牌", "3")
+	_hp_label = UiKit.label("HP 80/80", UiKit.FS_S, Color(0.95, 0.35, 0.4))
+	_rail_box.add_child(_hp_label)
+
+	_hp_host = Control.new()
+	_hp_host.custom_minimum_size = Vector2(0, 10)
+	_hp_host.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_rail_box.add_child(_hp_host)
+	var hp_bg := ColorRect.new()
+	hp_bg.color = UiKit.LINE.darkened(0.45)
+	hp_bg.set_anchors_preset(Control.PRESET_FULL_RECT)
+	hp_bg.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_hp_host.add_child(hp_bg)
+	_hp_fill = ColorRect.new()
+	_hp_fill.color = Color(0.86, 0.28, 0.34)
+	_hp_fill.size = Vector2(0, 10)
+	_hp_fill.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_hp_host.add_child(_hp_fill)
+
+	_block_label = UiKit.label("格挡 0", UiKit.FS_XS, Color(0.31, 0.64, 0.88))
+	_rail_box.add_child(_block_label)
+
+	_energy_label = UiKit.label("能量 3/3", UiKit.FS_M, Color(0.31, 0.76, 0.97))
+	_rail_box.add_child(_energy_label)
 
 	_rail_box.add_child(UiKit.rule())
 
-	# 牌型小抄常驻在左栏——玩家不用记，抬头就能看
-	var rule_head := UiKit.label("牌型", UiKit.FS_XS, UiKit.TEXT_DIM)
-	_rail_box.add_child(rule_head)
-	for pair in PokerHand.cheat_sheet():
-		var t := int(pair[0])
-		var base := PokerHand.type_base(t)
-		var rl := UiKit.label("%s  %d×%d" % [str(pair[1]), int(base["chips"]), int(base["mult"])],
-				UiKit.FS_XS, UiKit.ACCENT)
-		_rail_box.add_child(rl)
-	var rule_note := UiKit.dim("红牌 +3 倍率 ｜ 黑牌 +25 筹码", UiKit.FS_XS)
-	rule_note.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	_rail_box.add_child(rule_note)
-
-	# 两个稀有顶阶单独一行（要靠奖励叠出重复牌才可能，不进常规小抄免得挤）
-	var ff := PokerHand.type_base(PokerHand.Type.FLUSH_FIVE)
-	var rf := PokerHand.type_base(PokerHand.Type.ROYAL_FLUSH)
-	var rare_note := UiKit.dim("稀有：同花五条 %d×%d ｜ 皇家同花顺 %d×%d"
-			% [int(ff["chips"]), int(ff["mult"]), int(rf["chips"]), int(rf["mult"])],
-			UiKit.FS_XS)
-	rare_note.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	_rail_box.add_child(rare_note)
-
-	_rail_box.add_child(UiKit.rule())
-
-	_turn_label = UiKit.dim("", UiKit.FS_XS)
+	_piles_label = UiKit.dim("抽牌堆 0 ｜ 弃牌堆 0", UiKit.FS_XS)
+	_rail_box.add_child(_piles_label)
+	_turn_label = UiKit.dim("回合 1", UiKit.FS_XS)
 	_rail_box.add_child(_turn_label)
 
-	var score_row := UiKit.kv_row("本关得分", "0", UiKit.GOLD, UiKit.FS_XS, UiKit.FS_S)
-	score_row.name = "ScoreRow"
-	_score_value = score_row.get_node("Value") as Label
-	_rail_box.add_child(score_row)
-
-	# 目标进度条：把「还差多少」从数字变成一眼能看的长度
-	_prog_host = Control.new()
-	_prog_host.name = "TargetBar"
-	_prog_host.custom_minimum_size = Vector2(0, 4)
-	_prog_host.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	_prog_host.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	_rail_box.add_child(_prog_host)
-	var prog_bg := ColorRect.new()
-	prog_bg.color = UiKit.LINE.darkened(0.45)
-	prog_bg.set_anchors_preset(Control.PRESET_FULL_RECT)
-	prog_bg.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	_prog_host.add_child(prog_bg)
-	_prog_fill = ColorRect.new()
-	_prog_fill.color = UiKit.ACCENT
-	_prog_fill.size = Vector2(0, 4)
-	_prog_fill.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	_prog_host.add_child(_prog_fill)
+	_rail_box.add_child(UiKit.rule())
+	var tip := UiKit.dim("点手牌打出 ｜ 右下结束回合\n能量每回合回满，格挡开回合清零。", UiKit.FS_XS)
+	tip.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_rail_box.add_child(tip)
 
 
-## 一行 HUD：图标 + 标签 + 数值。**全部走 UiKit.icon_row**，不许散着写。
-func _hud_row(key: String, icon_name: String, label_text: String, value: String) -> void:
-	var row := UiKit.icon_row(icon_name, label_text, value, UiKit.TEXT)
-	row.name = "Hud" + key.capitalize()
-	_rail_box.add_child(row)
-	_hud_rows[key] = row
-
-
-## 中上方：BAT 控制台框
+## 中上方：BAT 控制台（战斗日志）
 func _build_console_area() -> void:
 	var area := Control.new()
 	area.name = "PromptArea"
@@ -294,7 +221,7 @@ func _build_console_area() -> void:
 	area.add_child(_console)
 
 
-## 右上 HUD：预计分 + 本关分 + 代码结构（右边缘统一钉在屏幕右边距 − 24）
+## 右上敌人 HUD
 func _build_right_hud() -> void:
 	var right := VBoxContainer.new()
 	right.name = "HudRight"
@@ -302,32 +229,78 @@ func _build_right_hud() -> void:
 	right.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	add_child(right)
 
-	var head := UiKit.title_bar("结算预估", SIDE_W, HORIZONTAL_ALIGNMENT_RIGHT, UiKit.TEXT_DIM)
+	var head := UiKit.title_bar("敌人", SIDE_W, HORIZONTAL_ALIGNMENT_RIGHT, UiKit.TEXT_DIM)
 	head.name = "RightTitle"
 	right.add_child(head)
 
-	_estimate_label = UiKit.label("预计 0", UiKit.FS_S, UiKit.GOLD)
-	_estimate_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
-	right.add_child(_estimate_label)
+	_enemy_name_label = UiKit.label("", UiKit.FS_S, UiKit.TEXT)
+	_enemy_name_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+	right.add_child(_enemy_name_label)
 
-	_target_label = UiKit.dim("本关 0 / 0", UiKit.FS_XS)
-	_target_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
-	right.add_child(_target_label)
+	_enemy_hp_label = UiKit.label("HP 0/0", UiKit.FS_XS, Color(0.95, 0.35, 0.4))
+	_enemy_hp_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+	right.add_child(_enemy_hp_label)
 
-	right.add_child(UiKit.rule())
+	_enemy_hp_host = Control.new()
+	_enemy_hp_host.custom_minimum_size = Vector2(SIDE_W, 10)
+	_enemy_hp_host.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	right.add_child(_enemy_hp_host)
+	var ebg := ColorRect.new()
+	ebg.color = UiKit.LINE.darkened(0.45)
+	ebg.set_anchors_preset(Control.PRESET_FULL_RECT)
+	ebg.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_enemy_hp_host.add_child(ebg)
+	_enemy_fill = ColorRect.new()
+	_enemy_fill.color = Color(0.86, 0.28, 0.34)
+	_enemy_fill.size = Vector2(SIDE_W, 10)
+	_enemy_fill.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_enemy_hp_host.add_child(_enemy_fill)
 
-	_hits_label = UiKit.label("", UiKit.FS_XS, UiKit.ACCENT)
-	_hits_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT
-	_hits_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	_hits_label.custom_minimum_size = Vector2(SIDE_W, 0)
-	right.add_child(_hits_label)
+	_enemy_block_label = UiKit.label("", UiKit.FS_XS, Color(0.31, 0.64, 0.88))
+	_enemy_block_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+	right.add_child(_enemy_block_label)
+
+	_intent_label = UiKit.label("", UiKit.FS_S, UiKit.GOLD)
+	_intent_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+	right.add_child(_intent_label)
 
 
+## 中下舞台：敌人像素形象（程序化）+ 意图气泡
+func _build_stage() -> void:
+	_enemy_root = Control.new()
+	_enemy_root.name = "EnemyStage"
+	_enemy_root.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	add_child(_enemy_root)
+
+	var intent_bubble := PanelContainer.new()
+	intent_bubble.name = "IntentBubble"
+	intent_bubble.add_theme_stylebox_override("panel",
+			UiKit.flat(UiKit.PANEL_2, UiKit.GOLD, 2, UiKit.SP_2))
+	intent_bubble.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_enemy_root.add_child(intent_bubble)
+
+	_intent_label = UiKit.label("", UiKit.FS_XS, UiKit.GOLD)
+	_intent_label.name = "IntentText"
+	intent_bubble.add_child(_intent_label)
+
+	var sprite_box := Control.new()
+	sprite_box.name = "SpriteBox"
+	sprite_box.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_enemy_root.add_child(sprite_box)
+
+	_enemy_sprite = TextureRect.new()
+	_enemy_sprite.name = "EnemySprite"
+	_enemy_sprite.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
+	_enemy_sprite.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	_enemy_sprite.stretch_mode = TextureRect.STRETCH_SCALE
+	_enemy_sprite.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	sprite_box.add_child(_enemy_sprite)
+
+
+## 底部：状态行 + 结束回合（右下）
 func _build_bottom() -> void:
-	# 状态文字（控制台框下方左侧）
 	var tip := VBoxContainer.new()
 	tip.name = "BottomTip"
-	tip.add_theme_constant_override("separation", UiKit.SP_1)
 	tip.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	add_child(tip)
 
@@ -336,54 +309,23 @@ func _build_bottom() -> void:
 	_status_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	tip.add_child(_status_label)
 
-	# 工具条（右下）
 	var side := VBoxContainer.new()
 	side.name = "BottomSide"
-	side.add_theme_constant_override("separation", UiKit.SP_2)
 	side.alignment = BoxContainer.ALIGNMENT_END
 	side.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	add_child(side)
 
-	_run_button = UiKit.accent_button("▶  运行", UiKit.FS_S)
-	_run_button.custom_minimum_size = Vector2(0, 48)
-	_run_button.pressed.connect(_on_run_pressed)
-	side.add_child(_run_button)
+	_end_turn_button = UiKit.accent_button("结束回合", UiKit.FS_S)
+	_end_turn_button.custom_minimum_size = Vector2(SIDE_W, 48)
+	_end_turn_button.pressed.connect(_on_end_turn_pressed)
+	side.add_child(_end_turn_button)
 
-	var row := HBoxContainer.new()
-	row.add_theme_constant_override("separation", UiKit.SP_2)
-	side.add_child(row)
-
-	_back_button = UiKit.button("⌫  退格", UiKit.FS_XS)
-	_back_button.custom_minimum_size = Vector2(0, 32)
-	_back_button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	_back_button.pressed.connect(_on_back_pressed)
-	row.add_child(_back_button)
-
-	_reroll_button = UiKit.button("↺  重抽手牌", UiKit.FS_XS)
-	_reroll_button.custom_minimum_size = Vector2(0, 32)
-	_reroll_button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	_reroll_button.pressed.connect(_on_reroll_pressed)
-	row.add_child(_reroll_button)
-
-	# 排序行（最贴角的一行）：花色 / 点数
-	var sort_row := HBoxContainer.new()
-	sort_row.add_theme_constant_override("separation", UiKit.SP_2)
-	side.add_child(sort_row)
-
-	_sort_suit_button = UiKit.button("按花色排序", UiKit.FS_XS)
-	_sort_suit_button.custom_minimum_size = Vector2(0, 28)
-	_sort_suit_button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	_sort_suit_button.pressed.connect(_on_sort_suit_pressed)
-	sort_row.add_child(_sort_suit_button)
-
-	_sort_rank_button = UiKit.button("按点数排序", UiKit.FS_XS)
-	_sort_rank_button.custom_minimum_size = Vector2(0, 28)
-	_sort_rank_button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	_sort_rank_button.pressed.connect(_on_sort_rank_pressed)
-	sort_row.add_child(_sort_rank_button)
+	var piles := UiKit.dim("", UiKit.FS_XS)
+	piles.name = "PileCounts"
+	piles.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	side.add_child(piles)
 
 
-## 右侧 AI 娘：右上 HUD 下方、右下按钮上方之间的空档里待着
 func _build_companion() -> void:
 	_companion = AiCompanion.new()
 	_companion.name = "AiCompanion"
@@ -392,27 +334,20 @@ func _build_companion() -> void:
 		_companion.setup(run.ai)
 
 
-## 结构横幅：ui-ribbon.png 九宫格 + 居中的文案
-func _build_banner() -> void:
-	_banner = Control.new()
-	_banner.name = "ComboBanner"
-	_banner.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	_banner.visible = false
-	_banner.modulate = Color(1, 1, 1, 0)
-	add_child(_banner)
+func _build_fx() -> void:
+	_fx_root = Control.new()
+	_fx_root.name = "FxLayer"
+	_fx_root.set_anchors_preset(Control.PRESET_FULL_RECT)
+	_fx_root.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	add_child(_fx_root)
 
-	var ribbon := UiKit.nine_node(UiKit.TEX_RIBBON, UiKit.M_RIBBON_L, UiKit.M_RIBBON_R, 0, 0)
-	ribbon.set_anchors_preset(Control.PRESET_FULL_RECT)
-	_banner.add_child(ribbon)
+	_fx_flash = ColorRect.new()
+	_fx_flash.set_anchors_preset(Control.PRESET_FULL_RECT)
+	_fx_flash.color = Color(1, 1, 1, 0)
+	_fx_flash.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_fx_root.add_child(_fx_flash)
 
-	_banner_text = UiKit.label("", UiKit.FS_XS, UiKit.GOLD)
-	_banner_text.set_anchors_preset(Control.PRESET_FULL_RECT)
-	_banner_text.offset_left = 32
-	_banner_text.offset_right = -32
-	_banner_text.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	_banner_text.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-	_banner_text.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	_banner.add_child(_banner_text)
+	_fx_enabled = DisplayServer.get_name() != "headless"
 
 
 func _build_overlay() -> void:
@@ -463,39 +398,44 @@ func _layout() -> void:
 	var tip := get_node_or_null("BottomTip") as Control
 	if tip:
 		tip.position = Vector2(CONSOLE_X, PAD + CONSOLE_H + UiKit.SP_4)
-		tip.size = Vector2(STATUS_W, 96)
+		tip.size = Vector2(STATUS_W, 40)
 
 	var side := get_node_or_null("BottomSide") as Control
 	if side:
-		side.position = Vector2(W - PAD - SIDE_W, H - 156.0)
-		side.size = Vector2(SIDE_W, 132)
+		side.position = Vector2(W - PAD - SIDE_W, H - 120.0)
+		side.size = Vector2(SIDE_W, 90)
 
 	if _companion:
 		var c_top := PAD + CONSOLE_H + UiKit.SP_4
 		_companion.position = Vector2(W - PAD - SIDE_W, c_top)
-		_companion.size = Vector2(SIDE_W, (H - 156.0) - c_top - 8.0)
-
-	if _banner:
-		_banner.position = Vector2((W - BANNER_W) * 0.5, PAD)
-		_banner.size = Vector2(BANNER_W, BANNER_H)
+		_companion.size = Vector2(SIDE_W, (H - 120.0) - c_top - 8.0)
 
 	if _overlay:
 		_overlay.position = Vector2(W * 0.5 - 280.0, H * 0.5 - 170.0)
 		_overlay.size = Vector2(560, 340)
 
-	# 出牌特效的结算台压在控制台区域正中，牌会飞到它下面聚拢
-	if _fx_panel:
-		_fx_panel.position = Vector2(W * 0.5 - 420.0, PAD + CONSOLE_H * 0.30)
-		_fx_panel.size = Vector2(840, 240)
+	# 敌人舞台：控制台下方、手牌上方之间的中央区域
+	if _enemy_root:
+		var stage_l := CONSOLE_X
+		var stage_r := W - PAD - SIDE_W
+		var cx := (stage_l + stage_r) * 0.5
+		var bottom := minf(H - CARD_H - 92.0, STAGE_BOTTOM)
+		_enemy_root.position = Vector2(cx - 90.0, bottom - 150.0)
+		_enemy_root.size = Vector2(180.0, 150.0)
+		if _enemy_sprite:
+			var sc := 2.6 if level != null and level.is_boss else 2.0
+			_enemy_sprite.size = Vector2(48.0, 56.0) * sc
+			_enemy_sprite.position = Vector2(90.0 - _enemy_sprite.size.x * 0.5,
+					150.0 - _enemy_sprite.size.y)
+		var bubble := _enemy_root.get_node_or_null("IntentBubble") as Control
+		if bubble:
+			bubble.position = Vector2(180.0 - 96.0, 0.0)
+			bubble.size = Vector2(96.0, 30.0)
 
-	if _bg_fx:
-		_bg_fx.setup(Vector2(W, H))
-
-	_layout_hand()
+	_layout_hand(false)
 
 
-## 手牌槽位：横向一排、底边对齐、不旋转。
-## 牌区 = 左栏右缘 → 右列左缘，总宽不够时自动收窄间隔（下限允许轻叠）。
+## 手牌槽位：横向一排、底边对齐
 func _hand_slot(i: int, n: int) -> Dictionary:
 	var left := CONSOLE_X
 	var right := size.x - PAD - SIDE_W
@@ -505,7 +445,7 @@ func _hand_slot(i: int, n: int) -> Dictionary:
 		gap = clampf((avail - CARD_W * n) / float(n - 1), HAND_MIN_GAP, HAND_GAP)
 	var total := CARD_W * n + gap * float(n - 1)
 	var x := (left + right) * 0.5 - total * 0.5 + i * (CARD_W + gap)
-	return {"pos": Vector2(x, size.y - HAND_BOTTOM - CARD_H), "angle": 0.0}
+	return {"pos": Vector2(x, size.y - HAND_BOTTOM - CARD_H)}
 
 
 func _layout_hand(animate: bool = true) -> void:
@@ -514,24 +454,19 @@ func _layout_hand(animate: bool = true) -> void:
 		var view := _hand_views[i]
 		var slot := _hand_slot(i, n)
 		var target: Vector2 = slot["pos"]
-		# 抬升/悬停以"底边中点"为支点
 		view.pivot_offset = Vector2(CARD_W * 0.5, CARD_H)
-		if view.selected:
-			target.y -= SELECT_LIFT
-		elif view == _hovered:
+		if view == _hovered:
 			target.y -= HOVER_LIFT
 		if animate:
 			var tw := _hand_tween(view)
 			tw.set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_OUT)
 			tw.tween_property(view, "position", target, 0.18)
-			tw.parallel().tween_property(view, "rotation", 0.0, 0.18)
 		else:
 			view.position = target
-			view.rotation = 0.0
 
 
-## 造一张手牌位移动画，并顶掉这张卡上还没播完的旧动画（避免两个 tween 抢同一个属性）
-func _hand_tween(view: CardView) -> Tween:
+## 造一张手牌位移动画，并顶掉旧动画
+func _hand_tween(view: StsCardView) -> Tween:
 	if view.has_meta("hand_tween"):
 		var old: Tween = view.get_meta("hand_tween")
 		if old != null and old.is_valid():
@@ -542,693 +477,304 @@ func _hand_tween(view: CardView) -> Tween:
 
 
 # ─────────────────────────────────────────────────────────
-#  手牌排序（右下角按钮）
+#  战斗流程
 # ─────────────────────────────────────────────────────────
-func _on_sort_suit_pressed() -> void:
-	_sort_hand("suit")
-
-
-func _on_sort_rank_pressed() -> void:
-	_sort_hand("rank")
-
-
-## 排序：重排手牌数组 + 卡片错峰飞到新弧位（平滑动画）。选中的牌保持选中。
-func _sort_hand(mode: String) -> void:
-	if _busy or _overlay.visible:
-		return
-	if _hand_views.size() < 2:
-		return
-	SfxNode.play("ui_click")
-
-	var order: Array[CardView] = _hand_views.duplicate()
-	if mode == "suit":
-		order.sort_custom(_view_lt_suit)
-	else:
-		order.sort_custom(_view_lt_rank)
-	_hand_views = order
-
-	# 数据层跟着排（之后抽牌 / 弃牌的顺序才一致）
-	var cards: Array[PokerCard] = []
-	for v in order:
-		cards.append(v.card)
-	run.poker_hand.assign(cards)
-
-	# 动画：每张卡按新槽位序错峰起飞，BACK 缓出带一点弹性
-	var n := _hand_views.size()
-	for i in n:
-		var view := _hand_views[i]
-		var slot := _hand_slot(i, n)
-		var target: Vector2 = slot["pos"]
-		view.pivot_offset = Vector2(CARD_W * 0.5, CARD_H)
-		if view.selected:
-			target.y -= SELECT_LIFT
-		elif view == _hovered:
-			target.y -= HOVER_LIFT
-		var tw := _hand_tween(view)
-		tw.set_parallel(true)
-		tw.tween_property(view, "position", target, 0.34).set_delay(i * 0.028) \
-			.set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
-		tw.tween_property(view, "rotation", 0.0, 0.34).set_delay(i * 0.028) \
-			.set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_OUT)
-	_status_label.text = "已按%s排序。" % ("花色" if mode == "suit" else "点数")
-
-
-func _view_lt_suit(a: CardView, b: CardView) -> bool:
-	var sa := int(SUIT_ORDER.get(a.card.suit, 9))
-	var sb := int(SUIT_ORDER.get(b.card.suit, 9))
-	if sa != sb:
-		return sa < sb
-	return a.card.rank > b.card.rank
-
-
-func _view_lt_rank(a: CardView, b: CardView) -> bool:
-	if a.card.rank != b.card.rank:
-		return a.card.rank > b.card.rank
-	return int(SUIT_ORDER.get(a.card.suit, 9)) < int(SUIT_ORDER.get(b.card.suit, 9))
-
-
-func _set_sort_buttons(enabled: bool) -> void:
-	if _sort_suit_button != null:
-		_sort_suit_button.disabled = not enabled
-	if _sort_rank_button != null:
-		_sort_rank_button.disabled = not enabled
-
-
-## 测试钩子：触发一次排序（"suit" / "rank"）
-func debug_sort_hand(mode: String) -> void:
-	if mode == "suit":
-		_on_sort_suit_pressed()
-	elif mode == "rank":
-		_on_sort_rank_pressed()
-
-
-## 测试钩子：手牌卡序列（按视图顺序取 card id，如 "H3"）
-func debug_hand_ids() -> Array:
-	var out: Array = []
-	for v in _hand_views:
-		if v != null and v.card != null:
-			out.append(v.card.id())
-	return out
-
-
-# ─────────────────────────────────────────────────────────
-#  关卡流程
-# ─────────────────────────────────────────────────────────
-func _start_level() -> void:
-	run.start_poker_level(level)
-
-	_played.clear()
-	_fired_combos.clear()
-	_line_idx = 0
-	_hovered = null
+func _start_battle() -> void:
+	combat = run.start_battle(level)
+	_console.set_prefix(_prefix())
 	_console.clear()
-	_console.set_command(_prefix(), [])
 	_console.append_line("%s · %s · %s" % [_prefix(), level.id, level.title], PromptConsole.DOS_GRAY)
-	_console.append_line("选牌 → 运行。红牌加倍率，黑牌加筹码。", PromptConsole.DOS_GRAY)
-	_rebuild_hand_views()
-	_refresh_top()
-	_status_label.text = "点手牌选牌（最多 5 张）。点控制台里的牌可以撤回。"
-	_refresh_preview()
+	_console.append_line("遭遇【%s】！HP %d ｜ 攻 %d 防 %d" % [
+		level.enemy_name, level.enemy_hp, level.enemy_atk, level.enemy_def], PromptConsole.DOS_GRAY)
+	_console.append_line("点手牌出招（能量每回合回满）。", PromptConsole.DOS_GRAY)
 
+	if _enemy_sprite:
+		_enemy_sprite.texture = _enemy_texture(level.enemy_tint, level.is_boss)
+		_enemy_sprite.modulate = Color.WHITE
+		_enemy_sprite.visible = true
 
-func _rebuild_hand_views() -> void:
-	for view in _hand_views:
-		view.queue_free()
-	_hand_views.clear()
-	for c in run.poker_hand:
-		_hand_views.append(_make_hand_view(c))
-	_layout_hand(false)
-
-
-## 造一张手牌视图（在手牌里 / 撤回后重新入队都用它）
-func _make_hand_view(card: PokerCard) -> CardView:
-	var v := CardView.new()
-	v.setup(card)
-	v.clicked.connect(_on_card_clicked)
-	v.mouse_entered.connect(_on_hand_hover.bind(v, true))
-	v.mouse_exited.connect(_on_hand_hover.bind(v, false))
-	_card_layer.add_child(v)
-	return v
-
-
-func _on_hand_hover(view: CardView, entered: bool) -> void:
-	if _busy or _overlay.visible:
-		return
-	if entered:
-		if _hovered == view:
-			return
-		if _hovered != null:
-			_hovered.set_hovered(false)
-		_hovered = view
-		view.set_hovered(true)
-	else:
-		if _hovered != view:
-			return
-		_hovered = null
-		view.set_hovered(false)
-	_layout_hand(true)
-
-
-func _refresh_top() -> void:
-	var head := _rail_box.get_node_or_null("RailTitle") as Control
+	var head := _rail_box.get_node_or_null("RailTitle")
 	if head != null:
 		var ht := head.get_node_or_null("Text") as Label
 		if ht != null:
 			ht.text = "%s · %s" % [level.id, level.title]
 	_brief_label.text = level.brief
-	_reroll_button.disabled = run.discards_left <= 0 or _played.is_empty()
-	_reroll_button.text = "弃牌（%d）" % run.discards_left if run.discards_left > 0 else "弃牌"
-	_back_button.disabled = _played.is_empty()
-	_set_hud("level", level.id)
-	_set_hud("round", str(run.hands_left))
+	_enemy_name_label.text = level.enemy_name
+
+	_rebuild_hand()
+	_refresh_hud()
+	_status_label.text = "战斗开始！意图：%s" % _intent_text()
 
 
-func _set_hud(key: String, value: String) -> void:
-	var row: HBoxContainer = _hud_rows.get(key, null) as HBoxContainer
-	if row == null:
-		return
-	var l := row.get_node_or_null("Value") as Label
-	if l != null:
-		l.text = value
-
-
-# ─────────────────────────────────────────────────────────
-#  梗卡交互
-# ─────────────────────────────────────────────────────────
-func _on_card_clicked(view: CardView) -> void:
-	if _busy or _overlay.visible:
-		return
-	var card := view.card
-	if card == null:
-		return
-
-	# 再点一次 = 取消选中
-	if _played.has(card):
-		_played.erase(card)
-		view.selected = false
-		SfxNode.play("card_deselect")
-		_console.finish_all()
-		_console.set_command(_prefix(), _segment_names())
-		_layout_hand(true)
-		_refresh_preview()
-		_check_combos()
-		return
-
-	if _played.size() >= MAX_PARTS:
-		_status_label.text = "一手最多 %d 张，先取消一张。" % MAX_PARTS
-		return
-
-	_played.append(card)
-	view.selected = true
-	SfxNode.play("card_select")
-	view.flash()
-	# 控制台流式打出这张牌（花色符号 + 点数）
-	_console.type_in(card.display_name())
-	_layout_hand(true)
-	_refresh_preview()
-	_check_combos()
-
-
-## 点控制台里的某个梗名 → 撤回：卡退回手牌，其后前移
-func _on_console_segment_clicked(index: int) -> void:
-	if _busy or _overlay.visible:
-		return
-	if index < 0 or index >= _played.size():
-		return
-	_console.finish_all()
-	var card: PokerCard = _played[index]
-	_deselect_view(card)
-	_played.remove_at(index)
-	_console.set_command(_prefix(), _segment_names())
-	_layout_hand(true)
-	_refresh_preview()
-	_status_label.text = "已取消 %s。" % card.display_name()
-
-
-## 「⌫ 退格」：取消最后一张
-func _on_back_pressed() -> void:
-	if _busy or _overlay.visible:
-		return
-	if _played.is_empty():
-		_status_label.text = "还没选任何牌。"
-		return
-	_console.finish_all()
-	var card: PokerCard = _played.pop_back()
-	_deselect_view(card)
-	_console.set_command(_prefix(), _segment_names())
-	_layout_hand(true)
-	_refresh_preview()
-	_status_label.text = "已去掉最后一张 %s。" % card.display_name()
-	SfxNode.play("card_deselect")
-
-
-## 把某张牌对应的视图标记为未选中
-func _deselect_view(card: PokerCard) -> void:
-	for v in _hand_views:
-		if v != null and v.card == card:
-			v.selected = false
-			return
-
-
-# ─────────────────────────────────────────────────────────
-#  牌型播报
-# ─────────────────────────────────────────────────────────
-
-## 选牌变化后：牌型变了就播报一次（横幅 + 控制台）
-func _check_combos() -> void:
-	if _played.is_empty():
-		_fired_combos.clear()
-		return
-	var t := PokerHand.evaluate_type(_played)
-	var key := str(t)
-	if _fired_combos.has(key):
-		return
-	_fired_combos.clear()
-	_fired_combos.append(key)
-	var res := PokerHand.score(_played_cards_now(), _ctx(true))
-	_show_banner("%s ｜ %d 筹码 × %d 倍率" % [
-		PokerHand.type_name(t), int(res["chips"]), int(res["mult"])])
-
-
-## 绶带横幅：弹入 → 停一下 → 淡出
-func _show_banner(text: String) -> void:
-	if _banner == null:
-		return
-	_banner_text.text = text
-	_banner.visible = true
-	if _banner_tween != null and _banner_tween.is_valid():
-		_banner_tween.kill()
-	_banner.modulate = Color(1, 1, 1, 0)
-	_banner_tween = create_tween()
-	_banner_tween.tween_property(_banner, "modulate:a", 1.0, 0.18) \
-		.set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_OUT)
-	_banner_tween.tween_interval(1.6)
-	_banner_tween.tween_property(_banner, "modulate:a", 0.0, 0.4) \
-		.set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_IN)
-	_banner_tween.tween_callback(func() -> void: _banner.visible = false)
-
-
-## 结算后的收尾语气（基础玩法没有角色，用通用短句轮换）
-func _next_flavor_line() -> String:
-	var s := str(GENERIC_LINES[_line_idx % GENERIC_LINES.size()])
-	_line_idx += 1
-	return s
-
-
-# ─────────────────────────────────────────────────────────
-#  实时预估
-# ─────────────────────────────────────────────────────────
-func _played_cards_now() -> Array[PokerCard]:
-	return _played.duplicate()
-
-
-func _segment_names() -> Array[String]:
-	var out: Array[String] = []
-	for c in _played:
-		out.append(c.display_name())
-	return out
-
-
-## 命令行前缀 = 当前 AI 娘（她同时在每张牌的中间）
 func _prefix() -> String:
 	if run != null and run.ai != null:
 		return run.ai.id
 	return "player"
 
 
-func _ctx(preview: bool) -> Dictionary:
-	return {
-		"ai_id": _prefix(),
-		"bonus_chips": run.bonus_chips,
-		"bonus_mult": run.bonus_mult,
-		"preview": preview,
-	}
+## 意图文字（右上 HUD 与舞台气泡共用）
+func _intent_text() -> String:
+	if combat == null or combat.intent.is_empty():
+		return "？"
+	var v := int(combat.intent.get("value", 0))
+	if String(combat.intent.get("kind", "")) == "attack":
+		return "意图：攻击 %d" % v
+	return "意图：防御 %d" % v
 
 
-func _refresh_preview() -> void:
-	var res := PokerHand.score(_played_cards_now(), _ctx(true))
-	_estimate_label.text = "%d × %d = %d" % [
-		int(res["chips"]), int(res["mult"]), int(res["score"])]
-	_hits_label.text = PokerHand.type_name(int(res["type"])) if not _played.is_empty() else ""
-
-	_turn_label.text = "手牌 %d 张 ｜ 出牌 %d ｜ 弃牌 %d" % [
-		run.poker_hand.size(), run.hands_left, run.discards_left]
-	_score_value.text = str(run.score)
-	_target_label.text = "本关 %d / %d" % [run.score, level.target_score]
-	_update_progress()
-
-	# 实时把牌型摆在命令行下方：一手牌在出手前就知道值多少
-	if _played.is_empty():
-		_console.set_syntax(PromptConsole.SYNTAX_HIDDEN, "")
-	elif bool(res["score"] > 0):
-		_console.set_syntax(PromptConsole.SYNTAX_OK,
-				"%s ｜ %d 筹码 × %d 倍率 = %d" % [
-					str(res["type_name"]), int(res["chips"]), int(res["mult"]), int(res["score"])])
-
-	if not res["notes"].is_empty():
-		_status_label.text = " · ".join(res["notes"])
-
-
-# ─────────────────────────────────────────────────────────
-#  出牌特效：吸牌 → 砸牌型 → 跳数字 → 分数飞进 HUD
-# ─────────────────────────────────────────────────────────
-## 像素风纪律：只做硬边位移 / 缩放 / 闪烁 / 方块碎屑，
-## **不做模糊、不做渐变光晕**（踩坑手册 22：线性过滤会把像素糊掉）。
-## 整段约 1.0 秒；headless 下 _fx_enabled=false，整段跳过，
-## 所以 smoke_test 里"运行后 1.0 秒出结果窗"的时序不受影响（踩坑手册 40）。
-func _build_fx() -> void:
-	_fx_root = Control.new()
-	_fx_root.name = "FxLayer"
-	_fx_root.set_anchors_preset(Control.PRESET_FULL_RECT)
-	_fx_root.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	add_child(_fx_root)
-
-	_fx_flash = ColorRect.new()
-	_fx_flash.name = "Flash"
-	_fx_flash.set_anchors_preset(Control.PRESET_FULL_RECT)
-	_fx_flash.color = Color(1, 1, 1, 0)
-	_fx_flash.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	_fx_root.add_child(_fx_flash)
-
-	# 结算台底板：深色硬边 + 金线框，数字压在上面才读得清（不然会和控制台文字糊在一起）
-	_fx_back = Panel.new()
-	_fx_back.name = "SettleBack"
-	_fx_back.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	_fx_back.visible = false
-	var back_sb := StyleBoxFlat.new()
-	back_sb.bg_color = Color(0.043, 0.055, 0.086, 0.93)
-	back_sb.border_color = UiKit.GOLD
-	back_sb.set_border_width_all(2)
-	back_sb.anti_aliasing = false
-	_fx_back.add_theme_stylebox_override("panel", back_sb)
-	_fx_root.add_child(_fx_back)
-
-	_fx_panel = VBoxContainer.new()
-	_fx_panel.name = "SettlePanel"
-	_fx_panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	_fx_panel.alignment = BoxContainer.ALIGNMENT_CENTER
-	_fx_panel.add_theme_constant_override("separation", 2)
-	_fx_panel.visible = false
-	_fx_root.add_child(_fx_panel)
-
-	_fx_title = _fx_label(UiKit.FS_L, UiKit.GOLD, 6)
-	_fx_formula = _fx_label(UiKit.FS_M, UiKit.TEXT, 4)
-	_fx_note = _fx_label(UiKit.FS_XS, UiKit.TEXT_DIM, 0)
-	_fx_total = _fx_label(UiKit.FS_XL, UiKit.WHITE, 7)
-
-	_fx_fly = UiKit.label("", UiKit.FS_M, UiKit.GOLD)
-	_fx_fly.visible = false
-	_fx_fly.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	_fx_root.add_child(_fx_fly)
-
-	_fx_enabled = DisplayServer.get_name() != "headless"
-
-
-func _fx_label(fs: int, color: Color, outline: int) -> Label:
-	var l := UiKit.label("", fs, color)
-	l.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	l.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	if outline > 0:
-		l.add_theme_constant_override("outline_size", outline)
-		l.add_theme_color_override("font_outline_color", Color(0, 0, 0, 0.9))
-	_fx_panel.add_child(l)
-	return l
-
-
-func _play_fx(res: Dictionary, gained: int) -> void:
-	if _fx_panel == null or _fx_total == null:
+func _rebuild_hand() -> void:
+	for view in _hand_views:
+		view.queue_free()
+	_hand_views.clear()
+	if combat == null:
 		return
-	var views: Array[CardView] = []
+	for c in combat.hand:
+		var v := StsCardView.new()
+		v.setup(c)
+		v.clicked.connect(_on_card_clicked)
+		v.mouse_entered.connect(_on_hand_hover.bind(v, true))
+		v.mouse_exited.connect(_on_hand_hover.bind(v, false))
+		_card_layer.add_child(v)
+		_hand_views.append(v)
+	_layout_hand(false)
+	_refresh_playable()
+
+
+func _refresh_playable() -> void:
 	for v in _hand_views:
-		if v != null and _played.has(v.card):
-			views.append(v)
-
-	var center := Vector2(size.x * 0.5, size.y * 0.62)
-	var chips := int(res["chips"])
-	var mult := int(res["mult"])
-
-	# ① 选中的牌被"抽"到中央聚成一叠（每张错开 35ms）
-	var i := 0
-	for v in views:
-		# 扇开一点 + 每张轻微错角/错高，看起来是"一把牌拍在桌上"，不是一张卡
-		var spread := (float(i) - float(views.size() - 1) * 0.5) * 46.0
-		var tilt := deg_to_rad(3.5) * (float(i) - float(views.size() - 1) * 0.5) * 0.4
-		var dest := center - Vector2(CARD_W, CARD_H) * 0.5 \
-				+ Vector2(spread, -absf(spread) * 0.06 + i * 1.5)
-		v.z_index = 2 + i
-		var tw := v.create_tween()
-		tw.set_parallel(true)
-		tw.tween_property(v, "position", dest, 0.26).set_delay(i * 0.035) \
-			.set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_OUT)
-		tw.tween_property(v, "rotation", tilt, 0.22).set_delay(i * 0.035)
-		tw.tween_property(v, "scale", Vector2(1.18, 1.18), 0.26).set_delay(i * 0.035)
-		i += 1
-
-	_fx_panel.visible = true
-	_fx_panel.modulate.a = 0.0
-	_fx_title.text = str(res["type_name"])
-	_fx_formula.text = "0 × 0"
-	_fx_note.text = _fx_note_text(res)
-	_fx_total.text = "0"
-	_fx_title.scale = Vector2.ONE
-	_fx_formula.scale = Vector2.ONE
-	_fx_total.scale = Vector2.ONE
-	# 底板跟着文字实际尺寸走（牌型名长短不一），居中压在控制台区域
-	_fx_panel.size = _fx_panel.get_combined_minimum_size()
-	_fx_panel.position = Vector2(size.x * 0.5 - _fx_panel.size.x * 0.5,
-			PAD + CONSOLE_H * 0.34)
-	_fx_back.position = _fx_panel.position - Vector2(28, 16)
-	_fx_back.size = _fx_panel.size + Vector2(56, 32)
-	_fx_back.visible = true
-	_fx_back.modulate.a = 0.0
-
-	var fade_in := create_tween()
-	fade_in.set_parallel(true)
-	fade_in.tween_property(_fx_panel, "modulate:a", 1.0, 0.10)
-	fade_in.tween_property(_fx_back, "modulate:a", 1.0, 0.10)
-	SfxNode.play("deal")
-
-	# ② 落地：白闪 + 屏抖 + 牌型名弹入 + 一圈碎屑
-	_flash(UiKit.GOLD, 0.20)
-	_shake(6.0, 0.14)
-	_punch(_fx_title, 1.5, 0.20)
-	var tier := int(res.get("type", 0))
-	if tier >= PokerHand.Type.THREE_KIND:
-		SfxNode.play("hand_big")
-	elif tier >= PokerHand.Type.PAIR:
-		SfxNode.play("hand_small")
-	SparkBurst.burst(_fx_root, center, UiKit.GOLD, 10, 200.0)
-	await get_tree().create_timer(0.14).timeout
-
-	# ③ 筹码 → 倍率 逐个跳数
-	await _count_to(_fx_formula, 0, chips, func(v: int) -> String: return "%d × 0" % v, 0.24)
-	_punch(_fx_formula, 1.10, 0.10)
-	await _count_to(_fx_formula, chips, mult,
-			func(v: int) -> String: return "%d × %d" % [chips, v], 0.22)
-	_flash(UiKit.ACCENT, 0.14)
-
-	# ④ 总分炸开：大弹跳 + 白闪 + 更重的一次屏抖 + 碎屑
-	await _count_to(_fx_total, 0, gained, func(v: int) -> String: return str(v), 0.22)
-	_punch(_fx_total, 1.6, 0.26)
-	_fx_total.modulate = UiKit.GOLD
-	SfxNode.play("score_land")
-	_flash(UiKit.WHITE, 0.26)
-	_shake(10.0, 0.20)
-	SparkBurst.burst(_fx_root, center + Vector2(0, -40), UiKit.GOLD, 20, 320.0)
-	await get_tree().create_timer(0.16).timeout
-
-	# ⑤ 分数飞进右上角的「本关得分」
-	_fly_number(gained)
-
-	# ⑥ 退场：牌与结算台同时淡出，交给 _rebuild_hand_views 收尾
-	var out_tw := create_tween()
-	out_tw.set_parallel(true)
-	out_tw.tween_property(_fx_panel, "modulate:a", 0.0, 0.14)
-	out_tw.tween_property(_fx_back, "modulate:a", 0.0, 0.14)
-	for v in views:
-		out_tw.tween_property(v, "modulate:a", 0.0, 0.12)
-		out_tw.tween_property(v, "scale", Vector2(0.94, 0.94), 0.14)
-	await get_tree().create_timer(0.14).timeout
-	_fx_panel.visible = false
-	_fx_panel.modulate.a = 1.0
-	_fx_back.visible = false
-	_fx_back.modulate.a = 1.0
-	_fx_total.modulate = UiKit.WHITE
-	for v in views:
-		v.modulate.a = 1.0
+		if v != null and v.card != null:
+			v.set_playable(combat != null and combat.can_play(v.card))
 
 
-## 把标签上的数字从 from 滚到 to（fmt 决定显示格式）
-func _count_to(lbl: Label, from: int, to: int, fmt: Callable, dur: float) -> void:
-	var tw := create_tween()
-	var last := from
-	tw.tween_method(func(v: float) -> void:
-		var iv := int(v)
-		if iv != last:
-			last = iv
-			SfxNode.play("score_tick", -8.0)
-		lbl.text = str(fmt.call(iv)),
-			float(from), float(to), dur)
-	await tw.finished
-
-
-## 结算台的小字：红牌/黑牌各贡献了多少 + 实际计分几张
-func _fx_note_text(res: Dictionary) -> String:
-	var parts: Array[String] = []
-	var rc := int(res.get("red_count", 0))
-	var bc := int(res.get("black_count", 0))
-	if rc > 0:
-		parts.append("红 ×%d → 倍率 +%d" % [rc, rc * PokerHand.RED_MULT])
-	if bc > 0:
-		parts.append("黑 ×%d → 筹码 +%d" % [bc, bc * PokerHand.BLACK_CHIPS])
-	parts.append("计分 %d 张" % int(res.get("scoring_count", 0)))
-	return " ｜ ".join(parts)
-
-
-## 整屏闪光（硬边、不做模糊）
-func _flash(color: Color, dur: float) -> void:
-	if _fx_flash == null:
+func _refresh_hud() -> void:
+	if combat == null:
 		return
-	_fx_flash.color = Color(color.r, color.g, color.b, 0.30)
-	var tw := create_tween()
-	tw.tween_property(_fx_flash, "color:a", 0.0, maxf(0.10, dur))
-
-
-## 屏抖：抖的是卡层，HUD 与数字保持可读
-func _shake(amp: float, dur: float) -> void:
-	if _card_layer == null:
-		return
-	var steps := 5
-	var tw := create_tween()
-	for i in steps:
-		var k := 1.0 - float(i) / float(steps)
-		var off := Vector2(randf_range(-amp, amp), randf_range(-amp, amp)) * k
-		tw.tween_callback(func() -> void: _card_layer.position = off).set_delay(dur / float(steps))
-	tw.tween_callback(func() -> void: _card_layer.position = Vector2.ZERO)
-
-
-## 弹性放大一下（数字命中时的"砸"感）
-func _punch(ctrl: Control, to_scale: float, dur: float) -> void:
-	if ctrl == null:
-		return
-	ctrl.pivot_offset = ctrl.size * 0.5
-	ctrl.scale = Vector2(to_scale, to_scale)
-	var tw := create_tween()
-	tw.tween_property(ctrl, "scale", Vector2.ONE, dur) \
-		.set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
-
-
-## 得分数字从结算台飞进右上角的「本关得分」
-func _fly_number(total: int) -> void:
-	if _fx_fly == null or _score_value == null or _fx_total == null:
-		return
-	_fx_fly.text = "+%d" % total
-	_fx_fly.visible = true
-	_fx_fly.modulate.a = 1.0
-	_fx_fly.scale = Vector2.ONE
-	_fx_fly.position = _fx_total.global_position + Vector2(0, 6)
-	var target := _score_value.global_position
-	var tw := create_tween()
-	tw.set_parallel(true)
-	tw.tween_property(_fx_fly, "position", target, 0.36) \
-		.set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_IN)
-	tw.tween_property(_fx_fly, "scale", Vector2(0.5, 0.5), 0.36)
-	tw.tween_property(_fx_fly, "modulate:a", 0.0, 0.18).set_delay(0.18)
-	tw.chain().tween_callback(func() -> void:
-		_fx_fly.visible = false
-		_fx_fly.modulate.a = 1.0)
-
-
-# ─────────────────────────────────────────────────────────
-#  运行与结算
-# ─────────────────────────────────────────────────────────
-func _on_run_pressed() -> void:
-	if _busy or _overlay.visible:
-		return
-	if _played.is_empty():
-		_status_label.text = "先至少选一张牌。"
-		return
-	if run.hands_left <= 0:
-		_status_label.text = "本关出牌次数用完了。"
-		return
-	_busy = true
-	_run_button.disabled = true
-	_set_sort_buttons(false)
-
-	# 打字没完就运行 → 立刻补全
-	_console.finish_all()
-
-	var res := PokerHand.score(_played_cards_now(), _ctx(false))
-	var gained := int(res["score"])
-
-	_print_run_result(res, gained)
-	# 先把这一手"砸"出来，再落账（牌此时还在 _played 里，视图有效）
-	if _fx_enabled:
-		await _play_fx(res, gained)
-
-	run.score += gained
-	_animate_score(gained)
-
-	run.play_poker_hand(_played)
-	_played.clear()
-	_fired_combos.clear()
-	_console.set_command(_prefix(), [])
-	_hovered = null
-	_rebuild_hand_views()
-	_refresh_top()
-	_refresh_preview()
-
-	if run.hands_left <= 0:
-		await get_tree().create_timer(0.6).timeout
-		_finish_level()
-	else:
-		_busy = false
-		_run_button.disabled = false
-		_set_sort_buttons(true)
-		_refresh_preview()
-
-
-## 控制台打印：牌型 → 筹码×倍率明细 → AI娘被动
-func _print_run_result(res: Dictionary, gained: int) -> void:
-	_console.append_line("→ %s ｜ %d × %d = %d" % [
-		str(res["type_name"]), int(res["chips"]), int(res["mult"]), gained],
-		PromptConsole.DOS_AMBER)
-	_console.append_line("筹码 = 牌型 %d ＋ 点数 ＋ 黑牌 %d×%d" % [
-		int(PokerHand.type_base(int(res["type"]))["chips"]),
-		int(res["black_count"]), PokerHand.BLACK_CHIPS], PromptConsole.DOS_AMBER)
-	_console.append_line("倍率 = 牌型 %d ＋ 红牌 %d×%d" % [
-		int(PokerHand.type_base(int(res["type"]))["mult"]),
-		int(res["red_count"]), PokerHand.RED_MULT], PromptConsole.DOS_AMBER)
-	for n in res.get("notes", []):
-		_console.append_line(str(n), PromptConsole.DOS_CYAN)
-
-
-func _animate_score(gained: int) -> void:
-	UiKit.pop(_score_value, 1.2, 0.3)
-	UiKit.flash_text(_score_value, UiKit.WHITE, 0.35)
-	UiKit.pop(_estimate_label, 1.15, 0.25)
-
-
-## 目标进度条：宽 = 得分/目标；过线变金色并闪一下
-func _update_progress() -> void:
-	if _prog_host == null or _prog_fill == null or level == null:
-		return
-	var target := maxi(1, level.target_score)
-	var ratio := clampf(float(run.score) / float(target), 0.0, 1.0)
-	# 首次刷新时容器还没排版，host.size 是 0 —— 用竖栏内容宽兜底，否则进度条永远 0 宽
-	var avail := _prog_host.size.x
+	_hp_label.text = "HP %d/%d" % [combat.hp, combat.max_hp]
+	var ratio := clampf(float(combat.hp) / float(maxi(1, combat.max_hp)), 0.0, 1.0)
+	var avail := _hp_host.size.x
 	if avail < 4.0:
 		avail = RAIL_W - UiKit.PANEL_PAD * 2.0
-	_prog_fill.size = Vector2(avail * ratio, 4.0)
-	var reached := run.score >= target
-	var want := UiKit.GOLD if reached else UiKit.ACCENT
-	if _prog_fill.color != want:
-		_prog_fill.color = want
-		if reached and _fx_enabled:
-			UiKit.pop(_prog_host, 1.0, 0.2)
+	_hp_fill.size = Vector2(avail * ratio, 10.0)
+	_block_label.text = "格挡 %d" % combat.block
+	_energy_label.text = "能量 %d/%d" % [combat.energy, StsCombat.ENERGY_MAX]
+	_piles_label.text = "抽牌堆 %d ｜ 弃牌堆 %d" % [combat.draw_pile.size(), combat.discard_pile.size()]
+	_turn_label.text = "回合 %d" % combat.turn
+
+	_enemy_hp_label.text = "HP %d/%d" % [combat.enemy_hp, combat.enemy_max_hp]
+	var er := clampf(float(combat.enemy_hp) / float(maxi(1, combat.enemy_max_hp)), 0.0, 1.0)
+	_enemy_fill.size = Vector2(SIDE_W * er, 10.0)
+	_enemy_block_label.text = "格挡 %d" % combat.enemy_block if combat.enemy_block > 0 else ""
+	_intent_label.text = _intent_text()
+	var piles := get_node_or_null("BottomSide/PileCounts") as Label
+	if piles != null:
+		piles.text = "抽 %d ｜ 弃 %d" % [combat.draw_pile.size(), combat.discard_pile.size()]
 
 
-## 结算弹窗：缩放弹入 + 淡入（无头环境直接显示，测试等的是 visible）
+func _on_hand_hover(view: StsCardView, entered: bool) -> void:
+	if _busy or _overlay.visible:
+		return
+	if entered:
+		if _hovered == view:
+			return
+		_hovered = view
+	else:
+		if _hovered != view:
+			return
+		_hovered = null
+	_layout_hand(true)
+
+
+# ─────────────────────────────────────────────────────────
+#  出牌
+# ─────────────────────────────────────────────────────────
+func _on_card_clicked(view: StsCardView) -> void:
+	if _busy or _overlay.visible or combat == null:
+		return
+	var card := view.card
+	if card == null or not combat.can_play(card):
+		if card != null and combat.hand.has(card):
+			_status_label.text = "能量不够啦，先结束回合吧。"
+		return
+	_busy = true
+	view.flash()
+	SfxNode.play("card_select")
+	_console.finish_all()
+	_console.type_in(StsCardPool.card_name(card.id))
+
+	var ev := combat.play_card(card)
+	# 从视图层移除这张牌
+	for i in range(_hand_views.size() - 1, -1, -1):
+		if _hand_views[i] == view:
+			_hand_views.remove_at(i)
+			break
+
+	if _fx_enabled:
+		await _play_card_fx(view, card, ev)
+	view.queue_free()
+
+	_refresh_hud()
+	_layout_hand(true)
+	_refresh_playable()
+
+	if bool(ev.get("ok", false)):
+		if String(ev.get("kind", "")) == "attack":
+			_console.append_line("→ %s！%s 受到 %d 点伤害（剩余 %d）" % [
+				StsCardPool.card_name(card.id), level.enemy_name,
+				int(ev.get("value", 0)), combat.enemy_hp], PromptConsole.DOS_AMBER)
+		else:
+			_console.append_line("→ %s！获得 %d 点格挡" % [
+				StsCardPool.card_name(card.id), int(ev.get("value", 0))], PromptConsole.DOS_CYAN)
+
+	if combat.over == StsCombat.Result.WIN:
+		await get_tree().create_timer(0.5).timeout
+		_finish_battle(true)
+		return
+	_busy = false
+
+
+## 出牌动画：攻击 → 牌飞向敌人 + 敌人闪红震屏 + 伤害飘字；防御 → 牌飞向左下 + 格挡飘字
+func _play_card_fx(view: StsCardView, card: StsCard, ev: Dictionary) -> void:
+	var is_attack := String(ev.get("kind", "")) == "attack"
+	var dest: Vector2
+	if is_attack:
+		dest = _enemy_root.position + _enemy_root.size * 0.5 - Vector2(CARD_W, CARD_H) * 0.35
+	else:
+		dest = Vector2(CONSOLE_X + 60.0, size.y - 140.0)
+	var tw := view.create_tween()
+	tw.set_parallel(true)
+	tw.tween_property(view, "position", dest, 0.22) \
+		.set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_IN)
+	tw.tween_property(view, "scale", Vector2(0.6, 0.6), 0.22)
+	tw.tween_property(view, "modulate:a", 0.0, 0.20).set_delay(0.08)
+	await tw.finished
+
+	if is_attack:
+		_enemy_hit_fx(int(ev.get("value", 0)))
+		SfxNode.play("hand_big")
+	else:
+		_float_text(Vector2(PAD + RAIL_W * 0.5, size.y - CARD_H - 70.0),
+				"+%d 格挡" % int(ev.get("value", 0)), Color(0.31, 0.64, 0.88), UiKit.FS_M)
+		SfxNode.play("hand_small")
+
+
+## 敌人受击：闪红 + 抖动 + 头顶飘伤害数字
+func _enemy_hit_fx(dmg: int) -> void:
+	if _enemy_sprite == null:
+		return
+	_flash(Color(1.0, 0.45, 0.45), 0.16)
+	var tw := _enemy_sprite.create_tween()
+	tw.tween_property(_enemy_sprite, "modulate", Color(2.2, 0.8, 0.8), 0.05)
+	tw.tween_property(_enemy_sprite, "modulate", Color.WHITE, 0.18)
+	var shake := _enemy_root.create_tween()
+	for i in 4:
+		var off := Vector2(randf_range(-7, 7), randf_range(-4, 4)) * (1.0 - float(i) / 4.0)
+		shake.tween_callback(func() -> void:
+			_enemy_sprite.position = Vector2(90.0 - _enemy_sprite.size.x * 0.5,
+					150.0 - _enemy_sprite.size.y) + off)
+		shake.tween_interval(0.03)
+	shake.tween_callback(func() -> void:
+		_enemy_sprite.position = Vector2(90.0 - _enemy_sprite.size.x * 0.5,
+				150.0 - _enemy_sprite.size.y))
+	_float_text(_enemy_root.position + Vector2(_enemy_root.size.x * 0.5, 24.0),
+			"-%d" % dmg, Color(1.0, 0.42, 0.42), UiKit.FS_L)
+
+
+# ─────────────────────────────────────────────────────────
+#  结束回合（敌人行动）
+# ─────────────────────────────────────────────────────────
+func _on_end_turn_pressed() -> void:
+	if _busy or _overlay.visible or combat == null:
+		return
+	_busy = true
+	_end_turn_button.disabled = true
+	_console.finish_all()
+	_console.append_line("— 结束回合 —", PromptConsole.DOS_GRAY)
+
+	if _fx_enabled:
+		await get_tree().create_timer(0.25).timeout
+
+	var events := combat.end_turn()
+	for e in events:
+		var kind := String(e.get("kind", ""))
+		if kind == "enemy_attack":
+			if _fx_enabled:
+				await _enemy_attack_fx(int(e.get("value", 0)), int(e.get("dealt", 0)),
+						int(e.get("blocked", 0)))
+			_console.append_line("← %s 攻击 %d！%s" % [
+				level.enemy_name, int(e.get("value", 0)),
+				"被格挡吸收" if int(e.get("dealt", 0)) <= 0 else "掉血 %d（HP %d）" % [
+					int(e.get("dealt", 0)), combat.hp]], PromptConsole.DOS_RED)
+		elif kind == "enemy_defend":
+			_console.append_line("← %s 蓄力防御，格挡 +%d" % [
+				level.enemy_name, int(e.get("value", 0))], PromptConsole.DOS_CYAN)
+			if _fx_enabled:
+				_float_text(_enemy_root.position + Vector2(_enemy_root.size.x * 0.5, 44.0),
+						"+%d 防" % int(e.get("value", 0)), Color(0.31, 0.64, 0.88), UiKit.FS_M)
+				await get_tree().create_timer(0.3).timeout
+
+	_refresh_hud()
+	_rebuild_hand()
+
+	if combat.over == StsCombat.Result.LOSE:
+		await get_tree().create_timer(0.4).timeout
+		_finish_battle(false)
+		return
+
+	_busy = false
+	_end_turn_button.disabled = false
+	_status_label.text = "新回合：%s" % _intent_text()
+	SfxNode.play("deal")
+
+
+## 敌人攻击动画：往前顶一下 + 玩家侧震屏 + 受伤飘字
+func _enemy_attack_fx(raw: int, dealt: int, blocked: int) -> void:
+	if _enemy_root == null:
+		return
+	var base_y := _enemy_root.position.y
+	var lunge := _enemy_root.create_tween()
+	lunge.tween_property(_enemy_root, "position:y", base_y + 26.0, 0.10) \
+		.set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_IN)
+	lunge.tween_property(_enemy_root, "position:y", base_y, 0.22) \
+		.set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
+	await get_tree().create_timer(0.12).timeout
+	if blocked > 0 and dealt <= 0:
+		_float_text(Vector2(size.x * 0.5 - 40.0, size.y - CARD_H - 80.0),
+				"格挡！-%d" % blocked, Color(0.31, 0.64, 0.88), UiKit.FS_M)
+		SfxNode.play("hand_small")
+	else:
+		_flash(Color(1.0, 0.3, 0.3), 0.18)
+		_shake(7.0, 0.16)
+		if dealt > 0:
+			_float_text(Vector2(size.x * 0.5 - 40.0, size.y - CARD_H - 80.0),
+					"-%d HP" % dealt, Color(1.0, 0.42, 0.42), UiKit.FS_L)
+			SfxNode.play("score_land")
+	await get_tree().create_timer(0.25).timeout
+
+
+# ─────────────────────────────────────────────────────────
+#  结算
+# ─────────────────────────────────────────────────────────
+func _finish_battle(win: bool) -> void:
+	_busy = false
+	if win:
+		SfxNode.play("win")
+		var gain := run.win_battle(combat, level)
+		_overlay_title.text = "胜利"
+		_overlay_body.text = "击败【%s】！\n本战造成 %d 伤害 ｜ 剩余 HP %d（回复 %d）\n算力 +%d ｜ 下一步：往卡组里加一张牌。" % [
+			level.enemy_name, combat.damage_dealt, run.hp,
+			StsCombat.HEAL_ON_WIN, gain]
+		_pop_overlay()
+		level_cleared.emit(run.score)
+	else:
+		SfxNode.play("lose")
+		run.lose_battle(combat)
+		_overlay_title.text = "战败"
+		_overlay_body.text = "被【%s】打倒了（HP %d/%d）。\n提示：防御牌能挡下攻击——\n看准敌人的「攻击 N」意图再开防。" % [
+			level.enemy_name, combat.hp, combat.max_hp]
+		_pop_overlay()
+		level_failed.emit(run.score)
+
+
 func _pop_overlay() -> void:
 	if _overlay == null:
 		return
@@ -1245,100 +791,146 @@ func _pop_overlay() -> void:
 	tw.tween_property(_overlay, "modulate:a", 1.0, 0.16)
 
 
-func _finish_level() -> void:
-	var passed := run.score >= level.target_score
-	if passed:
-		SfxNode.play("win")
-		_overlay_title.text = "通过"
-		_overlay_body.text = "得分 %d / 目标 %d\n下一步：挑一张卡加进牌库。" % [
-			run.score, level.target_score
-		]
-		_pop_overlay()
-		level_cleared.emit(run.score)
-	else:
-		SfxNode.play("lose")
-		_overlay_title.text = "未通过"
-		_overlay_body.text = "得分 %d / 目标 %d\n差距 %d 分。\n提示：把语句拼成合法代码——顺序对了才给分。" % [
-			run.score, level.target_score, level.target_score - run.score
-		]
-		_pop_overlay()
-		level_failed.emit(run.score)
-	_busy = false
-
-
 func _on_overlay_continue() -> void:
 	_overlay.visible = false
 	advance_requested.emit()
 
 
-func _on_reroll_pressed() -> void:
-	if _busy or _overlay.visible:
+# ─────────────────────────────────────────────────────────
+#  通用特效
+# ─────────────────────────────────────────────────────────
+func _flash(color: Color, dur: float) -> void:
+	if _fx_flash == null:
 		return
-	if _played.is_empty():
-		_status_label.text = "先在手里选出要弃掉的牌。"
-		return
-	if run.discards_left <= 0:
-		_status_label.text = "本关弃牌次数用完了。"
-		return
-	var n := _played.size()
-	var tossing: Array[CardView] = []
-	if _fx_enabled:
-		for v in _hand_views:
-			if v != null and _played.has(v.card):
-				tossing.append(v)
-
-	if run.discard_poker(_played):
-		# 弃掉的牌往屏幕下方掉出去，和"打出"往上砸形成对比
-		if not tossing.is_empty():
-			for v in tossing:
-				v.selected = false
-				var tw := v.create_tween()
-				tw.set_parallel(true)
-				tw.tween_property(v, "position", v.position + Vector2(randf_range(-24, 24), 150), 0.24) \
-					.set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_IN)
-				tw.tween_property(v, "rotation", randf_range(-0.3, 0.3), 0.24)
-				tw.tween_property(v, "modulate:a", 0.0, 0.22)
-			await get_tree().create_timer(0.22).timeout
-		_console.set_command(_prefix(), [])
-		_played.clear()
-		_fired_combos.clear()
-		_hovered = null
-		_rebuild_hand_views()
-		_refresh_top()
-		_refresh_preview()
-		_status_label.text = "弃掉 %d 张，补回来了。" % n
-	SfxNode.play("discard")
+	_fx_flash.color = Color(color.r, color.g, color.b, 0.28)
+	var tw := create_tween()
+	tw.tween_property(_fx_flash, "color:a", 0.0, maxf(0.10, dur))
 
 
-func debug_place_card(index: int) -> bool:
-	if _busy or _overlay.visible:
-		return false
+func _shake(amp: float, dur: float) -> void:
+	if _card_layer == null:
+		return
+	var steps := 5
+	var tw := create_tween()
+	for i in steps:
+		var k := 1.0 - float(i) / float(steps)
+		var off := Vector2(randf_range(-amp, amp), randf_range(-amp, amp)) * k
+		tw.tween_callback(func() -> void: _card_layer.position = off).set_delay(dur / float(steps))
+	tw.tween_callback(func() -> void: _card_layer.position = Vector2.ZERO)
+
+
+## 飘字：在 pos 弹出 → 上飘渐隐
+func _float_text(pos: Vector2, text: String, color: Color, fs: int) -> void:
+	if _fx_root == null:
+		return
+	var l := UiKit.label(text, fs, color)
+	l.add_theme_constant_override("outline_size", 6)
+	l.add_theme_color_override("font_outline_color", Color(0, 0, 0, 0.9))
+	l.position = pos
+	l.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_fx_root.add_child(l)
+	l.pivot_offset = l.get_minimum_size() * 0.5
+	var tw := l.create_tween()
+	tw.set_parallel(true)
+	tw.tween_property(l, "position:y", pos.y - 42.0, 0.55) \
+		.set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_OUT)
+	tw.tween_property(l, "modulate:a", 0.0, 0.30).set_delay(0.30)
+	tw.chain().tween_callback(func() -> void: l.queue_free())
+
+
+## 程序化敌人像素形象：48×56 小怪（圆身、红眼、獠牙、小角；BOSS 戴皇冠）
+func _enemy_texture(tint: Color, boss: bool) -> ImageTexture:
+	var img := Image.create_empty(48, 56, false, Image.FORMAT_RGBA8)
+	img.fill(Color(0, 0, 0, 0))
+	var dark := tint.darkened(0.55)
+	var mid := tint.darkened(0.25)
+	# 角
+	for i in 3:
+		_rect(img, 10 + i * 3, 8 - i, 3, 3, mid, dark)
+		_rect(img, 35 - i * 3, 8 - i, 3, 3, mid, dark)
+	# 身体
+	for y in range(10, 50):
+		var w := 34 + (10 - absi(y - 30) if absi(y - 30) < 10 else 0)
+		_rect(img, 24 - w / 2, y, w, 1, tint if y < 34 else mid, dark, false)
+	_rect(img, 5, 48, 38, 3, dark, Color(0, 0, 0, 0), false)
+	# BOSS 皇冠
+	if boss:
+		var gold := Color(1.0, 0.82, 0.4)
+		_rect(img, 16, 4, 16, 5, gold, gold.darkened(0.4))
+		_rect(img, 17, 2, 2, 3, gold, Color(0, 0, 0, 0), false)
+		_rect(img, 23, 1, 2, 4, gold, Color(0, 0, 0, 0), false)
+		_rect(img, 29, 2, 2, 3, gold, Color(0, 0, 0, 0), false)
+	# 眼睛（红底黑瞳）
+	_rect(img, 13, 20, 8, 8, Color(0.98, 0.9, 0.85), dark)
+	_rect(img, 27, 20, 8, 8, Color(0.98, 0.9, 0.85), dark)
+	_rect(img, 15, 23, 4, 4, Color(0.85, 0.12, 0.15), Color(0, 0, 0, 0), false)
+	_rect(img, 29, 23, 4, 4, Color(0.85, 0.12, 0.15), Color(0, 0, 0, 0), false)
+	# 獠牙嘴
+	_rect(img, 15, 36, 18, 4, dark, Color(0, 0, 0, 0), false)
+	_rect(img, 16, 40, 3, 4, Color(0.98, 0.9, 0.85), Color(0, 0, 0, 0), false)
+	_rect(img, 23, 40, 3, 4, Color(0.98, 0.9, 0.85), Color(0, 0, 0, 0), false)
+	_rect(img, 30, 40, 3, 4, Color(0.98, 0.9, 0.85), Color(0, 0, 0, 0), false)
+	# 小手
+	_rect(img, 2, 28, 5, 10, mid, dark)
+	_rect(img, 41, 28, 5, 10, mid, dark)
+	return ImageTexture.create_from_image(img)
+
+
+func _rect(img: Image, x: int, y: int, w: int, h: int, col: Color,
+		outline: Color, do_outline: bool = true) -> void:
+	var r := Rect2i(x, y, w, h)
+	if r.size.x <= 0 or r.size.y <= 0:
+		return
+	img.fill_rect(r, col)
+	if not do_outline or outline.a <= 0.0:
+		return
+	img.fill_rect(Rect2i(r.position.x, r.position.y, r.size.x, 1), outline)
+	img.fill_rect(Rect2i(r.position.x, r.position.y + r.size.y - 1, r.size.x, 1), outline)
+	img.fill_rect(Rect2i(r.position.x, r.position.y, 1, r.size.y), outline)
+	img.fill_rect(Rect2i(r.position.x + r.size.x - 1, r.position.y, 1, r.size.y), outline)
+
+
+# ─────────────────────────────────────────────────────────
+#  测试钩子
+# ─────────────────────────────────────────────────────────
+func debug_play_card(index: int) -> bool:
 	if index < 0 or index >= _hand_views.size():
 		return false
-	var before := _played.size()
-	_on_card_clicked(_hand_views[index])
-	return _played.size() > before
+	var v := _hand_views[index]
+	var before := combat.hand.size()
+	_on_card_clicked(v)
+	return combat.hand.size() < before
 
 
-func debug_played_count() -> int:
-	return _played.size()
-
-
-## 目检用：把手牌里第一张 id 形如 "H3" 的牌打出去（找不到返回 false）
-func debug_place_card_id(card_id: String) -> bool:
-	for i in _hand_views.size():
-		var v := _hand_views[i]
-		if v != null and v.card != null and v.card.id() == card_id:
-			return debug_place_card(i)
+func debug_play_card_id(card_id: String) -> bool:
+	for v in _hand_views:
+		if v != null and v.card != null and v.card.id == card_id:
+			return debug_play_card(_hand_views.find(v))
 	return false
 
 
-func debug_command_parts() -> int:
-	return _played.size()
+func debug_end_turn() -> void:
+	_on_end_turn_pressed()
 
 
-func debug_run() -> void:
-	_on_run_pressed()
+func debug_hand_count() -> int:
+	return _hand_views.size()
+
+
+func debug_energy() -> int:
+	return combat.energy if combat != null else -1
+
+
+func debug_combat_state() -> Dictionary:
+	if combat == null:
+		return {}
+	return {
+		"hp": combat.hp, "block": combat.block,
+		"enemy_hp": combat.enemy_hp, "enemy_block": combat.enemy_block,
+		"energy": combat.energy, "turn": combat.turn,
+		"over": combat.over, "hand": combat.hand.size(),
+		"draw": combat.draw_pile.size(), "discard": combat.discard_pile.size(),
+	}
 
 
 func debug_overlay_visible() -> bool:
@@ -1349,148 +941,9 @@ func debug_click_continue() -> void:
 	_on_overlay_continue()
 
 
-## 目检钩子：翻牌。
-## ⚠ 旧代码卡玩法遗留——新扑克牌**没有牌背设计**，CardView 也没有 toggle_flip()。
-## 这里改成"有就翻、没有就明确报错返回 false"，不再让 `--shot=flip` 直接崩掉
-## （见踩坑手册坑 40：换玩法后旧目检钩子会变哑炮）。
-func debug_flip_first() -> bool:
-	if _hand_views.is_empty():
-		return false
-	if not _hand_views[0].has_method("toggle_flip"):
-		push_warning("--shot=flip 已失效：扑克卡面没有牌背设计，CardView 无 toggle_flip()")
-		return false
-	_hand_views[0].call("toggle_flip")
-	return true
-
-
-func debug_first_is_back() -> bool:
-	if _hand_views.is_empty():
-		return false
-	if not _hand_views[0].has_method("_showing_back"):
-		return false
-	return bool(_hand_views[0].call("_showing_back"))
-
-
-## 测试用：模拟悬停第 index 张手牌
-func debug_hover(index: int) -> bool:
-	if index < 0 or index >= _hand_views.size():
-		return false
-	_on_hand_hover(_hand_views[index], true)
-	return true
-
-
-## 测试用：控制台当前命令行文本（不含光标）
-func debug_console_line() -> String:
-	return _console.current_line() if _console != null else ""
-
-
-## 测试用：控制台是否正在打字
-func debug_console_typing() -> bool:
-	return _console.is_typing() if _console != null else false
-
-
-## 测试用：控制台历史日志（含当前命令行）
-func debug_console_log() -> String:
-	return _console.get_log() if _console != null else ""
-
-
-## 测试用：状态栏文字
 func debug_status_text() -> String:
 	return _status_label.text if _status_label != null else ""
 
 
-## 测试用：当前已打出的代码卡的结算明细（只算不写回）
-func debug_hand_eval() -> Dictionary:
-	return PokerHand.score(_played_cards_now(), _ctx(false))
-
-
-## 测试用：连携横幅是否可见 / 横幅文案
-func debug_banner() -> Dictionary:
-	return {
-		"visible": _banner.visible if _banner != null else false,
-		"text": _banner_text.text if _banner_text != null else "",
-	}
-
-
-## 测试用：把手牌换成指定的梗卡 id 列表（按顺序），用于造连携局面
-func debug_set_hand(ids: Array) -> void:
-	run.poker_hand.clear()
-	for id in ids:
-		var c := _card_from_id(str(id))
-		if c != null:
-			run.poker_hand.append(c)
-	_rebuild_hand_views()
-	_layout_hand(false)
-
-
-## "H3" / "D5" / "S9" / "C2" → PokerCard
-func _card_from_id(card_id: String) -> PokerCard:
-	if card_id.length() < 2:
-		return null
-	var s := -1
-	match card_id.substr(0, 1).to_upper():
-		"H": s = PokerCard.Suit.HEART
-		"D": s = PokerCard.Suit.DIAMOND
-		"S": s = PokerCard.Suit.SPADE
-		"C": s = PokerCard.Suit.CLUB
-	if s < 0:
-		return null
-	var r := int(card_id.substr(1))
-	if r < 1:
-		return null
-	return PokerCard.make(s, r)
-
-
-## 测试用：按 id 直接打出梗卡（绕过手牌顺序）
-func debug_play_card(card_id: String) -> bool:
-	var c := _card_from_id(card_id)
-	if c == null:
-		return false
-	_played.append(c)
-	run.poker_hand.erase(c)
-	# 与真实点击路径保持一致：把对应的手牌视图一起摘掉
-	for i in range(_hand_views.size() - 1, -1, -1):
-		var v := _hand_views[i]
-		if v != null and v.card == c:
-			_hand_views.remove_at(i)
-			v.queue_free()
-			break
-	_layout_hand(true)
-	_check_combos()
-	_refresh_preview()
-	return true
-
-
-## ★ 核心验收项：侧栏三列的**像素坐标**报告。
-## 图标列左边缘 / 标签列左边缘 / 数值列右边缘 是否落在同一条竖线上。
-func debug_alignment_report() -> Array:
-	var out: Array = []
-	for key in ["level", "token", "compute", "ai"]:
-		var row: HBoxContainer = _hud_rows.get(key, null) as HBoxContainer
-		if row == null:
-			continue
-		var ic := row.get_node_or_null("Icon") as Control
-		var kl := row.get_node_or_null("Key") as Control
-		var vl := row.get_node_or_null("Value") as Control
-		out.append({
-			"key": key,
-			"icon_left": ic.global_position.x if ic != null else -1.0,
-			"label_left": kl.global_position.x if kl != null else -1.0,
-			"value_left": vl.global_position.x if vl != null else -1.0,
-			"value_right": (vl.global_position.x + vl.size.x) if vl != null else -1.0,
-			"row_top": row.global_position.y,
-			"row_h": row.size.y,
-		})
-	return out
-
-
-## 右侧角标的右边缘（应统一 = 屏幕宽 − 24）
-func debug_right_edge_report() -> Dictionary:
-	var right := get_node_or_null("HudRight") as Control
-	var e: Label = _estimate_label
-	var t: Label = _target_label
-	return {
-		"column_right": (right.global_position.x + right.size.x) if right != null else -1.0,
-		"estimate_right": (e.global_position.x + e.size.x) if e != null else -1.0,
-		"target_right": (t.global_position.x + t.size.x) if t != null else -1.0,
-	}
+func debug_console_log() -> String:
+	return _console.get_log() if _console != null else ""

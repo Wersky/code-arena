@@ -200,7 +200,7 @@ func type_in(segment: String, speed: float = DEFAULT_SPEED) -> void:
 	_typed_len = 0
 	_type_accum = 0.0
 	_type_speed = _effective_speed(segment.length(), speed)
-	_typing_label.add_theme_color_override("font_color", _segment_color(segment))
+	_typing_label.add_theme_color_override("font_color", DOS_GREEN)
 	_typing_label.text = _typing_text()
 	if speed <= 0.0:
 		_commit_pending()
@@ -399,7 +399,7 @@ func _rebuild_cmd_row() -> void:
 
 func _make_segment_label(index: int, text: String) -> Label:
 	# 每段前面都补一个空格分隔符（前面一定是命令行前缀）
-	var l := _mk_label(" " + text, _segment_color(text))
+	var l := _mk_label(" " + text, DOS_GREEN)
 	l.mouse_filter = Control.MOUSE_FILTER_STOP
 	l.gui_input.connect(_on_segment_gui_input.bind(index))
 	l.mouse_entered.connect(_on_segment_hover.bind(l, true))
@@ -421,24 +421,7 @@ func _on_segment_hover(l: Label, entered: bool) -> void:
 	if entered:
 		l.add_theme_color_override("font_color", Color.WHITE)
 	else:
-		l.add_theme_color_override("font_color", _segment_color(l.text.strip_edges()))
-
-
-## 片段颜色 = 梗卡的类型色（与卡面一致）
-func _segment_color(fragment: String) -> Color:
-	var k := kind_of_segment(fragment)
-	if k < 0:
-		return DOS_GREEN
-	return CodeCard.kind_color(k)
-
-
-## 从片段文本（梗卡名）反推卡的类型
-static func kind_of_segment(fragment: String) -> int:
-	var f := fragment.strip_edges()
-	for c in CodeCard.all_cards():
-		if c.name == f:
-			return c.kind
-	return -1
+		l.add_theme_color_override("font_color", DOS_GREEN)
 
 
 ## 命令行有内容 → 先把整条命令回显进历史区（终端行为），并清空实时命令行
@@ -452,9 +435,9 @@ func _echo_command() -> void:
 	row.add_child(_mk_label(PROMPT, DOS_GRAY))
 	row.add_child(_mk_label(_prefix, DOS_AMBER))
 	for i in _segments.size():
-		row.add_child(_mk_label(" " + _segments[i], _segment_color(_segments[i])))
+		row.add_child(_mk_label(" " + _segments[i], DOS_GREEN))
 	if _pending != "":
-		row.add_child(_mk_label(" " + _pending.substr(0, _typed_len), _segment_color(_pending)))
+		row.add_child(_mk_label(" " + _pending.substr(0, _typed_len), DOS_GREEN))
 	_history_box.add_child(row)
 	_segments.clear()
 	_pending = ""

@@ -192,10 +192,8 @@ func _build_box(index: int) -> Control:
 	content.add_child(holder)
 	_fill_portrait(holder, ai, index)
 
-	# 家族 + 被动（被动是选人的唯一依据，必须看得见）
-	var passive := PokerHand.ai_passive_text(ai.id)
-	var family := UiKit.dim(ai.family if passive == "" else passive,
-			UiKit.FS_XS, UiKit.GOLD if passive != "" else UiKit.TEXT_DIM)
+	# 家族一句话（战斗制：AI 的被动暂不参与数值，只展示定位）
+	var family := UiKit.dim(ai.family, UiKit.FS_XS, UiKit.GOLD)
 	family.position = Vector2(10, 190)
 	family.size = Vector2(BOX_W - 20, 24)
 	family.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER

@@ -66,14 +66,16 @@ func _show_reward() -> void:
 func _show_result(win: bool) -> void:
 	var rs := ResultScreen.new()
 	if win:
-		rs.setup("全部评测通过", "你带着 %d 件 AI 道具闯完了 10 关评测。\n最终得分 %d ｜ 剩余算力 %d" % [
-			run.items.size(), run.score, run.compute
+		rs.setup("全部战斗胜利", "你带着 %d 张卡（%d 件 AI 道具）闯完了 10 场战斗。
+累计伤害 %d ｜ 剩余算力 %d" % [
+			run.deck.size(), run.items.size(), run.score, run.compute
 		], [
 			{"text": "再来一局", "id": "menu", "accent": true},
 		])
 	else:
-		rs.setup("评测未通过", "本关得分 %d / 目标 %d\n可以重打本关（AI 道具保留），或者放弃本局。" % [
-			run.score, _pending_level.target_score
+		rs.setup("战败", "倒在【%s】面前。
+可以重打本场（卡组保留），或者放弃本局。" % [
+			_pending_level.enemy_name
 		], [
 			{"text": "重打本关", "id": "retry", "accent": true},
 			{"text": "放弃本局，回到主菜单", "id": "menu"},
@@ -161,9 +163,8 @@ func _maybe_capture() -> void:
 			out_path = a.substr(10)
 	if out_path.is_empty():
 		return
-	if screen in ["menu", "arena", "reward", "result", "flow", "flip", "slot", "hover",
-			"typing", "typebreak", "runresult", "memeverify", "aiselect", "poker", "slot",
-			"fx", "fxfly", "menuhover", "rig", "rigwalk", "loadrun"]:
+	if screen in ["menu", "arena", "battle", "reward", "result",
+			"menuhover", "rig", "rigwalk", "loadrun"]:
 		run.reset_run()
 		if screen == "rig":
 			# 目检：Q 版角色 walk 的第 0/1/2/3 帧 → 2×2 拼图
@@ -177,136 +178,20 @@ func _maybe_capture() -> void:
 			# 演示：进入游戏进度条 + Q 版角色跟着填充边缘跑 → .tmp/loadrun/ PNG 序列
 			await _capture_loadrun(out_path)
 			return
-		if screen == "memeverify":
-			await _verify_meme()
-		elif screen == "aiselect":
+		if screen == "aiselect":
 			_show_ai_select()
 		elif screen == "reward":
 			_show_reward()
 		elif screen == "result":
 			_show_result(true)
-		elif screen == "flow":
-			# 端到端：主菜单 → 关卡 → 打完 → 结算 → 继续 → 奖励
+		elif screen == "battle":
+			# 目检：进战斗打一张牌，看敌人受击特效与战斗日志
 			_show_level(_levels[0])
 			await get_tree().process_frame
-			var arena := _current as ArenaScreen
-			if arena != null:
-				var lv := _levels[0]
-				arena.run.score = lv.target_score
-				arena.run.turn = lv.turns - 1
-				arena.debug_place_card(0)
-				arena.debug_place_card(1)
-				arena.debug_run()
-				await get_tree().create_timer(1.0).timeout
-				arena.debug_click_continue()
-		elif screen == "arena":
-			_show_level(_levels[0])
-		elif screen == "poker":
-			# 目检：手里凑一对打出去，看横幅 + 筹码×倍率预估
-			_show_level(_levels[0])
-			await get_tree().process_frame
-			var ar := _current as ArenaScreen
-			if ar != null:
-				ar.debug_set_hand(["H3", "D3", "S6", "C1", "S2"])
-				ar.debug_place_card_id("H3")
-				ar.debug_place_card_id("D3")
-				await get_tree().create_timer(0.5).timeout
-		elif screen == "slot":
-			# 目检槽位对位：把两张卡放进槽 1、槽 2
-			_show_level(_levels[0])
-			await get_tree().process_frame
-			var arena := _current as ArenaScreen
-			if arena != null:
-				arena.debug_place_card(0)
-				arena.debug_place_card(1)
-				await get_tree().create_timer(0.5).timeout
-		elif screen == "hover":
-			# 目检扇形悬停放大
-			_show_level(_levels[0])
-			await get_tree().process_frame
-			var arena := _current as ArenaScreen
-			if arena != null:
-				arena.debug_hover(2)
+			var arena_shot := _current as ArenaScreen
+			if arena_shot != null:
+				arena_shot.debug_play_card(0)
 				await get_tree().create_timer(0.6).timeout
-		elif screen == "flip":
-			# 翻牌目检：把第一张手牌翻到背面
-			_show_level(_levels[0])
-			await get_tree().process_frame
-			var arena := _current as ArenaScreen
-			if arena != null:
-				arena.debug_flip_first()
-				await get_tree().create_timer(0.6).timeout
-		elif screen == "typing":
-			# 打字机目检：选一张卡，等 0.25 秒（片段还没打完）时截图
-			_show_level(_levels[0])
-			await get_tree().process_frame
-			var arena := _current as ArenaScreen
-			if arena != null:
-				arena.debug_place_card(0)
-				await get_tree().create_timer(0.25).timeout
-				print("[shot=typing] 正在打字=%s ｜ 命令行=%s" % [
-					arena.debug_console_typing(), arena.debug_console_line()])
-		elif screen == "typebreak":
-			# 打断补全目检：第一段还没打完就选第二张卡 → 第一段必须被立刻补全
-			_show_level(_levels[0])
-			await get_tree().process_frame
-			var arena := _current as ArenaScreen
-			if arena != null:
-				arena.debug_place_card(0)
-				await get_tree().create_timer(0.25).timeout
-				print("[shot=typebreak] 打断前 正在打字=%s ｜ 命令行=%s" % [
-					arena.debug_console_typing(), arena.debug_console_line()])
-				arena.debug_place_card(1)
-				print("[shot=typebreak] 打断后 正在打字=%s ｜ 命令行=%s" % [
-					arena.debug_console_typing(), arena.debug_console_line()])
-				await get_tree().create_timer(0.25).timeout
-				print("[shot=typebreak] 0.25s 后 正在打字=%s ｜ 命令行=%s" % [
-					arena.debug_console_typing(), arena.debug_console_line()])
-		elif screen == "runresult":
-			# 运行目检：选 4 张卡 → 运行 → 看 AI 娘回应 + 分数明细
-			_show_level(_levels[0])
-			await get_tree().process_frame
-			var arena := _current as ArenaScreen
-			if arena != null:
-				for i in 4:
-					arena.debug_place_card(i)
-				await get_tree().create_timer(1.6).timeout
-				print("[shot=runresult] 运行前 命令行=%s" % arena.debug_console_line())
-				arena.debug_run()
-				await get_tree().create_timer(1.2).timeout
-				print("[shot=runresult] 控制台日志：\n%s" % arena.debug_console_log())
-		elif screen == "menuhover":
-			# 开始界面悬停目检：把鼠标挪到「开始游戏」上，等 0.4 秒让扫光扫过去
-			_show_menu()
-			await get_tree().process_frame
-			await get_tree().process_frame
-			var menu := _current as MainMenuScreen
-			if menu != null:
-				Input.warp_mouse(menu.debug_start_button_center())
-				menu.debug_hover_start()
-				await get_tree().create_timer(0.30).timeout
-		elif screen == "fxfly":
-			# 出牌特效第二帧：得分数字飞向右上角 HUD
-			_show_level(_levels[0])
-			await get_tree().process_frame
-			var arena_fly := _current as ArenaScreen
-			if arena_fly != null:
-				for i in 4:
-					arena_fly.debug_place_card(i)
-				await get_tree().create_timer(0.35).timeout
-				arena_fly.debug_run()
-				await get_tree().create_timer(1.16).timeout
-		elif screen == "fx":
-			# 出牌特效目检：选 4 张 → 运行 → 停在总分炸开的瞬间
-			_show_level(_levels[0])
-			await get_tree().process_frame
-			var arena_fx := _current as ArenaScreen
-			if arena_fx != null:
-				for i in 4:
-					arena_fx.debug_place_card(i)
-				await get_tree().create_timer(0.35).timeout
-				arena_fx.debug_run()
-				await get_tree().create_timer(0.78).timeout
 		else:
 			_show_menu()
 	for _i in 6:
@@ -757,37 +642,6 @@ func _rig_static_check(shot: Image, origin: Vector2) -> String:
 ##   ① 一对：两张同点数 → 牌型/筹码/倍率正确
 ##   ② 同花：五张同花色 → 牌型升级
 ## 运行：godot --path <项目> -- --shot=memeverify --shotout=<绝对路径>.png
-func _verify_meme() -> void:
-	print("=== 扑克牌型实战验收 ===")
-
-	# ── ① 一对（两张红牌）──
-	_show_level(_levels[0])
-	await get_tree().process_frame
-	var a1 := _current as ArenaScreen
-	a1.debug_set_hand(["H3", "D3", "S6", "C1", "S2"])
-	a1.debug_place_card_id("H3")
-	a1.debug_place_card_id("D3")
-	await get_tree().create_timer(0.3).timeout
-	var pair := a1.debug_hand_eval()
-	print("[① 一对] 牌型=%s 筹码=%d 倍率=%d 得分=%d（期望 一对 16×10=160）" % [
-		str(pair["type_name"]), int(pair["chips"]), int(pair["mult"]), int(pair["score"])])
-	await _shot("res://docs/shots/poker-pair-verify.png")
-
-	# ── ② 同花（五张红心）──
-	_show_level(_levels[0])
-	await get_tree().process_frame
-	var a2 := _current as ArenaScreen
-	a2.debug_set_hand(["H1", "H3", "H5", "H7", "H9"])
-	for cid in ["H1", "H3", "H5", "H7", "H9"]:
-		a2.debug_place_card_id(cid)
-	await get_tree().create_timer(0.3).timeout
-	var flush := a2.debug_hand_eval()
-	print("[② 同花] 牌型=%s 筹码=%d 倍率=%d 得分=%d（期望 同花）" % [
-		str(flush["type_name"]), int(flush["chips"]), int(flush["mult"]), int(flush["score"])])
-	await _shot("res://docs/shots/poker-flush-verify.png")
-	print("=== 验收结束 ===")
-
-
 func _shot(path: String) -> void:
 	var img := get_viewport().get_texture().get_image()
 	var err := img.save_png(path)

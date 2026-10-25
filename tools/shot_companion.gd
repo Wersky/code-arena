@@ -1,11 +1,11 @@
 extends SceneTree
-## 无头目检：右侧 AI 娘 / 排序按钮 / 控制台字号 的几何断言 + 导出睡觉小人贴图。
+## 无头目检（杀戮尖塔制）：战斗界面几何断言 + 导出卡面贴图。
 ## 不开窗口、不出声（开窗口截图会放 BGM，主人明确禁过）。
 ##
 ## 运行：
 ##   godot --headless --path <项目> --script res://tools/shot_companion.gd
 
-const OUT_SLEEP := "res://.godot/ai_companion_sleep.png"
+const OUT_ART := "res://.godot/sts_card_art.png"
 
 
 func _initialize() -> void:
@@ -29,67 +29,44 @@ func _run() -> void:
 	for _i in 6:
 		await process_frame
 
-	# ① 几何：AI 娘盒子应落在右上 HUD 下方、右下按钮上方之间的右列
-	var comp := arena.get_node_or_null("AiCompanion") as AiCompanion
-	if comp == null:
-		print("[FAIL] AiCompanion 未挂载")
-		return
-	print("[companion] rect = %s ｜ mode = %s" % [str(comp.get_rect()), comp.debug_mode()])
-	var inside: bool = comp.position.x >= 1920.0 - 24.0 - 320.0 - 0.5 \
-			and comp.position.y >= 24.0 + 300.0 \
-			and comp.position.y + comp.size.y <= 1080.0 - 156.0 + 0.5
-	print("[%s] AI 娘盒子在右列空档内（右上 HUD 与右下按钮之间）" % ("OK" if inside else "FAIL"))
+	# ① 八大区域构建
+	var missing := ""
+	for zone in ["HudLeft", "HudRight", "PromptArea", "EnemyStage",
+			"Overlay", "AiCompanion", "CardLayer", "BottomSide"]:
+		if arena.get_node_or_null(zone) == null:
+			missing += zone + " "
+	if missing == "":
+		print("[OK] 战斗界面八大区域齐全")
+	else:
+		print("[FAIL] 区域未构建：%s" % missing)
 
-	# ② 排序按钮在右下工具条里、位于屏幕右下角
+	# ② 结束回合按钮贴右下角
 	var side := arena.get_node_or_null("BottomSide") as Control
-	var found := 0
+	var btn: Button = null
 	if side != null:
-		for row in side.get_children():
-			if row is HBoxContainer:
-				for b in row.get_children():
-					if b is Button and ("花色" in b.text or "点数" in b.text):
-						found += 1
-		print("[sort] 按钮数 = %d ｜ 工具条 rect = %s" % [found, str(side.get_rect())])
-		var cornered := found >= 2 \
-				and side.position.x + side.size.x > 1700.0 \
-				and side.position.y + side.size.y > 900.0
-		print("[%s] 排序按钮 ≥2 个且工具条贴右下角" % ("OK" if cornered else "FAIL"))
+		for c in side.get_children():
+			if c is Button:
+				btn = c
+	if btn != null and "结束回合" in btn.text \
+			and side.position.x + side.size.x > 1700.0 \
+			and side.position.y + side.size.y > 950.0:
+		print("[OK] 「结束回合」按钮位于右下角")
 	else:
-		print("[FAIL] BottomSide 未找到")
+		print("[FAIL] 结束回合按钮缺失或位置不对")
 
-	# ③ 控制台字号：第一个日志/命令行 label 应为 16
-	var fs := -1
-	var area := arena.get_node_or_null("PromptArea")
-	if area != null:
-		fs = _first_font_size(area)
-	var font_ok := "OK" if fs == 16 else "FAIL"
-	print("[%s] 控制台字号 = %d（要求 16）" % [font_ok, fs])
-
-	# ④ 导出睡觉小人贴图（4x 最近邻放大）供人工目检
-	var art := comp.get_node_or_null("Art") as TextureRect
-	if art != null and art.texture != null:
-		var img := art.texture.get_image()
-		if img.get_width() <= 512:
-			img.resize(img.get_width() * 4, img.get_height() * 4, Image.INTERPOLATE_NEAREST)
-		var abs := ProjectSettings.globalize_path(OUT_SLEEP)
-		img.save_png(abs)
-		print("[OK] 睡觉小人贴图已导出：%s（%d×%d）" % [abs, img.get_width(), img.get_height()])
-	else:
-		print("[FAIL] 睡觉小人贴图导出失败")
-
-	# ⑤ 手牌横排：全部落在牌区（左栏右缘 → 右列左缘）、不旋转、底边对齐
+	# ③ 手牌横排：全在牌区内、不旋转、底边对齐
 	var cards: Array = []
 	var layer := arena.get_node_or_null("CardLayer")
 	if layer != null:
 		for c in layer.get_children():
-			if c is CardView:
+			if c is StsCardView:
 				cards.append(c)
 	var in_zone := true
 	var no_rot := true
 	var same_bottom := true
 	var bottom := -1.0
 	for c in cards:
-		var cv := c as CardView
+		var cv := c as StsCardView
 		if absf(cv.rotation) > 0.001:
 			no_rot = false
 		if cv.position.x < 267.0 or cv.position.x + 150.0 > 1577.0:
@@ -101,6 +78,38 @@ func _run() -> void:
 	print("[%s] 手牌 %d 张横排：全部落在牌区 268..1576 内" % ["OK" if in_zone else "FAIL", cards.size()])
 	print("[%s] 手牌全部不旋转" % ("OK" if no_rot else "FAIL"))
 	print("[%s] 手牌底边对齐" % ("OK" if same_bottom else "FAIL"))
+
+	# ④ 控制台字号 = 16
+	var fs := _first_font_size(arena.get_node_or_null("PromptArea"))
+	var font_ok := "OK" if fs == 16 else "FAIL"
+	print("[%s] 控制台字号 = %d（要求 16）" % [font_ok, fs])
+
+	# ⑤ 战斗状态：手牌 5 ｜ 能量 3 ｜ 敌 HP 40
+	var st: Dictionary = arena.debug_combat_state()
+	var ok5 := int(st.get("hand", -1)) == 5 and int(st.get("energy", -1)) == 3 \
+			and int(st.get("enemy_hp", -1)) == 40
+	print("[%s] 战斗状态：手牌 %d ｜ 能量 %d ｜ 敌 HP %d" % ["OK" if ok5 else "FAIL",
+			int(st.get("hand", -1)), int(st.get("energy", -1)), int(st.get("enemy_hp", -1))])
+
+	# ⑥ 导出第一张卡面贴图（生成立绘）供人工目检
+	if cards.size() > 0:
+		var view := cards[0] as StsCardView
+		var art := view.get_node_or_null("Art") as TextureRect
+		if art != null and art.texture != null:
+			var img := art.texture.get_image()
+			if img.get_width() <= 512:
+				img.resize(img.get_width() * 4, img.get_height() * 4, Image.INTERPOLATE_NEAREST)
+			var abs := ProjectSettings.globalize_path(OUT_ART)
+			img.save_png(abs)
+			print("[OK] 卡面贴图已导出：%s（%d×%d）" % [abs, img.get_width(), img.get_height()])
+		else:
+			print("[FAIL] 卡面贴图节点缺失")
+	# ⑦ 导出敌人像素形象（6x）供预览合成
+	var etex := arena._enemy_texture(LevelPool.get_level("L1").enemy_tint, false)
+	var eimg := etex.get_image()
+	eimg.resize(eimg.get_width() * 6, eimg.get_height() * 6, Image.INTERPOLATE_NEAREST)
+	eimg.save_png(ProjectSettings.globalize_path("res://.godot/sts_enemy.png"))
+	print("[OK] 敌人贴图已导出（%d×%d）" % [eimg.get_width(), eimg.get_height()])
 	host.queue_free()
 
 
