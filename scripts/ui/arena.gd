@@ -574,10 +574,15 @@ func _card_full_texture(card: StsCard) -> ImageTexture:
 	if img == null:
 		img = Image.create_empty(750, 1130, false, Image.FORMAT_RGBA8)
 		img.fill(UiKit.PANEL)
+	# 框图导入后可能是 RGB8、立绘是 RGBA8——blit_rect 要求同格式，先统一转 RGBA8
+	if img.get_format() != Image.FORMAT_RGBA8:
+		img.convert(Image.FORMAT_RGBA8)
 	if card.art_path != "" and ResourceLoader.exists(card.art_path):
 		var at: Resource = load(card.art_path)
 		if at is Texture2D:
 			var art := (at as Texture2D).get_image()
+			if art.get_format() != Image.FORMAT_RGBA8:
+				art.convert(Image.FORMAT_RGBA8)
 			# 画窗：750 宽 × 700 高，位于 (0, 130)
 			art.resize(750, 700)
 			img.blit_rect(art, Rect2i(Vector2i.ZERO, art.get_size()), Vector2i(0, 130))

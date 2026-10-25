@@ -19,6 +19,9 @@ var _levels: Array[LevelData] = []
 
 
 func _ready() -> void:
+	for a in OS.get_cmdline_user_args():
+		if a == "--mute":
+			AudioServer.set_bus_mute(0, true)
 	_levels = LevelPool.all_levels()
 	get_window().title = "代码擂台 Code Arena"
 	PixelTheme.install(self)
@@ -163,7 +166,7 @@ func _maybe_capture() -> void:
 			out_path = a.substr(10)
 	if out_path.is_empty():
 		return
-	if screen in ["menu", "arena", "battle", "reward", "result",
+	if screen in ["menu", "arena", "battle", "intro", "reward", "result",
 			"menuhover", "rig", "rigwalk", "loadrun"]:
 		run.reset_run()
 		if screen == "rig":
@@ -184,6 +187,13 @@ func _maybe_capture() -> void:
 			_show_reward()
 		elif screen == "result":
 			_show_result(true)
+		elif screen == "intro":
+			# 实测转场：中段（3D 翻飞中）存一张 -mid，结尾（落回 2D）存主文件
+			_show_level(_levels[0])
+			await get_tree().create_timer(0.85).timeout
+			var mid := get_viewport().get_texture().get_image()
+			mid.save_png(_outname(out_path, "intro", "mid"))
+			await get_tree().create_timer(1.6).timeout
 		elif screen == "battle":
 			# 目检：进战斗打一张牌，看敌人受击特效与战斗日志
 			_show_level(_levels[0])
