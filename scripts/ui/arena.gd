@@ -370,13 +370,13 @@ func _build_bottom() -> void:
 	sort_row.add_theme_constant_override("separation", UiKit.SP_2)
 	side.add_child(sort_row)
 
-	_sort_suit_button = UiKit.button("♠♥ 按花色", UiKit.FS_XS)
+	_sort_suit_button = UiKit.button("按花色排序", UiKit.FS_XS)
 	_sort_suit_button.custom_minimum_size = Vector2(0, 28)
 	_sort_suit_button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_sort_suit_button.pressed.connect(_on_sort_suit_pressed)
 	sort_row.add_child(_sort_suit_button)
 
-	_sort_rank_button = UiKit.button("按点数", UiKit.FS_XS)
+	_sort_rank_button = UiKit.button("按点数排序", UiKit.FS_XS)
 	_sort_rank_button.custom_minimum_size = Vector2(0, 28)
 	_sort_rank_button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_sort_rank_button.pressed.connect(_on_sort_rank_pressed)
