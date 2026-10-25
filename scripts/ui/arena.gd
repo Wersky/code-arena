@@ -492,6 +492,7 @@ func _start_battle() -> void:
 		_enemy_sprite.texture = _enemy_texture(level.enemy_tint, level.is_boss)
 		_enemy_sprite.modulate = Color.WHITE
 		_enemy_sprite.visible = true
+		_enemy_sprite.pivot_offset = _enemy_sprite.size * 0.5
 
 	var head := _rail_box.get_node_or_null("RailTitle")
 	if head != null:
@@ -503,7 +504,85 @@ func _start_battle() -> void:
 
 	_rebuild_hand()
 	_refresh_hud()
+
+	# 进场转场（2D → 3D → 2D，主人 2026-10-26 钦定）。
+	# 无头环境跳过动画直接开打（不拖慢冒烟测试）。
+	if _fx_enabled:
+		_play_intro()
+	else:
+		_status_label.text = "战斗开始！意图：%s" % _intent_text()
+
+
+## 进场转场：手牌与敌人先藏起，3D 翻飞结束后 2D 弹入
+func _play_intro() -> void:
+	_busy = true
+	_end_turn_button.disabled = true
+	for v in _hand_views:
+		v.scale = Vector2.ZERO
+	_enemy_sprite.scale = Vector2.ZERO
+	SfxNode.play("deal")
+
+	var card_texs: Array = []
+	for v in _hand_views:
+		card_texs.append(_card_full_texture(v.card))
+	var enemy_tex := _enemy_sprite.texture
+
+	var intro := BattleIntro.new()
+	intro.name = "BattleIntro"
+	add_child(intro)
+	intro.play(card_texs, enemy_tex, func() -> void: _reveal_from_intro())
+
+
+## 转场落回 2D：手牌错峰弹出、敌人砸落 + 震屏
+func _reveal_from_intro() -> void:
+	for i in _hand_views.size():
+		var v := _hand_views[i]
+		var tw := v.create_tween()
+		tw.tween_property(v, "scale", Vector2.ONE, 0.30).set_delay(i * 0.05) \
+			.set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
+	var base_pos := _enemy_sprite.position
+	_enemy_sprite.position = base_pos - Vector2(0, 90)
+	var tw := _enemy_sprite.create_tween()
+	tw.tween_property(_enemy_sprite, "position", base_pos, 0.30) \
+		.set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_IN)
+	tw.parallel().tween_property(_enemy_sprite, "scale", Vector2.ONE, 0.30) \
+		.set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
+	tw.tween_callback(func() -> void:
+		_shake(6.0, 0.14)
+		_flash(Color(1.0, 0.5, 0.5), 0.14)
+		SfxNode.play("hand_big"))
+	await get_tree().create_timer(0.65).timeout
+	_busy = false
+	_end_turn_button.disabled = false
 	_status_label.text = "战斗开始！意图：%s" % _intent_text()
+
+
+## 合成整卡贴图（框 + 立绘）给 3D 转场用；按卡 id 缓存
+var _card_tex_cache: Dictionary = {}
+
+func _card_full_texture(card: StsCard) -> ImageTexture:
+	if _card_tex_cache.has(card.id):
+		return _card_tex_cache[card.id]
+	var frame_path := String(StsCardView.FRAME_PATHS.get(card.kind,
+			StsCardView.FRAME_PATHS[StsCard.Kind.ATTACK]))
+	var img: Image = null
+	if ResourceLoader.exists(frame_path):
+		var ft: Resource = load(frame_path)
+		if ft is Texture2D:
+			img = (ft as Texture2D).get_image()
+	if img == null:
+		img = Image.create_empty(750, 1130, false, Image.FORMAT_RGBA8)
+		img.fill(UiKit.PANEL)
+	if card.art_path != "" and ResourceLoader.exists(card.art_path):
+		var at: Resource = load(card.art_path)
+		if at is Texture2D:
+			var art := (at as Texture2D).get_image()
+			# 画窗：750 宽 × 700 高，位于 (0, 130)
+			art.resize(750, 700)
+			img.blit_rect(art, Rect2i(Vector2i.ZERO, art.get_size()), Vector2i(0, 130))
+	var tex := ImageTexture.create_from_image(img)
+	_card_tex_cache[card.id] = tex
+	return tex
 
 
 func _prefix() -> String:

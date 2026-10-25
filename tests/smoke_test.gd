@@ -22,6 +22,7 @@ func _initialize() -> void:
 	await _test_ui()
 	await _test_battle_flow(true)
 	await _test_battle_flow(false)
+	await _test_battle_intro()
 	await _test_screen_router()
 	print("\n==== %d 项检查，%d 项失败 ====" % [_checks, _fails])
 	quit(1 if _fails > 0 else 0)
@@ -275,3 +276,40 @@ func _test_screen_router() -> void:
 		await process_frame
 		_eq(main.debug_screen_count(), 1, "切到「%s」后仍只有 1 个界面" % screen)
 	main.queue_free()
+
+
+# ── ⑦ 进场转场（2D→3D→2D）──────────────────────────
+func _test_battle_intro() -> void:
+	print("[进场转场]")
+	var host := Control.new()
+	host.size = Vector2(800, 600)
+	_host.add_child(host)
+	await process_frame
+
+	var tex := ImageTexture.create_from_image(
+		Image.create_empty(64, 64, false, Image.FORMAT_RGBA8))
+
+	# ① 正常播完
+	var intro := BattleIntro.new()
+	host.add_child(intro)
+	var done := [false]
+	intro.play([tex], null, func() -> void: done[0] = true)
+	_check(intro.get_child_count() > 0, "3D 子视口与 3D 场景已挂载")
+	var guard := 0
+	while not done[0] and guard < 400:
+		guard += 1
+		await create_timer(0.02).timeout
+	_check(done[0], "转场播完并触发回调（%.1fs）" % (guard * 0.02))
+	_check(not is_instance_valid(intro) or intro.debug_done(), "转场组件标记结束并自毁")
+
+	# ② 点击跳过
+	var intro2 := BattleIntro.new()
+	host.add_child(intro2)
+	var done2 := [false]
+	intro2.play([tex, tex], tex, func() -> void: done2[0] = true)
+	await create_timer(0.3).timeout
+	_check(not done2[0], "播放中尚未结束")
+	intro2.skip()
+	await process_frame
+	_check(done2[0], "skip() 立刻触发回调")
+	host.queue_free()
