@@ -522,14 +522,15 @@ func _play_intro() -> void:
 	_enemy_sprite.scale = Vector2.ZERO
 	SfxNode.play("deal")
 
+	var intro := BattleIntro.new()
+	intro.name = "BattleIntro"
+	add_child(intro)
+	# 先出一帧再合成 3D 贴图（PNG 加载+图像合成分帧做，开局不卡顿）
+	await get_tree().process_frame
 	var card_texs: Array = []
 	for v in _hand_views:
 		card_texs.append(_card_full_texture(v.card))
 	var enemy_tex := _enemy_sprite.texture
-
-	var intro := BattleIntro.new()
-	intro.name = "BattleIntro"
-	add_child(intro)
 	intro.play(card_texs, enemy_tex, func() -> void: _reveal_from_intro())
 
 

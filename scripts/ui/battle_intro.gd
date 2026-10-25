@@ -36,8 +36,17 @@ func play(card_textures: Array, enemy_tex: Texture2D, on_done: Callable) -> void
 	set_anchors_preset(Control.PRESET_FULL_RECT)
 
 	_vp = SubViewport.new()
-	_vp.transparent_bg = true
+	# ⚠ gl_compatibility 管线下 3D SubViewport 的 transparent_bg 不可靠
+	#   （会整块渲染成黑/不透明矩形）——干脆用不透明深蓝背景当"暗幕"，
+	#   整层作为全屏过场，结束靠 container modulate 淡出。
+	_vp.transparent_bg = false
 	_vp.render_target_update_mode = SubViewport.UPDATE_ALWAYS
+	var world := World3D.new()
+	var env := Environment.new()
+	env.background_mode = Environment.BG_COLOR
+	env.background_color = Color(0.012, 0.02, 0.04)
+	world.environment = env
+	_vp.world_3d = world
 	add_child(_vp)
 	_stretch_to_self()
 
@@ -47,18 +56,13 @@ func play(card_textures: Array, enemy_tex: Texture2D, on_done: Callable) -> void
 	_cam = Camera3D.new()
 	_cam.fov = 34.0
 	_cam.position = Vector3(0, 0, 0)
+	_cam.current = true
 	_root3d.add_child(_cam)
 
-	# ① 暗幕
-	var veil := ColorRect.new()
-	veil.name = "Veil"
-	veil.color = Color(0.012, 0.02, 0.04, 0.0)
-	veil.set_anchors_preset(Control.PRESET_FULL_RECT)
-	veil.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	add_child(veil)
-
+	# ① 整层淡入（3D 深蓝背景即暗幕）
+	modulate.a = 0.0
 	_tw = create_tween()
-	_tw.tween_property(veil, "color:a", 0.68, DUR_DARKEN)
+	_tw.tween_property(self, "modulate:a", 1.0, DUR_DARKEN)
 
 	# ② 手牌 3D 翻飞
 	var n := card_textures.size()
@@ -124,6 +128,8 @@ func _make_quad(tex: Texture2D, quad_size: Vector2) -> MeshInstance3D:
 	mat.albedo_texture = tex
 	mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
 	mat.texture_filter = BaseMaterial3D.TEXTURE_FILTER_NEAREST
+	# 翻飞中卡会转到背面朝相机——关剔除，两面都显示
+	mat.cull_mode = BaseMaterial3D.CULL_DISABLED
 	mesh.material = mat
 	var mi := MeshInstance3D.new()
 	mi.mesh = mesh
