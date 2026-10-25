@@ -65,7 +65,7 @@ func setup(c: StsCard) -> void:
 	add_child(_frame)
 
 	# ② 顶栏：费用数字（左）+ 卡名（中，给费用让出左侧）
-	cost_lbl = UiKit.label(str(c.cost), UiKit.FS_S, C_COST)
+	var cost_lbl := UiKit.label(str(c.cost), UiKit.FS_S, C_COST)
 	cost_lbl.name = "CostOrb"
 	cost_lbl.position = Vector2(4, 0)
 	cost_lbl.size = Vector2(26, NAME_H)
