@@ -19,10 +19,8 @@ const H := 226.0
 const NAME_H := 26.0
 const ART_H := 140.0
 
-const ORB_R := 13.0
-const ORB_C := Vector2(20, 20)
-const C_ORB_BG := Color(0.055, 0.078, 0.125)
-const C_ORB_RING := Color(0.310, 0.757, 0.965)
+## 费用数字的颜色（能量青）
+const C_COST := Color(0.310, 0.757, 0.965)
 
 ## 卡框材质（按类型取）
 const FRAME_PATHS := {
@@ -94,7 +92,7 @@ func setup(c: StsCard) -> void:
 
 	# ④ 小 GUI（图片下方）：能量+类型一行（能量色），效果描述一行（居中+描边）
 	_meta_lbl = UiKit.label("能量 %d ｜ %s" % [c.cost, StsCardPool.kind_name(c.kind)],
-			UiKit.FS_XS, C_ORB_RING)
+			UiKit.FS_XS, C_COST)
 	_meta_lbl.position = Vector2(4, NAME_H + ART_H + 5)
 	_meta_lbl.size = Vector2(W - 8, 16)
 	_meta_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
@@ -114,25 +112,18 @@ func setup(c: StsCard) -> void:
 	_desc_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	add_child(_desc_lbl)
 
-	# ⑤ 能量费用球：必须是**子节点**（在框贴图之上）。之前画在 _draw() 里
-	#    会被不透明的框贴图整层盖住——主人实测截图抓到过"只有环没有数字"。
-	var orb := PanelContainer.new()
-	orb.name = "CostOrb"
-	orb.position = ORB_C - Vector2(ORB_R, ORB_R)
-	var sb := StyleBoxFlat.new()
-	sb.bg_color = C_ORB_BG
-	sb.border_color = C_ORB_RING
-	sb.set_border_width_all(2)
-	sb.set_corner_radius_all(int(ORB_R))
-	sb.anti_aliasing = false
-	orb.add_theme_stylebox_override("panel", sb)
-	orb.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	var num := UiKit.label(str(c.cost), UiKit.FS_XS, Color(0.95, 0.95, 0.98))
-	num.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	num.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-	num.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	orb.add_child(num)
-	add_child(orb)
+	# ⑤ 能量费用：**纯文本数字**（2026-10-25 主人钦定：不要球底/圆环，仅文字；
+	#    黑描边保证压在框图花纹上仍读得清）。必须是子节点——画在框贴图之上。
+	var cost_lbl := UiKit.label(str(c.cost), UiKit.FS_S, C_COST)
+	cost_lbl.name = "CostOrb"
+	cost_lbl.position = Vector2(6, 4)
+	cost_lbl.size = Vector2(30, 26)
+	cost_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	cost_lbl.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	cost_lbl.add_theme_constant_override("outline_size", 4)
+	cost_lbl.add_theme_color_override("font_outline_color", Color(0.02, 0.03, 0.06, 0.95))
+	cost_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	add_child(cost_lbl)
 
 	mouse_entered.connect(_on_hover.bind(true))
 	mouse_exited.connect(_on_hover.bind(false))
