@@ -114,6 +114,26 @@ func setup(c: StsCard) -> void:
 	_desc_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	add_child(_desc_lbl)
 
+	# ⑤ 能量费用球：必须是**子节点**（在框贴图之上）。之前画在 _draw() 里
+	#    会被不透明的框贴图整层盖住——主人实测截图抓到过"只有环没有数字"。
+	var orb := PanelContainer.new()
+	orb.name = "CostOrb"
+	orb.position = ORB_C - Vector2(ORB_R, ORB_R)
+	var sb := StyleBoxFlat.new()
+	sb.bg_color = C_ORB_BG
+	sb.border_color = C_ORB_RING
+	sb.set_border_width_all(2)
+	sb.set_corner_radius_all(int(ORB_R))
+	sb.anti_aliasing = false
+	orb.add_theme_stylebox_override("panel", sb)
+	orb.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	var num := UiKit.label(str(c.cost), UiKit.FS_XS, Color(0.95, 0.95, 0.98))
+	num.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	num.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	num.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	orb.add_child(num)
+	add_child(orb)
+
 	mouse_entered.connect(_on_hover.bind(true))
 	mouse_exited.connect(_on_hover.bind(false))
 	gui_input.connect(_on_gui)
@@ -151,16 +171,3 @@ func flash() -> void:
 func set_playable(ok: bool) -> void:
 	playable = ok
 	modulate = Color.WHITE if ok else Color(0.55, 0.55, 0.58, 0.85)
-
-
-func _draw() -> void:
-	if card == null:
-		return
-	# 能量费用球（左上角；框图的底座不明显，球由引擎画）
-	draw_circle(ORB_C, ORB_R, C_ORB_BG)
-	draw_arc(ORB_C, ORB_R - 1.0, 0, TAU, 24, C_ORB_RING, 2.0)
-	var f := ThemeDB.fallback_font
-	var num := str(card.cost)
-	var num_w := f.get_string_size(num, HORIZONTAL_ALIGNMENT_LEFT, -1, 14).x
-	draw_string(f, ORB_C + Vector2(-num_w * 0.5, 5.0), num,
-			HORIZONTAL_ALIGNMENT_LEFT, -1, 14, Color(0.95, 0.95, 0.98))

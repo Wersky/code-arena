@@ -91,7 +91,22 @@ func _run() -> void:
 	print("[%s] 战斗状态：手牌 %d ｜ 能量 %d ｜ 敌 HP %d" % ["OK" if ok5 else "FAIL",
 			int(st.get("hand", -1)), int(st.get("energy", -1)), int(st.get("enemy_hp", -1))])
 
-	# ⑥ 导出第一张卡面贴图（生成立绘）供人工目检
+	# ⑥ 费用球必须是子节点且排在框之后（画在框上面）
+	if cards.size() > 0:
+		var v0 := cards[0] as StsCardView
+		var fi := -1
+		var oi := -1
+		for i in v0.get_child_count():
+			var ch := v0.get_child(i)
+			if ch.name == "Frame":
+				fi = i
+			elif ch.name == "CostOrb":
+				oi = i
+		var orb_ok := oi > fi and fi >= 0
+		print("[%s] 费用球是子节点且绘制在框之上（Frame#%d CostOrb#%d）" % [
+			"OK" if orb_ok else "FAIL", fi, oi])
+
+	# ⑦ 导出第一张卡面贴图（生成立绘）供人工目检
 	if cards.size() > 0:
 		var view := cards[0] as StsCardView
 		var art := view.get_node_or_null("Art") as TextureRect
