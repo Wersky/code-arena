@@ -2,13 +2,15 @@ class_name StsCardView
 extends Control
 ## 杀戮尖塔制的卡面视图：150×226。
 ##
-## 布局（主人钦定 2026-10-25）：
-##   顶栏 26px  卡名（类型色）
-##   画区 140px 生成的像素立绘（StsCardPool 表里的 art）
-##   小GUI 60px 「能量 N ｜ 攻击/防御」+ 一句效果描述
-##   左上角能量费用球，能量不够时整卡变灰（由 arena 调 set_playable）
+## 底子是**生成的像素风卡框材质**（sts-frame-attack/defend，三段布局与本视图
+## 的分割线对齐），引擎只往上面叠三样：立绘、文字、费用球——
+## 生图不写文字（会乱码），排版全在这里管。
 ##
-## 悬停放大 / 点击闪光是自带的；抬起位移由 arena 的横排布局管。
+## 布局：
+##   顶栏 0..26    卡名（类型色 + 黑描边，居中）
+##   画区 26..166  生成的像素立绘
+##   小GUI 166..226「能量 N ｜ 类型」+ 效果描述（居中 + 描边）
+##   左上角能量费用球（引擎画），能量不够时整卡变灰
 
 signal clicked(view: StsCardView)
 
@@ -22,14 +24,20 @@ const ORB_C := Vector2(20, 20)
 const C_ORB_BG := Color(0.055, 0.078, 0.125)
 const C_ORB_RING := Color(0.310, 0.757, 0.965)
 
+## 卡框材质（按类型取）
+const FRAME_PATHS := {
+	StsCard.Kind.ATTACK: "res://assets/art/sts-frame-attack.png",
+	StsCard.Kind.SKILL: "res://assets/art/sts-frame-defend.png",
+}
+
 var card: StsCard = null
 var playable := true
 
+var _frame: TextureRect = null
 var _art: TextureRect = null
 var _name_lbl: Label = null
 var _meta_lbl: Label = null
 var _desc_lbl: Label = null
-var _hover := false
 
 
 func _init() -> void:
@@ -42,13 +50,34 @@ func setup(c: StsCard) -> void:
 	card = c
 	var kcolor: Color = StsCardPool.kind_color(c.kind)
 
+	# ① 卡框材质打底（高密度像素画缩小显示，线性过滤）
+	_frame = TextureRect.new()
+	_frame.name = "Frame"
+	_frame.position = Vector2.ZERO
+	_frame.size = Vector2(W, H)
+	_frame.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	_frame.stretch_mode = TextureRect.STRETCH_SCALE
+	_frame.texture_filter = CanvasItem.TEXTURE_FILTER_LINEAR
+	_frame.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	var fp := String(FRAME_PATHS.get(c.kind, FRAME_PATHS[StsCard.Kind.ATTACK]))
+	if ResourceLoader.exists(fp):
+		var ft: Resource = load(fp)
+		if ft is Texture2D:
+			_frame.texture = ft as Texture2D
+	add_child(_frame)
+
+	# ② 顶栏卡名：类型色 + 黑描边（描边让像素字在花纹上读得清）
 	_name_lbl = UiKit.label(StsCardPool.card_name(c.id), UiKit.FS_XS, kcolor)
-	_name_lbl.position = Vector2(0, 5)
-	_name_lbl.size = Vector2(W, NAME_H)
+	_name_lbl.position = Vector2(4, 4)
+	_name_lbl.size = Vector2(W - 8, NAME_H)
 	_name_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_name_lbl.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	_name_lbl.add_theme_constant_override("outline_size", 3)
+	_name_lbl.add_theme_color_override("font_outline_color", Color(0.02, 0.03, 0.06, 0.92))
 	_name_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	add_child(_name_lbl)
 
+	# ③ 立绘（框的画窗正中）
 	_art = TextureRect.new()
 	_art.name = "Art"
 	_art.position = Vector2(0, NAME_H)
@@ -63,18 +92,25 @@ func setup(c: StsCard) -> void:
 			_art.texture = t as Texture2D
 	add_child(_art)
 
-	# 小 GUI（图片下方）：能量 + 类型 一行，效果描述一行
+	# ④ 小 GUI（图片下方）：能量+类型一行（能量色），效果描述一行（居中+描边）
 	_meta_lbl = UiKit.label("能量 %d ｜ %s" % [c.cost, StsCardPool.kind_name(c.kind)],
 			UiKit.FS_XS, C_ORB_RING)
-	_meta_lbl.position = Vector2(6, NAME_H + ART_H + 4)
-	_meta_lbl.size = Vector2(W - 12, 16)
+	_meta_lbl.position = Vector2(4, NAME_H + ART_H + 5)
+	_meta_lbl.size = Vector2(W - 8, 16)
+	_meta_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_meta_lbl.add_theme_constant_override("outline_size", 2)
+	_meta_lbl.add_theme_color_override("font_outline_color", Color(0.02, 0.03, 0.06, 0.9))
 	_meta_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	add_child(_meta_lbl)
 
 	_desc_lbl = UiKit.label(StsCardPool.desc(c.id), UiKit.FS_XS, UiKit.TEXT)
-	_desc_lbl.position = Vector2(8, NAME_H + ART_H + 22)
-	_desc_lbl.size = Vector2(W - 16, 34)
+	_desc_lbl.position = Vector2(6, NAME_H + ART_H + 24)
+	_desc_lbl.size = Vector2(W - 12, 32)
+	_desc_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_desc_lbl.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	_desc_lbl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_desc_lbl.add_theme_constant_override("outline_size", 2)
+	_desc_lbl.add_theme_color_override("font_outline_color", Color(0.02, 0.03, 0.06, 0.9))
 	_desc_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	add_child(_desc_lbl)
 
@@ -84,7 +120,6 @@ func setup(c: StsCard) -> void:
 
 
 func _on_hover(entered: bool) -> void:
-	_hover = entered
 	set_hovered(entered)
 
 
@@ -121,17 +156,7 @@ func set_playable(ok: bool) -> void:
 func _draw() -> void:
 	if card == null:
 		return
-	var kcolor: Color = StsCardPool.kind_color(card.kind)
-	# 卡底 + 类型色描边
-	draw_rect(Rect2(0, 0, W, H), UiKit.PANEL)
-	draw_rect(Rect2(0, 0, W, H), kcolor, false, 2.0)
-	# 顶栏底色
-	draw_rect(Rect2(2, 2, W - 4, NAME_H), UiKit.PANEL_2)
-	# 小 GUI 面板底（图片下方那条）
-	draw_rect(Rect2(2, H - 58, W - 4, 56), UiKit.PANEL_2)
-	draw_rect(Rect2(2, H - 58, W - 4, 56), kcolor * Color(1, 1, 1, 0.55), false, 1.0)
-	draw_line(Vector2(2, H - 58), Vector2(W - 2, H - 58), kcolor, 1.0)
-	# 能量费用球（左上角）
+	# 能量费用球（左上角；框图的底座不明显，球由引擎画）
 	draw_circle(ORB_C, ORB_R, C_ORB_BG)
 	draw_arc(ORB_C, ORB_R - 1.0, 0, TAU, 24, C_ORB_RING, 2.0)
 	var f := ThemeDB.fallback_font
