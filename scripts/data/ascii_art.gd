@@ -5,10 +5,11 @@ extends Object
 ## 用「疏密梯度」表现明暗：空格 → . : - = + * # % @ $，越亮字符越密。
 ## 终端字符天生窄高一倍，所以按 cell 宽 1 : 高 2 的假设换算列数。
 
-const RAMP := " .'`,:;Il!i~+_-?][}{1)(|/tfjrxnuvczXYUJCLQ0OZmwqpdbkhao*#MW&8%B@$"
+const RAMP := " .:-=+*#%@"
 const CELL_ASPECT := 2.0        ## 终端字符宽:高 ≈ 1:2
 const STRETCH := 1.0            ## 横向拉伸系数
-const BUST := 0.52              ## 只取「头 + 上半身」高度比例：终端行数有限，
+const CROP_W := 0.62            ## 横向只取中间 62%：长发很宽，全幅会把构图拉扁
+const BUST := 0.40              ## 只取「头 + 肩」高度比例：终端行数有限，
                                 ## 全身缩进去必然糊，胸像才够精细（参考图也是胸像）
 
 
@@ -28,9 +29,11 @@ static func build(tex: Texture2D, rows: int, max_cols: int = 110) -> PackedStrin
 	if bb.size.x <= 0 or bb.size.y <= 0:
 		return out
 	# 只取上半身（胸像）：从内容顶部裁剪 BUST 比例的高度
+	# 先按比例裁出「头 + 肩」的取景框（横向居中），否则长发会把构图撑成扁的
 	var crop_h := maxi(8, int(float(bb.size.y) * BUST))
-	if crop_h < bb.size.y:
-		bb = Rect2i(bb.position, Vector2i(bb.size.x, crop_h))
+	var crop_w := maxi(8, int(float(bb.size.x) * CROP_W))
+	bb = Rect2i(Vector2i(bb.position.x + (bb.size.x - crop_w) / 2, bb.position.y),
+			Vector2i(crop_w, mini(crop_h, bb.size.y)))
 	var src_aspect := float(bb.size.x) / float(bb.size.y)
 	var cols := int(round(float(rows) * src_aspect * CELL_ASPECT * STRETCH))
 	if cols > max_cols:
@@ -78,7 +81,7 @@ static func build(tex: Texture2D, rows: int, max_cols: int = 110) -> PackedStrin
 				continue
 			# 直接用亮度（不要覆盖率混合，否则像素图的平涂色块会变成噪点汤）；
 			# gamma 提亮中间调，白围裙才会亮起来、深色头发才落到低档
-			var nv := clampf(pow(clampf(lums[idx], 0.0, 1.0), 0.85), 0.0, 1.0)
+			var nv := clampf(pow(clampf(lums[idx], 0.0, 1.0), 1.25), 0.0, 1.0)
 			line += RAMP[clampi(int(roundf(nv * float(RAMP.length() - 1))), 0, RAMP.length() - 1)]
 		out.append(line.rstrip(" "))
 	return out
