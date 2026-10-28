@@ -33,7 +33,9 @@ var _on_done: Callable = Callable()
 func play(card_textures: Array, enemy_tex: Texture2D, on_done: Callable) -> void:
 	_on_done = on_done
 	mouse_filter = Control.MOUSE_FILTER_STOP
-	set_anchors_preset(Control.PRESET_FULL_RECT)
+	# 必须用 anchors+offsets：只设 anchors 时 offsets 保留旧的（容器会缩到 2x2 最小尺寸，
+	# SubViewport 也只有 2x2 像素 —— 表现就是"转场什么都没发生，只是等了几秒"）。
+	set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 
 	_vp = SubViewport.new()
 	# ⚠ gl_compatibility 管线下 3D SubViewport 的 transparent_bg 不可靠
@@ -48,6 +50,8 @@ func play(card_textures: Array, enemy_tex: Texture2D, on_done: Callable) -> void
 	world.environment = env
 	_vp.world_3d = world
 	add_child(_vp)
+	# stretch = true 让容器自己驱动 viewport 尺寸（不再手工算 size）
+	stretch = true
 	_stretch_to_self()
 
 	_root3d = Node3D.new()

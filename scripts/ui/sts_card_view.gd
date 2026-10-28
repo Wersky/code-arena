@@ -18,9 +18,14 @@ const W := 150.0
 const H := 226.0
 const NAME_H := 26.0
 const ART_H := 140.0
-## 框材质的「画窗」（卡框 750x1130 ÷5 = 150x226；金线在 x4/x144、y4/y165/y219，
-## 窗内平坦区实测 x 9..141、y 31..161）。立绘必须严格限制在这里，否则会盖住边框。
-const ART_RECT := Rect2(9, 31, 132, 130)
+## 框材质的实测分区（卡框 750x1130 ÷5 = 150x226；全部按框素材像素量出来的，
+## 不是估的）：金线在 x4/x144、y4/y166/y219；画窗 y31..161；底部面板 y168..216，
+## 其中 y≈183 有一条内部分隔线（上=能量/类型，下=效果描述）。
+const ART_RECT := Rect2(9, 31, 132, 130)      ## 立绘：严格限制在画窗内
+const COST_RECT := Rect2(13, 8, 26, 26)       ## 费用数字：居中在六边形球里（中心 26,21）
+const NAME_RECT := Rect2(50, 6, 90, 16)       ## 卡名：居中在名牌内区（中心 95,14）
+const META_RECT := Rect2(6, 168, 138, 14)     ## 「能量 N ｜ 类型」：分隔线以上
+const DESC_RECT := Rect2(6, 184, 138, 31)     ## 效果描述：分隔线以下，不出底边 216
 
 ## 费用数字的颜色（能量青）
 const C_COST := Color(0.310, 0.757, 0.965)
@@ -70,8 +75,6 @@ func setup(c: StsCard) -> void:
 	# ② 顶栏：费用数字（左）+ 卡名（中，给费用让出左侧）
 	var cost_lbl := UiKit.label(str(c.cost), UiKit.FS_S, C_COST)
 	cost_lbl.name = "CostOrb"
-	cost_lbl.position = Vector2(4, 0)
-	cost_lbl.size = Vector2(26, NAME_H)
 	cost_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	cost_lbl.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	cost_lbl.add_theme_constant_override("outline_size", 4)
@@ -80,8 +83,6 @@ func setup(c: StsCard) -> void:
 	add_child(cost_lbl)
 
 	_name_lbl = UiKit.label(StsCardPool.card_name(c.id), UiKit.FS_XS, kcolor)
-	_name_lbl.position = Vector2(32, 4)
-	_name_lbl.size = Vector2(W - 36, NAME_H)
 	_name_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	_name_lbl.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	_name_lbl.add_theme_constant_override("outline_size", 3)
@@ -108,8 +109,6 @@ func setup(c: StsCard) -> void:
 	# ④ 小 GUI（图片下方）：能量+类型一行（能量色），效果描述一行（居中+描边）
 	_meta_lbl = UiKit.label("能量 %d ｜ %s" % [c.cost, StsCardPool.kind_name(c.kind)],
 			UiKit.FS_XS, C_COST)
-	_meta_lbl.position = Vector2(4, NAME_H + ART_H + 5)
-	_meta_lbl.size = Vector2(W - 8, 16)
 	_meta_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	_meta_lbl.add_theme_constant_override("outline_size", 2)
 	_meta_lbl.add_theme_color_override("font_outline_color", Color(0.02, 0.03, 0.06, 0.9))
@@ -117,8 +116,6 @@ func setup(c: StsCard) -> void:
 	add_child(_meta_lbl)
 
 	_desc_lbl = UiKit.label(StsCardPool.desc(c.id), UiKit.FS_XS, UiKit.TEXT)
-	_desc_lbl.position = Vector2(6, NAME_H + ART_H + 24)
-	_desc_lbl.size = Vector2(W - 12, 32)
 	_desc_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	_desc_lbl.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	_desc_lbl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
@@ -127,9 +124,40 @@ func setup(c: StsCard) -> void:
 	_desc_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	add_child(_desc_lbl)
 
+	# 排版最后一步：全部文字按目标 rect 居中。
+	# 必须放在字号/描边都设好之后——Label 的最小尺寸含描边宽度，
+	# 提前算会让位置偏（实测费用数字下偏 12px）。
+	_fit_label(cost_lbl, COST_RECT)
+	_fit_label(_name_lbl, NAME_RECT)
+	_fit_label(_meta_lbl, META_RECT)
+	_fit_label(_desc_lbl, DESC_RECT)
+
 	mouse_entered.connect(_on_hover.bind(true))
 	mouse_exited.connect(_on_hover.bind(false))
 	gui_input.connect(_on_gui)
+
+
+## Label 的最小尺寸由「字号 + 描边」决定，常常比目标 rect 还高；
+## 直接给 rect 会让 Godot 把框撑大、文字随之整体下移（实测下偏 12px）。
+## 这里改成：尺寸取 max(rect, 最小尺寸)，再按 rect 中心对齐——文字永远居中。
+func _fit_label(lbl: Label, rect: Rect2) -> void:
+	lbl.set_meta("fit_rect", rect)
+	_apply_fit(lbl)
+	# 描边/字体生效会把最小尺寸抬高一档（实测 +6），只在 setup 里算一次会偏；
+	# 绑住 minimum_size_changed 自动重排，永远居中。
+	if not lbl.minimum_size_changed.is_connected(_on_fit_min_size):
+		lbl.minimum_size_changed.connect(_on_fit_min_size.bind(lbl))
+
+
+func _on_fit_min_size(lbl: Label) -> void:
+	_apply_fit(lbl)
+
+
+func _apply_fit(lbl: Label) -> void:
+	var rect: Rect2 = lbl.get_meta("fit_rect", Rect2())
+	var min_sz := lbl.get_combined_minimum_size()
+	lbl.size = Vector2(maxf(rect.size.x, min_sz.x), maxf(rect.size.y, min_sz.y))
+	lbl.position = rect.get_center() - lbl.size * 0.5
 
 
 func _on_hover(entered: bool) -> void:
