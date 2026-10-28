@@ -559,7 +559,20 @@ func _reveal_from_intro() -> void:
 
 
 ## 合成整卡贴图（框 + 立绘）给 3D 转场用；按卡 id 缓存
+## 卡框素材 750x1130 = 游戏内 150x226 的 5 倍，画窗坐标按这个倍数换算
+const FRAME_SCALE := 5
 var _card_tex_cache: Dictionary = {}
+
+
+## 等比「cover」：先放缩到铺满 target，再居中裁切（不拉伸变形）
+func _fit_cover(img: Image, target: Vector2i) -> Image:
+	var s := maxf(float(target.x) / float(img.get_width()),
+			float(target.y) / float(img.get_height()))
+	img.resize(maxi(1, roundi(float(img.get_width()) * s)),
+			maxi(1, roundi(float(img.get_height()) * s)))
+	var x := (img.get_width() - target.x) / 2
+	var y := (img.get_height() - target.y) / 2
+	return img.get_region(Rect2i(x, y, target.x, target.y))
 
 func _card_full_texture(card: StsCard) -> ImageTexture:
 	if _card_tex_cache.has(card.id):
@@ -583,9 +596,15 @@ func _card_full_texture(card: StsCard) -> ImageTexture:
 			var art := (at as Texture2D).get_image()
 			if art.get_format() != Image.FORMAT_RGBA8:
 				art.convert(Image.FORMAT_RGBA8)
-			# 画窗：750 宽 × 700 高，位于 (0, 130)
-			art.resize(750, 700)
-			img.blit_rect(art, Rect2i(Vector2i.ZERO, art.get_size()), Vector2i(0, 130))
+			# 画窗：与 2D 卡面共用 StsCardView.ART_RECT（显示坐标），换算到 750x1130 原生分辨率。
+			# 原来是 0,130 + 750x700（铺满全宽），立绘会压出框边。
+			var win := Rect2i(
+					int(StsCardView.ART_RECT.position.x) * FRAME_SCALE,
+					int(StsCardView.ART_RECT.position.y) * FRAME_SCALE,
+					int(StsCardView.ART_RECT.size.x) * FRAME_SCALE,
+					int(StsCardView.ART_RECT.size.y) * FRAME_SCALE)
+			art = _fit_cover(art, win.size)
+			img.blit_rect(art, Rect2i(Vector2i.ZERO, art.get_size()), win.position)
 	var tex := ImageTexture.create_from_image(img)
 	_card_tex_cache[card.id] = tex
 	return tex

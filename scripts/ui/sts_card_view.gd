@@ -18,6 +18,9 @@ const W := 150.0
 const H := 226.0
 const NAME_H := 26.0
 const ART_H := 140.0
+## 框材质的「画窗」（卡框 750x1130 ÷5 = 150x226；金线在 x4/x144、y4/y165/y219，
+## 窗内平坦区实测 x 9..141、y 31..161）。立绘必须严格限制在这里，否则会盖住边框。
+const ART_RECT := Rect2(9, 31, 132, 130)
 
 ## 费用数字的颜色（能量青）
 const C_COST := Color(0.310, 0.757, 0.965)
@@ -86,15 +89,16 @@ func setup(c: StsCard) -> void:
 	_name_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	add_child(_name_lbl)
 
-	# ③ 立绘（框的画窗正中）
+	# ③ 立绘（严格落在框的画窗内；KEEP_ASPECT_COVERED 不拉伸变形）
 	_art = TextureRect.new()
 	_art.name = "Art"
-	_art.position = Vector2(0, NAME_H)
-	_art.size = Vector2(W, ART_H)
+	_art.position = ART_RECT.position
+	_art.size = ART_RECT.size
 	_art.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
-	_art.stretch_mode = TextureRect.STRETCH_SCALE
+	_art.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED
 	_art.texture_filter = CanvasItem.TEXTURE_FILTER_LINEAR
 	_art.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_art.clip_contents = true      ## 双保险：万一以后换宽幅立绘，也只会在窗内裁切
 	if c.art_path != "" and ResourceLoader.exists(c.art_path):
 		var t: Resource = load(c.art_path)
 		if t is Texture2D:
