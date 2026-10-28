@@ -78,20 +78,37 @@ func _compose(ai_name: String, code: PackedStringArray, art: PackedStringArray) 
 	var ps := ""
 	ps += "param([string]$Sentinel)\n"
 	ps += "$ErrorActionPreference='SilentlyContinue'\n"
-	# Win32：最大化窗口 + 全局 Ctrl 轮询（快进）
-	ps += "$sig='[DllImport(\"user32.dll\")] public static extern bool ShowWindow(IntPtr h,int n);" \
-		+ "[DllImport(\"user32.dll\")] public static extern short GetAsyncKeyState(int v);'\n"
+	# 标题先行：找窗口句柄要用它兜底
+	ps += "$title='arena_os :: %s'\n" % _esc(ai_name)
+	ps += "$Host.UI.RawUI.WindowTitle=$title\n"
+	# Win32：无边框全屏 + 全局 Ctrl 轮询（快进）
+	ps += "$sig='[DllImport(\"user32.dll\")] public static extern short GetAsyncKeyState(int v);" \
+		+ "[DllImport(\"user32.dll\")] public static extern int GetSystemMetrics(int n);" \
+		+ "[DllImport(\"user32.dll\")] public static extern int GetWindowLongW(IntPtr h,int i);" \
+		+ "[DllImport(\"user32.dll\")] public static extern int SetWindowLongW(IntPtr h,int i,int v);" \
+		+ "[DllImport(\"user32.dll\")] public static extern bool SetWindowPos(IntPtr h,IntPtr a,int x,int y,int w,int ht,uint f);" \
+		+ "[DllImport(\"user32.dll\",CharSet=CharSet.Unicode)] public static extern IntPtr FindWindowW(string c,string t);'\n"
 	ps += "$W = Add-Type -MemberDefinition $sig -Name 'W' -PassThru\n"
 	ps += "function Fast(){ return (($W::GetAsyncKeyState(0x11) -band 0x8000) -ne 0) }\n"
-	# 先按物理上限放大缓冲区/窗口，再交给系统最大化
+	# 找窗口句柄：进程主窗口拿不到就按标题找，最多等 2 秒（窗口创建有竞速，
+	# 上一版只取一次，拿到 0 就静默跳过 = 窗口压根没变大）
+	ps += "$h=[IntPtr]::Zero\n"
+	ps += "for($i=0;$i -lt 20 -and $h -eq [IntPtr]::Zero;$i++){ Start-Sleep -Milliseconds 100;" \
+		+ "$h=(Get-Process -Id $PID).MainWindowHandle;" \
+		+ "if($h -eq [IntPtr]::Zero){$h=$W::FindWindowW($null,$title)} }\n"
+	# 强制全屏（主人钦定）：剥掉 WS_OVERLAPPEDWINDOW(0x00CF0000) 整组样式
+	# → 无边框 SetWindowPos 盖满整屏（含任务栏区）→ 顶置。最大化 ≠ 全屏。
+	ps += "try{ if($h -ne [IntPtr]::Zero){" \
+		+ "$st=$W::GetWindowLongW($h,-16);" \
+		+ "$st=$st -band (-bnot 0x00CF0000);" \
+		+ "$W::SetWindowLongW($h,-16,$st)|Out-Null;" \
+		+ "$W::SetWindowPos($h,[IntPtr](-1),0,0,$W::GetSystemMetrics(0),$W::GetSystemMetrics(1),0x0060)|Out-Null }}catch{}\n"
+	# 全屏后按物理上限放大缓冲区/窗口，让字符画吃满整屏
 	ps += "try{$mp=$Host.UI.RawUI.MaxPhysicalWindowSize;" \
 		+ "$b=$Host.UI.RawUI.BufferSize;$b.Width=[Math]::Max(120,$mp.Width);$b.Height=999;" \
 		+ "$Host.UI.RawUI.BufferSize=$b;" \
 		+ "$w=$Host.UI.RawUI.WindowSize;$w.Width=$mp.Width;$w.Height=$mp.Height;" \
 		+ "$Host.UI.RawUI.WindowSize=$w}catch{}\n"
-	ps += "try{$h=(Get-Process -Id $PID).MainWindowHandle;" \
-		+ "if($h -ne 0){ $W::ShowWindow($h,3) | Out-Null }}catch{}\n"
-	ps += "$Host.UI.RawUI.WindowTitle='arena_os :: %s'\n" % _esc(ai_name)
 	ps += "Clear-Host\n"
 	# 打字：分块写；扫到 Ctrl 就把本行剩余一次吐出
 	ps += "function T([string]$s,[int]$chunk,[int]$d){" \
