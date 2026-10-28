@@ -535,9 +535,6 @@ func _play_intro() -> void:
 		intro3d.play(card_texs, _enemy_sprite.texture, func() -> void: _reveal_from_intro())
 		return
 
-	var term := TerminalIntro.new()
-	term.name = "TerminalIntro"
-	add_child(term)
 	await get_tree().process_frame
 	var art_tex: Texture2D = null
 	var ai_id := "agent"
@@ -555,6 +552,20 @@ func _play_intro() -> void:
 			art_tex = load(cut) as Texture2D
 		elif run.ai.portrait_path != "" and ResourceLoader.exists(run.ai.portrait_path):
 			art_tex = load(run.ai.portrait_path) as Texture2D
+	# 先试「真实系统终端」（主人钦定：要电脑本体的终端）；
+	# --interm 强制游戏内版本，启动失败也自动回退。
+	var use_ext := not OS.get_cmdline_user_args().has("--interm")
+	if use_ext:
+		var ext := ExtTerminal.new()
+		ext.name = "ExtTerminal"
+		add_child(ext)
+		if ext.play(ai_id, ai_name, art_tex, func() -> void: _reveal_from_intro()):
+			return
+		ext.queue_free()
+
+	var term := TerminalIntro.new()
+	term.name = "TerminalIntro"
+	add_child(term)
 	term.play(ai_id, ai_name, art_tex, func() -> void: _reveal_from_intro())
 
 

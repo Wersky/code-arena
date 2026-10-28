@@ -25,14 +25,22 @@ const C_BG := Color("#05070a")
 const C_TERM := Color("#8ff0c4")
 const C_DIM := Color("#2e6b57")
 const C_ACCENT := Color("#9fe6ff")
-const C_ART := Color("#dfe9f2")
+const C_ART := Color("#dfe9f2")        ## 字符画主色（白）
+const C_ART_HI := Color("#6fd8e8")     ## 最亮一档的点缀青（参照主人给的图）
+## ASCII 密度梯度：从空到最密（经典 jp2a 风格），疏密勾出形体
+const RAMP := " .'`^\",:;Il!i~+_-?][}{1)(|\\/tfjrxnuvczXYUJCLQ0OZmwqpdbkhao*#MW&8%B@$"
+const ART_FONT := 9                    ## 字符画字号（格高 ≈ 字号的 1.35 倍）
+const ART_WIDTH_RATIO := 0.86          ## 字符画占屏宽比例
+const ART_HEIGHT_RATIO := 0.84         ## 字符画占屏高比例
 const GLYPHS := [" ", "░", "▒", "▓", "█"]
 const COLUMNS := 42
 
 var _ai_name := ""
 var _code: PackedStringArray = []
-var _art_rows: Array[PackedInt32Array] = []
+var _art_chars := PackedStringArray()
 var _art_cols := 0
+var _art_rows_count := 0
+var _art_font_px := 9
 
 var _t := 0.0
 var _done := false
@@ -54,7 +62,7 @@ func play(ai_id: String, ai_name: String, art_tex: Texture2D, on_done: Callable)
 	for line in _code:
 		_code_chars += line.length() + 1
 	if art_tex != null:
-		_build_art(art_tex, COLUMNS)
+		_build_art(art_tex, Vector2(1600, 900))
 	_t = 0.0
 	_done = false
 	gui_input.connect(_on_gui)
@@ -156,39 +164,28 @@ func _draw_terminal_text() -> void:
 		consumed += line.length() + 1
 
 
-## 字符画：单色、整块闪现、居中
+## 字符画：ASCII 疏密梯度、单色（最亮一档点一点青）、整块闪现、居中
 func _draw_art(vp: Vector2) -> void:
-	if _art_rows.is_empty() or _art_cols <= 0:
+	if _art_chars.is_empty() or _art_cols <= 0:
 		return
-	var cell := _cell_size(vp)
-	var step := cell + Vector2(1, 1)
-	var w := float(_art_cols) * step.x
-	var h := float(_art_rows.size()) * step.y
+	var step_x := _font.get_string_size("M", HORIZONTAL_ALIGNMENT_LEFT, -1, _art_font_px).x
+	var step_y := _font.get_height(_art_font_px)
+	var w := float(_art_cols) * step_x
+	var h := float(_art_rows_count) * step_y
 	var ox := floorf((vp.x - w) * 0.5)
 	var oy := floorf((vp.y - h) * 0.5)
-	var size := int(cell.y)
-	var ascent := _font.get_ascent(size)
-	for r in _art_rows.size():
-		var row := _art_rows[r]
+	var ascent := _font.get_ascent(_art_font_px)
+	var hi_from := int(float(RAMP.length()) * 0.86)     ## 最亮 14% 走点缀青
+	for r in _art_rows_count:
+		var line := _art_chars[r]
 		for c in _art_cols:
-			var gi := row[c]
-			if gi <= 0:
+			var ch := line[c]
+			if ch == " ":
 				continue
-			var col := C_ART
-			if gi == 2:
-				col = Color(C_ART, 0.66)
-			elif gi == 1:
-				col = Color(C_ART, 0.42)
-			draw_char(_font, Vector2(ox + c * step.x, oy + r * step.y + ascent),
-					GLYPHS[gi], size, col)
-
-
-func _cell_size(vp: Vector2) -> Vector2:
-	var cols := float(maxi(1, _art_cols))
-	var rows := float(maxi(1, _art_rows.size()))
-	var s := minf((vp.x * 0.46) / cols, (vp.y * 0.74) / rows)
-	s = maxf(4.0, floorf(s))
-	return Vector2(s, s)
+			var gi := RAMP.find(ch)
+			var col := C_ART_HI if gi >= hi_from else C_ART
+			draw_char(_font, Vector2(ox + c * step_x, oy + r * step_y + ascent),
+					ch, _art_font_px, col)
 
 
 func _draw_hint(vp: Vector2) -> void:
@@ -200,29 +197,35 @@ func _draw_hint(vp: Vector2) -> void:
 
 
 # ── 像素图 → 单色字符网格 ─────────────────────
-func _build_art(tex: Texture2D, cols: int) -> void:
+func _build_art(tex: Texture2D, vp: Vector2) -> void:
 	var img := tex.get_image()
 	if img == null:
 		return
 	img.convert(Image.FORMAT_RGBA8)
 	_key_background(img)
 	var bb := _alpha_bbox(img)
-	if bb.size.x <= 0 or bb.size.y <= 0:
+	if bb.size.x <= 0 or bb.size.y <= 0 or _font == null:
 		return
-	var cw := float(bb.size.x) / float(cols)
-	var rows := maxi(1, int(round(float(bb.size.y) / cw)))
 
-	# 第一遍：采样每个格子的覆盖率与平均亮度
-	var cover := PackedFloat32Array()
+	# 网格：格宽=字宽、格高=行高 → 天然是 ASCII 的瘦高格子，密度拉满
+	_art_font_px = ART_FONT
+	var step_x := _font.get_string_size("M", HORIZONTAL_ALIGNMENT_LEFT, -1, ART_FONT).x
+	var step_y := _font.get_height(ART_FONT)
+	var rows := int((vp.y * ART_HEIGHT_RATIO) / step_y)
+	var cols := int(rows * (float(bb.size.x) / float(bb.size.y)) * (step_y / step_x))
+	cols = maxi(8, cols)
+	rows = maxi(4, rows)
+
 	var lums := PackedFloat32Array()
-	cover.resize(cols * rows)
+	var covers := PackedFloat32Array()
 	lums.resize(cols * rows)
+	covers.resize(cols * rows)
 	for r in rows:
 		for c in cols:
-			var sx0 := bb.position.x + int(c * cw)
-			var sx1 := maxi(sx0 + 1, bb.position.x + int((c + 1) * cw))
-			var sy0 := bb.position.y + int(r * cw)
-			var sy1 := maxi(sy0 + 1, bb.position.y + int((r + 1) * cw))
+			var sx0 := bb.position.x + int(float(c) / cols * bb.size.x)
+			var sx1 := maxi(sx0 + 1, bb.position.x + int(float(c + 1) / cols * bb.size.x))
+			var sy0 := bb.position.y + int(float(r) / rows * bb.size.y)
+			var sy1 := maxi(sy0 + 1, bb.position.y + int(float(r + 1) / rows * bb.size.y))
 			var lum := 0.0
 			var n := 0
 			for y in range(sy0, mini(sy1, img.get_height())):
@@ -233,37 +236,34 @@ func _build_art(tex: Texture2D, cols: int) -> void:
 					lum += px.r * 0.299 + px.g * 0.587 + px.b * 0.114
 					n += 1
 			var idx := r * cols + c
-			cover[idx] = float(n) / float(maxi(1, (sy1 - sy0) * (sx1 - sx0)))
+			covers[idx] = float(n) / float(maxi(1, (sy1 - sy0) * (sx1 - sx0)))
 			lums[idx] = lum / float(maxi(1, n))
 
-	# 亮度归一化：这张图里最深（深蓝头发）和最亮（白围裙）拉到 0..1，
-	# 否则深色区域全落在最低档、整块看起来只剩白团。
+	# 只看「有像素」的格子做亮度归一化 —— 深色头发才能落到中间档
 	var lo := 1.0
 	var hi := 0.0
-	for idx in cover.size():
-		if cover[idx] < 0.16:
+	for idx in covers.size():
+		if covers[idx] < 0.12:
 			continue
 		lo = minf(lo, lums[idx])
 		hi = maxf(hi, lums[idx])
 	var span := maxf(0.05, hi - lo)
 
 	_art_cols = cols
-	_art_rows.clear()
+	_art_rows_count = rows
+	_art_chars.clear()
 	for r in rows:
-		var glyphs := PackedInt32Array()
-		glyphs.resize(cols)
+		var line := ""
 		for c in cols:
 			var idx := r * cols + c
-			if cover[idx] < 0.16:
-				glyphs[c] = 0
+			if covers[idx] < 0.12:
+				line += " "
 				continue
 			var nv := clampf((lums[idx] - lo) / span, 0.0, 1.0)
-			# 归一化亮度 → 4 级方块；覆盖率很低的边缘格降一档，轮廓才不糊
-			var level := 1 + int(roundf(nv * 3.0))
-			if cover[idx] < 0.5:
-				level = maxi(1, level - 1)
-			glyphs[c] = clampi(level, 1, 4)
-		_art_rows.append(glyphs)
+			nv = clampf(nv * 0.55 + covers[idx] * 0.45, 0.0, 1.0)   ## 亮度为主、覆盖率为辅
+			var gi := int(roundf(nv * float(RAMP.length() - 1)))
+			line += RAMP[clampi(gi, 0, RAMP.length() - 1)]
+		_art_chars.append(line)
 
 
 func _key_background(img: Image) -> void:
