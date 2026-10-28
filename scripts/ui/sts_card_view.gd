@@ -22,7 +22,8 @@ const ART_H := 140.0
 ## 不是估的）：金线在 x4/x144、y4/y166/y219；画窗 y31..161；底部面板 y168..216，
 ## 其中 y≈183 有一条内部分隔线（上=能量/类型，下=效果描述）。
 const ART_RECT := Rect2(9, 31, 132, 130)      ## 立绘：严格限制在画窗内
-const COST_RECT := Rect2(13, 8, 26, 26)       ## 费用数字：居中在六边形球里（中心 26,21）
+const COST_FONT := 18                          ## 费用数字字号（球内区 ~20px，24 会顶满环）
+const COST_RECT := Rect2(9, 2, 26, 26)        ## 费用数字：居中在六边形球里（球心实测 (17,15.5)，见 docs/shots 校准图）
 const NAME_RECT := Rect2(50, 6, 90, 16)       ## 卡名：居中在名牌内区（中心 95,14）
 const META_RECT := Rect2(6, 168, 138, 14)     ## 「能量 N ｜ 类型」：分隔线以上
 const DESC_RECT := Rect2(6, 184, 138, 31)     ## 效果描述：分隔线以下，不出底边 216
@@ -73,7 +74,7 @@ func setup(c: StsCard) -> void:
 	add_child(_frame)
 
 	# ② 顶栏：费用数字（左）+ 卡名（中，给费用让出左侧）
-	var cost_lbl := UiKit.label(str(c.cost), UiKit.FS_S, C_COST)
+	var cost_lbl := UiKit.label(str(c.cost), COST_FONT, C_COST)
 	cost_lbl.name = "CostOrb"
 	cost_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	cost_lbl.vertical_alignment = VERTICAL_ALIGNMENT_CENTER

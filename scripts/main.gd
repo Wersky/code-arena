@@ -173,7 +173,7 @@ func _maybe_capture() -> void:
 	if out_path.is_empty():
 		return
 	if screen in ["menu", "arena", "battle", "intro", "reward", "result",
-			"menuhover", "rig", "rigwalk", "loadrun"]:
+			"menuhover", "rig", "rigwalk", "loadrun", "card", "cardtext", "cardcost"]:
 		run.reset_run()
 		if screen == "rig":
 			# 目检：Q 版角色 walk 的第 0/1/2/3 帧 → 2×2 拼图
@@ -193,6 +193,30 @@ func _maybe_capture() -> void:
 			_show_reward()
 		elif screen == "result":
 			_show_result(true)
+		elif screen in ["card", "cardtext", "cardcost"]:
+			# 验收钩子：两张卡画在**已知坐标**（40,40）/（240,40），便于像素级量文字墨迹中心。
+			# 布局框居中 ≠ 字形居中（描边上下不对称），肉眼验收容易放过，这里给个可量的靶。
+			var probe := Control.new()
+			probe.set_anchors_preset(Control.PRESET_FULL_RECT)
+			var pbg := ColorRect.new()
+			pbg.color = Color("#0b0f18")
+			pbg.set_anchors_preset(Control.PRESET_FULL_RECT)
+			probe.add_child(pbg)
+			var ids := ["fish_ram", "taunt"]
+			var text_only := screen == "cardtext" or screen == "cardcost"
+			for i in ids.size():
+				var cv := StsCardView.new()
+				cv.setup(StsCardPool.card(ids[i]))
+				cv.position = Vector2(40 + i * 200, 40)
+				if text_only:
+					# 只留文字层：藏掉框与立绘，墨迹测量不受污染
+					for ch in cv.get_children():
+						if ch is TextureRect:
+							(ch as TextureRect).visible = false
+						elif screen == "cardcost" and ch is Label and (ch as Label).name != "CostOrb":
+							(ch as Label).visible = false
+				probe.add_child(cv)
+			_swap(probe)
 		elif screen == "intro":
 			# 实测转场：中段（3D 翻飞中）存一张 -mid，结尾（落回 2D）存主文件
 			_show_level(_levels[0])
