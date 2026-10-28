@@ -25,6 +25,12 @@ func _ready() -> void:
 	_levels = LevelPool.all_levels()
 	get_window().title = "代码擂台 Code Arena"
 	PixelTheme.install(self)
+	# 实测调参器（Dev 工具，不进玩法）：F1 开关面板，F5 存 docs/ui-tune.json
+	var tuner := UiTuner.new()
+	add_child(tuner)
+	for a in OS.get_cmdline_user_args():
+		if a == "--tune":
+			tuner.open()
 	_show_menu()
 	_maybe_capture()
 
