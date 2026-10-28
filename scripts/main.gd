@@ -173,7 +173,7 @@ func _maybe_capture() -> void:
 	if out_path.is_empty():
 		return
 	if screen in ["menu", "arena", "battle", "intro", "reward", "result",
-			"menuhover", "rig", "rigwalk", "loadrun", "card", "cardtext", "cardcost"]:
+			"menuhover", "rig", "rigwalk", "loadrun", "card", "cardtext", "cardcost", "terminal", "termgif"]:
 		run.reset_run()
 		if screen == "rig":
 			# 目检：Q 版角色 walk 的第 0/1/2/3 帧 → 2×2 拼图
@@ -193,6 +193,23 @@ func _maybe_capture() -> void:
 			_show_reward()
 		elif screen == "result":
 			_show_result(true)
+		elif screen == "termgif":
+			# 动图采帧：12fps 抓 5.8 秒 → .tmp/termgif/*.png（ffmpeg 拼 GIF）
+			_show_level(_levels[0])
+			DirAccess.make_dir_recursive_absolute("res://.tmp/termgif")
+			var fps := 12
+			for i in int(5.8 * fps):
+				var img := get_viewport().get_texture().get_image()
+				img.save_png("res://.tmp/termgif/f%03d.png" % i)
+				await get_tree().create_timer(1.0 / float(fps)).timeout
+			print("[shot=termgif] 采帧完成")
+		elif screen == "terminal":
+			# 终端进场三相：代码打字中 / 字符画扫描中 / 完成
+			_show_level(_levels[0])
+			for st in [1.1, 3.0, 4.3]:
+				await get_tree().create_timer(st - (0.0 if st == 1.1 else (1.1 if st == 3.0 else 3.0))).timeout
+				get_viewport().get_texture().get_image().save_png(
+						_outname(out_path, "terminal", "t%d" % int(st * 10)))
 		elif screen in ["card", "cardtext", "cardcost"]:
 			# 验收钩子：两张卡画在**已知坐标**（40,40）/（240,40），便于像素级量文字墨迹中心。
 			# 布局框居中 ≠ 字形居中（描边上下不对称），肉眼验收容易放过，这里给个可量的靶。

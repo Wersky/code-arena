@@ -522,16 +522,40 @@ func _play_intro() -> void:
 	_enemy_sprite.scale = Vector2.ZERO
 	SfxNode.play("deal")
 
-	var intro := BattleIntro.new()
-	intro.name = "BattleIntro"
-	add_child(intro)
-	# 先出一帧再合成 3D 贴图（PNG 加载+图像合成分帧做，开局不卡顿）
+	# 终端式进场（2026-10-28 主人钦定）：全屏终端 → 敲代码 → 扫出角色字符画 → 进战斗。
+	# 旧的 3D 转场保留在 --intro3d 开关后面，方便对比。
+	if OS.get_cmdline_user_args().has("--intro3d"):
+		var intro3d := BattleIntro.new()
+		intro3d.name = "BattleIntro"
+		add_child(intro3d)
+		await get_tree().process_frame
+		var card_texs: Array = []
+		for v in _hand_views:
+			card_texs.append(_card_full_texture(v.card))
+		intro3d.play(card_texs, _enemy_sprite.texture, func() -> void: _reveal_from_intro())
+		return
+
+	var term := TerminalIntro.new()
+	term.name = "TerminalIntro"
+	add_child(term)
 	await get_tree().process_frame
-	var card_texs: Array = []
-	for v in _hand_views:
-		card_texs.append(_card_full_texture(v.card))
-	var enemy_tex := _enemy_sprite.texture
-	intro.play(card_texs, enemy_tex, func() -> void: _reveal_from_intro())
+	var art_tex: Texture2D = null
+	var ai_id := "agent"
+	var ai_name := "Agent"
+	if run != null and run.ai != null:
+		ai_id = run.ai.id
+		ai_name = run.ai.display_name
+		# 优先用带透明底的切件（字符画背景才干净），没有再退回立绘
+		# 主人指定：字符画统一用「设定图正面视图」那一套；没有才退回切件/立绘
+		var front := "res://assets/art/rig/%s-front/front.png" % ai_id
+		var cut := "res://assets/art/rig/%s/cutout.png" % ai_id
+		if ResourceLoader.exists(front):
+			art_tex = load(front) as Texture2D
+		elif ResourceLoader.exists(cut):
+			art_tex = load(cut) as Texture2D
+		elif run.ai.portrait_path != "" and ResourceLoader.exists(run.ai.portrait_path):
+			art_tex = load(run.ai.portrait_path) as Texture2D
+	term.play(ai_id, ai_name, art_tex, func() -> void: _reveal_from_intro())
 
 
 ## 转场落回 2D：手牌错峰弹出、敌人砸落 + 震屏
