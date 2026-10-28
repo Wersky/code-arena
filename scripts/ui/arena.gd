@@ -552,6 +552,20 @@ func _play_intro() -> void:
 			art_tex = load(cut) as Texture2D
 		elif run.ai.portrait_path != "" and ResourceLoader.exists(run.ai.portrait_path):
 			art_tex = load(run.ai.portrait_path) as Texture2D
+	# 终端演完之后：黑幕淡出，游戏画面「逐渐融入」（主人要求）
+	var veil := ColorRect.new()
+	veil.name = "IntroVeil"
+	veil.color = Color(0, 0, 0, 1)
+	veil.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	veil.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	add_child(veil)
+	var on_done := func() -> void:
+		_reveal_from_intro()
+		var tw := create_tween()
+		tw.tween_property(veil, "color:a", 0.0, 0.75).set_trans(Tween.TRANS_SINE) \
+			.set_ease(Tween.EASE_OUT)
+		tw.tween_callback(veil.queue_free)
+
 	# 先试「真实系统终端」（主人钦定：要电脑本体的终端）；
 	# --interm 强制游戏内版本，启动失败也自动回退。
 	var use_ext := not OS.get_cmdline_user_args().has("--interm")
@@ -559,14 +573,14 @@ func _play_intro() -> void:
 		var ext := ExtTerminal.new()
 		ext.name = "ExtTerminal"
 		add_child(ext)
-		if ext.play(ai_id, ai_name, art_tex, func() -> void: _reveal_from_intro()):
+		if ext.play(ai_id, ai_name, art_tex, on_done):
 			return
 		ext.queue_free()
 
 	var term := TerminalIntro.new()
 	term.name = "TerminalIntro"
 	add_child(term)
-	term.play(ai_id, ai_name, art_tex, func() -> void: _reveal_from_intro())
+	term.play(ai_id, ai_name, art_tex, on_done)
 
 
 ## 转场落回 2D：手牌错峰弹出、敌人砸落 + 震屏

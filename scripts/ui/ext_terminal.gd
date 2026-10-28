@@ -1,38 +1,33 @@
 class_name ExtTerminal
 extends Node
-## 真实系统终端进场（Windows）：**真的弹出一个终端窗口**跑整套演出。
+## 真实系统终端进场（Windows）：真的弹出一个**最大化**的终端窗口跑整套演出。
 ##
-## 流程：生成脚本 → 用 cmd 的 start 打开一个 PowerShell 窗口 →
-##   开机行 → 逐字敲角色代码 → 停 1 秒 → 清屏 → 打印 ASCII 字符画 → 窗口自己关掉，
-##   同时写一个哨兵文件；本节点轮询到哨兵（或超时）后回调「进场」。
-##
-## 为什么走外部终端：主人要的是「电脑本体的终端」那股味道，游戏内画的终归是假终端。
-## 启动失败（没有 pwsh/powershell、策略禁止）返回 false，由调用方回退到游戏内版本。
+## 流程：生成脚本 → cmd 的 start 打开终端 → 开机行 → 逐块敲角色代码（速度取自开始界面）
+##   → 停 1 秒 → 清屏 → ASCII 胸像**三档亮度叠印淡入** → 停留 2 秒 → 窗口自关 + 写哨兵
+##   → 游戏侧黑幕淡出、手牌弹入（见 arena._play_intro）。
+## 任意时刻按 **Ctrl** 快进（全局轮询 VK_CONTROL，不要求终端有焦点）。
 
 signal finished
 
 const SCRIPT_PATH := "user://term_intro.ps1"
 const SENTINEL := "user://term_intro.done"
-const ART_ROWS := 38            ## 终端里画多少行（窗口拉到 38 行时刚好）
-const TYPE_DELAY_MS := 24       ## 每「块」间隔（宿主 sleep 有 ~15ms 下限，逐字符会拖到 7 秒）
-const TYPE_CHUNK := 6           ## 每次写入的字符数 → 6 字/34ms ≈ 176 字/秒
+const ART_ROWS := 40            ## 终端里画多少行（最大化后够放）
 const HOLD_MS := 1000           ## 代码打完停留（主人指定 1 秒）
-const ART_HOLD_MS := 1200       ## 字符画停留
-const TIMEOUT := 20.0
+const ART_HOLD_MS := 2000       ## 字符画停留 2 秒后融回游戏（主人指定）
+const TIMEOUT := 45.0
 
 var _on_done := Callable()
 var _done := false
 var _t := 0.0
 
 
-## 启动演出；返回 false = 没能启动（调用方回退游戏内终端）
 func play(ai_id: String, ai_name: String, art_tex: Texture2D, on_done: Callable) -> bool:
 	_on_done = on_done
 	var sentinel := ProjectSettings.globalize_path(SENTINEL)
 	if FileAccess.file_exists(SENTINEL):
 		DirAccess.remove_absolute(sentinel)
 
-	var art := AsciiArt.build(art_tex, ART_ROWS)
+	var art := AsciiArt.build(art_tex, ART_ROWS, 150)
 	var code := IntroScript.code_for(ai_id, ai_name)
 	var script := _compose(ai_name, code, art)
 
@@ -78,35 +73,59 @@ func _finish() -> void:
 
 # ── 拼脚本正文 ───────────────────────────────
 func _compose(ai_name: String, code: PackedStringArray, art: PackedStringArray) -> String:
+	var delay := GameSettings.type_delay()
+	var chunk := GameSettings.type_chunk()
 	var ps := ""
 	ps += "param([string]$Sentinel)\n"
 	ps += "$ErrorActionPreference='SilentlyContinue'\n"
-	# 窗口拉到 110x38：34 行字符画才塞得下（先把缓冲区做大，再改窗口）
-	ps += "try{$b=$Host.UI.RawUI.BufferSize;$b.Width=120;$b.Height=600;" \
-		+ "$Host.UI.RawUI.BufferSize=$b;$w=$Host.UI.RawUI.WindowSize;" \
-		+ "$w.Width=120;$w.Height=44;$Host.UI.RawUI.WindowSize=$w}catch{}\n"
+	# Win32：最大化窗口 + 全局 Ctrl 轮询（快进）
+	ps += "$sig='[DllImport(\"user32.dll\")] public static extern bool ShowWindow(IntPtr h,int n);" \
+		+ "[DllImport(\"user32.dll\")] public static extern short GetAsyncKeyState(int v);'\n"
+	ps += "$W = Add-Type -MemberDefinition $sig -Name 'W' -PassThru\n"
+	ps += "function Fast(){ return (($W::GetAsyncKeyState(0x11) -band 0x8000) -ne 0) }\n"
+	# 先按物理上限放大缓冲区/窗口，再交给系统最大化
+	ps += "try{$mp=$Host.UI.RawUI.MaxPhysicalWindowSize;" \
+		+ "$b=$Host.UI.RawUI.BufferSize;$b.Width=[Math]::Max(120,$mp.Width);$b.Height=999;" \
+		+ "$Host.UI.RawUI.BufferSize=$b;" \
+		+ "$w=$Host.UI.RawUI.WindowSize;$w.Width=$mp.Width;$w.Height=$mp.Height;" \
+		+ "$Host.UI.RawUI.WindowSize=$w}catch{}\n"
+	ps += "try{$h=(Get-Process -Id $PID).MainWindowHandle;" \
+		+ "if($h -ne 0){ $W::ShowWindow($h,3) | Out-Null }}catch{}\n"
 	ps += "$Host.UI.RawUI.WindowTitle='arena_os :: %s'\n" % _esc(ai_name)
 	ps += "Clear-Host\n"
-	ps += "function T([string]$s,[int]$chunk,[int]$d){for($i=0;$i -lt $s.Length;$i+=$chunk){" \
+	# 打字：分块写；扫到 Ctrl 就把本行剩余一次吐出
+	ps += "function T([string]$s,[int]$chunk,[int]$d){" \
+		+ "for($i=0;$i -lt $s.Length;$i+=$chunk){" \
+		+ "if(Fast){[Console]::Write($s.Substring($i));return}" \
 		+ "[Console]::Write($s.Substring($i,[Math]::Min($chunk,$s.Length-$i)));" \
-		+ "Start-Sleep -Milliseconds $d};[Console]::WriteLine()}\n"
+		+ "Start-Sleep -Milliseconds $d}}\n"
+	# 等待：Ctrl 可提前结束
+	ps += "function Wait([int]$ms){$t=0;while($t -lt $ms){if(Fast){return};" \
+		+ "Start-Sleep -Milliseconds 40;$t+=40}}\n"
 	for l in IntroScript.boot_lines(ai_name):
 		ps += "Write-Host '%s' -ForegroundColor DarkGreen\n" % _esc(l)
-		ps += "Start-Sleep -Milliseconds 90\n"
-	ps += "Start-Sleep -Milliseconds 150\n"
+		ps += "Wait 120\n"
+	ps += "Wait 150\n"
 	ps += "$code = @'\n" + "\n".join(code) + "\n'@ -split \"`n\"\n"
-	ps += "foreach($l in $code){ T $l %d %d }\n" % [TYPE_CHUNK, TYPE_DELAY_MS]
-	ps += "Start-Sleep -Milliseconds %d\n" % HOLD_MS
+	ps += "foreach($l in $code){ T $l %d %d; [Console]::WriteLine() }\n" % [chunk, delay]
+	ps += "Wait %d\n" % HOLD_MS
 	ps += "Clear-Host\n"
+	# 字符画：三档亮度叠印 → 视觉上的淡入
 	ps += "$art = @'\n" + "\n".join(art) + "\n'@ -split \"`n\"\n"
-	ps += "foreach($l in $art){ Write-Host $l -ForegroundColor Gray }\n"
-	ps += "Start-Sleep -Milliseconds %d\n" % ART_HOLD_MS
+	ps += "$top=[Console]::CursorTop\n"
+	ps += "foreach($lv in @('DarkGray','Gray','White')){" \
+		+ "[Console]::SetCursorPosition(0,$top);" \
+		+ "foreach($l in $art){ Write-Host $l -ForegroundColor $lv };" \
+		+ "if(Fast){break}; Start-Sleep -Milliseconds 220}\n"
+	ps += "[Console]::SetCursorPosition(0,$top)\n"
+	ps += "foreach($l in $art){ Write-Host $l -ForegroundColor White }\n"
+	ps += "Wait %d\n" % ART_HOLD_MS
 	ps += "New-Item -ItemType File -Path $Sentinel -Force | Out-Null\n"
-	ps += "Start-Sleep -Milliseconds 120\n"
+	ps += "Start-Sleep -Milliseconds 100\n"
 	ps += "exit\n"
 	return ps
 
 
-## 单引号字符串转义（PowerShell 里 '' 表示一个单引号）
+## 单引号字符串转义（宿主里 '' 表示一个单引号）
 func _esc(s: String) -> String:
 	return s.replace("'", "''")

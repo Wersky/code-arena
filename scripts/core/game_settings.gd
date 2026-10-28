@@ -1,0 +1,47 @@
+class_name GameSettings
+extends Object
+## 玩家设置（存 user://arena_settings.cfg）。
+##
+## 目前只有一项：终端进场的打字速度（开始界面可切）。
+## 为什么放这里：终端脚本是外部宿主跑的，参数得由游戏算好后传进去。
+
+const PATH := "user://arena_settings.cfg"
+
+## 三档速度：名字 / 每块间隔(ms) / 每块字数
+## 注意：宿主的 sleep 有 ~15ms 下限，慢档实际会更慢一点，这是有意的。
+const SPEED_NAMES := ["慢", "中", "快"]
+const SPEED_DELAY := [45, 22, 9]
+const SPEED_CHUNK := [3, 5, 8]
+
+static var term_speed: int = 0        ## 0=慢（默认） 1=中 2=快
+
+
+static func load_from_disk() -> void:
+	var cfg := ConfigFile.new()
+	if cfg.load(PATH) != OK:
+		return
+	term_speed = clampi(int(cfg.get_value("term", "speed", 0)), 0, 2)
+
+
+static func save_to_disk() -> void:
+	var cfg := ConfigFile.new()
+	cfg.set_value("term", "speed", term_speed)
+	cfg.save(PATH)
+
+
+static func speed_name() -> String:
+	return String(SPEED_NAMES[clampi(term_speed, 0, 2)])
+
+
+static func type_delay() -> int:
+	return int(SPEED_DELAY[clampi(term_speed, 0, 2)])
+
+
+static func type_chunk() -> int:
+	return int(SPEED_CHUNK[clampi(term_speed, 0, 2)])
+
+
+## 下一档（开始界面的按钮用）
+static func cycle_speed() -> void:
+	term_speed = (clampi(term_speed, 0, 2) + 1) % 3
+	save_to_disk()
