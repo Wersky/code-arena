@@ -6,10 +6,20 @@ extends Object
 ## 终端字符天生窄高一倍，所以按 cell 宽 1 : 高 2 的假设换算列数。
 
 const RAMP := " .:-=+*#%@"
+## Bayer 8x8 有序抖动矩阵（0..63）——字符画有渐变感全靠它，否则大片同色就是一面墙
+const BAYER := [
+	0, 32, 8, 40, 2, 34, 10, 42,
+	48, 16, 56, 24, 50, 18, 58, 26,
+	12, 44, 4, 36, 14, 46, 6, 38,
+	60, 28, 52, 20, 62, 30, 54, 22,
+	3, 35, 11, 43, 1, 33, 9, 41,
+	51, 19, 59, 27, 49, 17, 57, 25,
+	15, 47, 7, 39, 13, 45, 5, 37,
+	63, 31, 55, 23, 61, 29, 53, 21]
 const CELL_ASPECT := 2.0        ## 终端字符宽:高 ≈ 1:2
 const STRETCH := 1.0            ## 横向拉伸系数
-const CROP_W := 0.86            ## 横向只取中间 55%：头发太抢画面，裁窄点让身体/手势占比更大
-const BUST := 0.78              ## 取「头 + 手势 + 上半身」高度比例（0.40 只到脸，太小）
+const CROP_W := 0.62            ## 横向只取中间 55%：头发太抢画面，裁窄点让身体/手势占比更大
+const BUST := 0.40              ## 取「头 + 手势 + 上半身」高度比例（0.40 只到脸，太小）
                                 ## 全身缩进去必然糊，胸像才够精细（参考图也是胸像）
 
 
@@ -87,7 +97,7 @@ static func build(tex: Texture2D, rows: int, max_cols: int = 110,
 				continue
 			# 直接用亮度（不要覆盖率混合，否则像素图的平涂色块会变成噪点汤）；
 			# gamma 提亮中间调，白围裙才会亮起来、深色头发才落到低档
-			var nv := 0.22 + 0.78 * clampf(pow(clampf(lums[idx], 0.0, 1.0), 1.15), 0.0, 1.0)   ## 抬暗部：剪影可见、亮部仍最密
+			var nv := 0.22 + 0.78 * clampf(pow(clampf(lums[idx], 0.0, 1.0), 1.15), 0.0, 1.0)
 			# 边缘检测：轮廓用最密的字符描出来，内部才按明暗填 —— 字符画能不能看清，全看这步
 			var e := 0.0
 			var dirs: Array[Vector2i] = [Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1)]
@@ -101,12 +111,7 @@ static func build(tex: Texture2D, rows: int, max_cols: int = 110,
 					e = maxf(e, covers[idx])              ## 挨着背景的格子必然算轮廓
 				else:
 					e = maxf(e, absf(lums[idx] - lums[nidx]))
-			var gi := int(roundf(nv * float(RAMP.length() - 1)))
-			if e > 0.99:
-				gi = RAMP.length() - 1                    ## 轮廓：最密字符
-			elif e > 0.98:
-				gi = maxi(gi, RAMP.length() - 3)
-			line += RAMP[clampi(gi, 0, RAMP.length() - 1)]
+			line += RAMP[clampi(int(roundf(nv * float(RAMP.length() - 1))), 0, RAMP.length() - 1)]
 		out.append(line.rstrip(" "))
 	return out
 
