@@ -322,12 +322,32 @@ func _capture_hero_mosaic(out_path: String) -> void:
 		get_tree().quit(1)
 		return
 	arena._show_hero_portrait(tex, func() -> void: pass)
-	await get_tree().process_frame      ## 等一帧：节点是本帧加进来的，立刻抓会抓到上一帧
-	for i in 5:
+	# 立刻停住：不然后续每一帧都会推进，拍不到首帧
+	if arena._hero_tween != null:
+		arena._hero_tween.pause()
+	await get_tree().process_frame      ## 这一帧把着色器编译掉（tween 已停，画面不变）
+	var dbg := arena.get_node_or_null("HeroPortrait") as TextureRect
+	var sym := arena.get_node_or_null("HeroSymbol") as SymbolFrame
+	print("[shot=hero] 节点检查: portrait=%s symbol=%s" % [dbg != null, sym != null])
+	if dbg != null:
+		var dm := dbg.material as ShaderMaterial
+		print("[shot=hero] 首帧 block=%.2f alpha=%.2f size=%s" % [
+			float(dm.get_shader_parameter("block")), float(dm.get_shader_parameter("alpha")),
+			str(dbg.size)])
+	get_viewport().get_texture().get_image().save_png(_outname(out_path, "hero", "f0"))
+	# 解冻，按 0.15s 间隔抓完三段：0~0.32 符号转马赛克 → 0.32~1.32 收到清晰
+	arena._hero_tween.play()
+	for i in range(1, 9):
+		await get_tree().create_timer(0.15, true, false, true).timeout
 		get_viewport().get_texture().get_image().save_png(
 				_outname(out_path, "hero", "f%d" % i))
-		await get_tree().create_timer(0.25).timeout
-	print("[shot=hero] 5 帧已存（0/0.25/0.5/0.75/1.0s）几何=%s" % geom)
+		if dbg != null:
+			var m2 := dbg.material as ShaderMaterial
+			print("  f%d block=%.2f alpha=%.2f symA=%.2f" % [i,
+				float(m2.get_shader_parameter("block")),
+				float(m2.get_shader_parameter("alpha")),
+				sym.modulate.a if sym != null else -1.0])
+	print("[shot=hero] 9 帧已存（首帧为纯符号帧）几何=%s" % geom)
 	get_tree().quit()
 
 

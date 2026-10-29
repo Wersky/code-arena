@@ -32,6 +32,10 @@ var _on_done := Callable()
 var _done := false
 var _t := 0.0
 
+## 最近一次写进终端的字符画。Godot 侧要 1:1 复刻同一份，**不能重算**——
+## AsciiArt.build 要扫百万像素，重算一次等于在衔接点上卡一秒。
+static var last_art: PackedStringArray = PackedStringArray()
+
 
 func play(ai_id: String, ai_name: String, art_tex: Texture2D, on_done: Callable) -> bool:
 	_on_done = on_done
@@ -45,6 +49,7 @@ func play(ai_id: String, ai_name: String, art_tex: Texture2D, on_done: Callable)
 	if art.is_empty():
 		push_warning("[ExtTerminal] 字符画生成失败，跳过终端")
 		return false
+	last_art = art
 
 	var script := _compose(ai_name, IntroScript.code_for(ai_id, ai_name), art)
 	var f := FileAccess.open(script_abs, FileAccess.WRITE)

@@ -42,8 +42,12 @@ const STAGE_BOTTOM := 812.0
 const HERO_HOLD := 1.7          ## 立绘停留时长（不含淡出）
 const HERO_FADE_OUT := 0.45     ## 淡出时长，之后才揭幕进战斗
 const MOSAIC_SHADER := preload("res://shaders/mosaic.gdshader")
-const MOSAIC_CELLS := 2.2       ## 起始马赛克块 = 终端一个字符格 × 这个倍数（越大越糊）
-const MOSAIC_TIME := 1.1        ## 从糊到清的时长
+const MOSAIC_CELLS := 1.0       ## 起始马赛克块 = 终端一个字符格 × 这个倍数（1.0 = 与符号格严丝合缝）
+const MOSAIC_TIME := 1.0        ## 马赛克 → 清晰的时长
+const COLOR_IN := 0.55          ## 彩色马赛克盖住符号的时长（符号不淡出，直接被覆盖）
+
+var _mosaic_warm: TextureRect = null   ## 预热用的隐藏立绘（见 _prewarm_mosaic_shader）
+var _hero_tween: Tween = null          ## 衔接动画的句柄（--shot=hero 自检要 pause 它拍首帧）
 
 var run: RunState = null
 var level: LevelData = null
@@ -567,6 +571,8 @@ func _play_intro() -> void:
 			art_tex = load(cut) as Texture2D
 		elif run.ai.portrait_path != "" and ResourceLoader.exists(run.ai.portrait_path):
 			art_tex = load(run.ai.portrait_path) as Texture2D
+	# 预热马赛克着色器（必须放在黑幕之前：黑幕会盖住它）
+	_prewarm_mosaic_shader(art_tex)
 	# 终端演完之后：黑幕淡出，游戏画面「逐渐融入」（主人要求）
 	var veil := ColorRect.new()
 	veil.name = "IntroVeil"
@@ -603,19 +609,56 @@ func _play_intro() -> void:
 	term.play(ai_id, ai_name, art_tex, on_done)
 
 
-## 终端切回 Godot 的立绘：直接呈现 → 马赛克对焦 → 停留 → 淡出 → 回调。
+## 预热马赛克着色器。
 ##
-## 三条约束都为了让「终端 → Godot」接成一件事，而不是两次播放：
-##  ① 不淡入：终端已经把 DeepSeek 画在屏幕上并停住，再淡入等于中间插 0.85 秒空黑。
-##  ② 位置严格对齐：矩形由终端写回的排版反算，见 _portrait_box()。
-##  ③ 马赛克从「一个终端字符格」起步再逐帧收细：第一帧的画面结构正好等于终端里的符号网格，
-##     观感就是「符号直接上了色」，然后对焦到清晰。
+## 首次绘制要编译，实测吃 ~120ms。而那一刻正好是「终端关闭 → 符号帧出现」的衔接点，
+## 不预热的话衔接会顿一下。这里趁终端还在播（十几秒）先让它画一次，编译结果进缓存。
+## 注意必须放在黑幕**之前**添加，否则会露出来；alpha 用 0.004 而不是 0 —— 全透明可能被
+## 渲染器整个跳过，那就白预热了。
+func _prewarm_mosaic_shader(tex: Texture2D) -> void:
+	if _mosaic_warm != null or tex == null:
+		return
+	var warm := TextureRect.new()
+	warm.name = "MosaicWarm"
+	warm.texture = tex
+	warm.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	warm.stretch_mode = TextureRect.STRETCH_SCALE
+	warm.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	warm.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	var m := ShaderMaterial.new()
+	m.shader = MOSAIC_SHADER
+	m.set_shader_parameter("block", 6.0)
+	m.set_shader_parameter("alpha", 0.004)
+	warm.material = m
+	add_child(warm)
+	_mosaic_warm = warm
+
+
+## 终端切回 Godot 的立绘，三段走：
+##   ① **符号帧**：把终端那一屏字符画 1:1 重画一遍（同字、同格、同矩形）→ 第一帧就是终端画面
+##   ② **符号 → 马赛克**：符号淡出，同格的彩色马赛克淡入（一块马赛克 = 一个字符格）
+##   ③ **马赛克 → 清晰**：块大小逐帧收到 1
+## 然后停留、淡出、回调。
+##
+## 为什么第一步必须是「重画」而不是「淡入图片」：终端一关，屏幕上原本是符号；
+## 如果 Godot 第一帧直接给彩色图，就等于在两个不同画面之间硬切一次。
+## 重画一份符号，切换那一帧前后完全一致，观众看不到「切」。
 func _show_hero_portrait(tex: Texture2D, on_end: Callable) -> void:
 	if tex == null:
 		on_end.call()
 		return
 	var geom := ExtTerminal.read_geometry()
 	var box := _portrait_box(tex, geom)
+	if _mosaic_warm != null:
+		_mosaic_warm.queue_free()
+		_mosaic_warm = null
+	var lines := _portrait_art(tex)
+	var artw := 1
+	for l in lines:
+		artw = maxi(artw, l.length())
+	var arth := maxi(1, lines.size())
+	# 一格 = 字符画矩形 / 字符数，保证符号网格和后面的马赛克块一一对应
+	var cell := Vector2(box.size.x / float(artw), box.size.y / float(arth))
 
 	var bg := ColorRect.new()
 	bg.name = "HeroBackdrop"
@@ -624,6 +667,15 @@ func _show_hero_portrait(tex: Texture2D, on_end: Callable) -> void:
 	bg.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	add_child(bg)
 
+	# ① 符号帧（终端画面的复刻），第一帧全亮
+	var sym := SymbolFrame.new()
+	sym.name = "HeroSymbol"
+	sym.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	sym.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	add_child(sym)
+	sym.setup(lines, cell, box.position)
+
+	# ②③ 彩色立绘：起始为「一格一块」的马赛克，且不可见
 	var img := TextureRect.new()
 	img.name = "HeroPortrait"
 	img.texture = tex
@@ -638,13 +690,19 @@ func _show_hero_portrait(tex: Texture2D, on_end: Callable) -> void:
 
 	var mat := ShaderMaterial.new()
 	mat.shader = MOSAIC_SHADER
-	var block0 := _mosaic_block0(tex.get_width(), geom)
+	var block0 := _mosaic_block0(tex.get_width(), artw)
 	mat.set_shader_parameter("block", block0)
-	mat.set_shader_parameter("alpha", 1.0)
+	mat.set_shader_parameter("alpha", 0.0)
 	img.material = mat
 
 	var tw := create_tween()
-	# 线性、不要 EASE_OUT：实测 cubic/ease_out 会把变化全堆在前 0.3 秒，
+	_hero_tween = tw        ## 存句柄：自检时 pause 它才能拍到「第一帧」
+	# ①② 符号 → 马赛克：**符号不淡出，让彩色从上面盖上去**。
+	# 两边同时淡（交叉淡入淡出）实测太生硬，且中途会发暗；覆盖式更像「符号被上了色」。
+	tw.tween_method(func(v: float) -> void: mat.set_shader_parameter("alpha", v),
+			0.0, 1.0, COLOR_IN)
+	tw.tween_callback(func() -> void: sym.hide())   ## 覆盖完成后把符号层收掉，免得末尾淡出时又露出来
+	# ③ 马赛克 → 清晰。线性、不要 EASE_OUT：实测 cubic/ease_out 会把变化全堆在前 0.3 秒，
 	# 0.5 秒就已经完全清晰，后半段等于空转。线性才「逐渐」。
 	tw.tween_method(func(v: float) -> void: mat.set_shader_parameter("block", v),
 			block0, 1.0, MOSAIC_TIME)
@@ -654,8 +712,18 @@ func _show_hero_portrait(tex: Texture2D, on_end: Callable) -> void:
 	tw.parallel().tween_property(bg, "color:a", 0.0, HERO_FADE_OUT)
 	tw.tween_callback(func() -> void:
 		bg.queue_free()
+		sym.queue_free()
 		img.queue_free()
 		on_end.call())
+
+
+## 要复刻的字符画：优先用终端真正画过的那一份（ExtTerminal 缓存）。
+## 缓存为空才现算——AsciiArt.build 要扫百万像素，在衔接点上重算会卡住整整一秒。
+func _portrait_art(tex: Texture2D) -> PackedStringArray:
+	if not ExtTerminal.last_art.is_empty():
+		return ExtTerminal.last_art
+	return AsciiArt.build(tex, ExtTerminal.ART_ROWS, ExtTerminal.ART_MAX_COLS,
+			ExtTerminal.CELL_ASPECT)
 
 
 ## 立绘该占的矩形（画布坐标）。
@@ -698,12 +766,9 @@ func _portrait_box(tex: Texture2D, geom: Dictionary) -> Rect2:
 	return rect
 
 
-## 起始马赛克块（纹理像素）：一块 = 终端的一个字符格，再乘 MOSAIC_CELLS 让第一帧更糊。
-func _mosaic_block0(tex_w: int, geom: Dictionary) -> float:
-	var artw := 90.0
-	if not geom.is_empty():
-		artw = float(geom["artw"])
-	return clampf(float(tex_w) / maxf(1.0, artw) * MOSAIC_CELLS, 2.0, 128.0)
+## 起始马赛克块（纹理像素）：一块 = 终端的一个字符格，和符号帧的网格一一对齐。
+func _mosaic_block0(tex_w: int, artw: int) -> float:
+	return clampf(float(tex_w) / float(maxi(1, artw)) * MOSAIC_CELLS, 2.0, 128.0)
 
 
 ## 转场落回 2D：手牌错峰弹出、敌人砸落 + 震屏
