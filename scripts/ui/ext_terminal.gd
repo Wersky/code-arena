@@ -12,6 +12,7 @@ signal finished
 ## 脚本与哨兵放系统临时目录：路径无空格无中文，Windows Terminal 传参才不会被拆错
 const SCRIPT_NAME := "arena_term_intro.ps1"
 const SENTINEL_NAME := "arena_term_intro.done"
+const ANSI_COLS := 96          ## 真彩渲染的横向格数（96 格 ≈ 192 像素宽）
 const ART_ROWS := 52            ## 终端里画多少行（行数决定大小；34 行约占屏幕高度六成）
 const ART_MAX_COLS := 200
 ## 终端字体格子「高:宽」比例档位：运行时按实测挑最接近的一套，避免人像被横挤成竖条
@@ -38,6 +39,9 @@ func play(ai_id: String, ai_name: String, art_tex: Texture2D, on_done: Callable)
 		var im := art_tex.get_image()
 		if im != null:
 			im.save_png(img_path)
+	# 预渲染 ANSI 真彩文本（两档亮度做淡入）
+	_emit_ansi(art_tex, OS.get_temp_dir().path_join("arena_term_ansi.txt"), 1.0)
+	_emit_ansi(art_tex, OS.get_temp_dir().path_join("arena_term_ansi_dim.txt"), 0.45)
 	var variants: Array = []
 	for a in ASPECTS:
 		variants.append(AsciiArt.build(art_tex, ART_ROWS, ART_MAX_COLS, float(a)))
@@ -57,6 +61,46 @@ func play(ai_id: String, ai_name: String, art_tex: Texture2D, on_done: Callable)
 		return false
 	set_process(true)
 	return true
+
+
+## 像素图 → ANSI 真彩半块文本（一个字符格 = 上下 2 像素）
+## 为什么在游戏里算：终端侧跑 System.Drawing / 采样容易受环境影响（安全策略、宿主差异），
+## 算好之后终端只需原样打印，几乎是零失败率。
+func _emit_ansi(tex: Texture2D, path: String, brightness: float) -> void:
+	if tex == null:
+		return
+	var img := tex.get_image()
+	if img == null:
+		return
+	img.convert(Image.FORMAT_RGBA8)
+	var w := img.get_width()
+	var h := img.get_height()
+	if w <= 0 or h <= 0:
+		return
+	var cols := ANSI_COLS
+	var rows := maxi(2, int(round(float(cols) * float(h) / float(w) / 2.0)))
+	var lines := PackedStringArray()
+	for r in rows:
+		var sb := ""
+		var y0 := int(float(r * 2) / float(rows * 2) * h)
+		var y1 := int(float(r * 2 + 1) / float(rows * 2) * h)
+		for c in cols:
+			var x := int(float(c) / float(cols) * w)
+			var p0 := img.get_pixel(x, y0)
+			var p1 := img.get_pixel(x, clampi(y1, 0, h - 1))
+			if p0.a < 0.35 and p1.a < 0.35:
+				sb += " "
+				continue
+			sb += "\u001b[38;2;%d;%d;%dm\u001b[48;2;%d;%d;%dm▀" % [
+				int(p0.r * 255.0 * brightness), int(p0.g * 255.0 * brightness),
+				int(p0.b * 255.0 * brightness), int(p1.r * 255.0 * brightness),
+				int(p1.g * 255.0 * brightness), int(p1.b * 255.0 * brightness)]
+		lines.append(sb + "\u001b[0m")
+	var f := FileAccess.open(path, FileAccess.WRITE)
+	if f == null:
+		return
+	f.store_string("\n".join(lines))
+	f.close()
 
 
 ## 脚本/哨兵落在系统临时目录（无空格路径）
@@ -184,42 +228,25 @@ func _compose(ai_name: String, code: PackedStringArray, art_variants: Array,
 		+ "Set-Content -Path (Join-Path $env:TEMP 'arena_term_debug.txt') -Encoding UTF8 }catch{}\n"
 	# ── 主路径：真彩半块渲染 —— 一个字符格 = 上下 2 个像素（▀ + 24 位色）──
 	# 这样终端里显示的就是**原图本身**，精度只受窗口字符网格限制，不再受 ASCII 梯度拖累。
-	ps += "$bmp=$null\n"
-	ps += "try{ Add-Type -AssemblyName System.Drawing | Out-Null; " \
-		+ "$bmp=[System.Drawing.Bitmap]::FromFile('%s') }catch{}\n" % _esc(img_path)
-	ps += "if($bmp -ne $null){\n"
-	ps += "$esc=[char]27\n"
-	ps += "$iw=$bmp.Width; $ih=$bmp.Height\n"
-	ps += "$maxc=$cwv-2; if($maxc -gt 200){$maxc=200}\n"
-	ps += "$maxr=$chv-3; if($maxr -lt 6){$maxr=6}\n"
-	ps += "$cols=$maxc; $rows=[int]($cols*($ih/$iw)/2)\n"
-	ps += "if($rows -gt $maxr){ $rows=$maxr; $cols=[int]($rows*2*($iw/$ih)) }\n"
-	ps += "if($cols -lt 10){$cols=10}; if($rows -lt 5){$rows=5}\n"
-	ps += "$padx=[Math]::Max(0,[int](($cwv-$cols)/2))\n"
-	ps += "$pady=[Math]::Max(0,[int](($chv-$rows)/2))\n"
+	# ── 主路径：打印游戏侧预渲染好的 ANSI 真彩文本（终端只负责原样输出）──
+	# 之前让终端自己读图渲染，会受安全策略 / 宿主差异影响（白屏就是那次失败）。
+	ps += "$fOn=Join-Path $env:TEMP 'arena_term_ansi.txt'\n"
+	ps += "$fDim=Join-Path $env:TEMP 'arena_term_ansi_dim.txt'\n"
+	ps += "if(Test-Path $fOn){\n"
+	ps += "$artOn=@(Get-Content -Path $fOn -Encoding UTF8)\n"
+	ps += "$artDim=@(Get-Content -Path $fDim -Encoding UTF8)\n"
+	ps += "$padx=[Math]::Max(0,[int](($cwv-%d)/2))\n" % ANSI_COLS
+	ps += "$pady=[Math]::Max(0,[int](($chv-$artOn.Count)/2))\n"
 	ps += "$sp=' '*$padx\n"
 	ps += "for($i=0;$i -lt $pady;$i++){ Write-Host '' }\n"
 	ps += "$top=[Console]::CursorTop\n"
-	ps += "foreach($lv in @(0.45,1.0)){\n"
+	ps += "foreach($set in @($artDim,$artOn)){\n"
 	ps += "[Console]::SetCursorPosition(0,$top)\n"
-	ps += "for($y=0;$y -lt $rows;$y++){\n"
-	ps += "$sb=New-Object System.Text.StringBuilder\n"
-	ps += "[void]$sb.Append($sp)\n"
-	ps += "$ry0=[int](($y*2)/($rows*2)*$ih); $ry1=[int]((($y*2)+1)/($rows*2)*$ih)\n"
-	ps += "for($x=0;$x -lt $cols;$x++){\n"
-	ps += "$rx=[int]($x/$cols*$iw)\n"
-	ps += "$p0=$bmp.GetPixel($rx,$ry0); $p1=$bmp.GetPixel($rx,$ry1)\n"
-	ps += "if($p0.A -lt 90 -and $p1.A -lt 90){ [void]$sb.Append(' '); continue }\n"
-	ps += "$r0=[int]($p0.R*$lv);$g0=[int]($p0.G*$lv);$b0=[int]($p0.B*$lv)\n"
-	ps += "$r1=[int]($p1.R*$lv);$g1=[int]($p1.G*$lv);$b1=[int]($p1.B*$lv)\n"
-	ps += "[void]$sb.Append(\"$esc[38;2;$r0;$g0;$b0m$esc[48;2;$r1;$g1;$b1m▀\")\n"
-	ps += "}\n"
-	ps += "[void]$sb.Append(\"$esc[0m\")\n"
-	ps += "Write-Host $sb.ToString()\n"
-	ps += "}\n"
+	ps += "foreach($l in $set){ [Console]::Write($sp); [Console]::Write($l); [Console]::Write([Environment]::NewLine) }\n"
 	ps += "if(Fast){break}\n"
-	ps += "Start-Sleep -Milliseconds 240\n"
+	ps += "Start-Sleep -Milliseconds 260\n"
 	ps += "}\n"
+	ps += "} else {\n"
 	ps += "} else {\n"
 	# ── 兜底：System.Drawing 不可用时退回 ASCII 字符画（按格子比例选套）──
 	# 为什么：终端字体格子不一定是 1:2，实测某些机器是 1:3.5，硬用 1:2 会把人横着挤成竖条。
