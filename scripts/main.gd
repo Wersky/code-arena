@@ -174,8 +174,13 @@ func _maybe_capture() -> void:
 	if out_path.is_empty():
 		return
 	if screen in ["menu", "arena", "battle", "intro", "reward", "result",
-			"menuhover", "rig", "rigwalk", "loadrun", "card", "cardtext", "cardcost", "terminal", "termgif"]:
+			"menuhover", "rig", "rigwalk", "loadrun", "card", "cardtext", "cardcost", "terminal", "termgif",
+			"termdump"]:
 		run.reset_run()
+		if screen == "termdump":
+			# 只生成 .ps1 + 字符画文本，**不启动终端**：给宿主侧做语法/尺寸自检
+			_capture_term_dump(out_path)
+			return
 		if screen == "rig":
 			# 目检：Q 版角色 walk 的第 0/1/2/3 帧 → 2×2 拼图
 			await _capture_rig(out_path)
@@ -283,6 +288,37 @@ const RIG_SPLIT := Color("#2e3648")
 ## 腿部专图的裁剪窗口（画布坐标）：x 62..124、y 206..257 = 审核给的 strip（68..130, 232..283）减去格内偏移
 const LEG_RECT := Rect2i(62, 206, 62, 51)
 const LEG_RECT4 := Rect2i(52, 216, 84, 52)
+
+
+## 只把终端脚本 + 字符画落盘（不启动终端），给宿主侧做语法与尺寸自检：
+##   godot --path <项目> --headless -- --shot=termdump --shotout=<绝对路径>.txt
+func _capture_term_dump(out_path: String) -> void:
+	var ai_id := "deepdeek"
+	var ai_name := "DeepDeek"
+	if run != null and run.ai != null:
+		ai_id = run.ai.id
+		ai_name = run.ai.display_name
+	var tex := load("res://assets/art/rig/%s-front/front-hi.png" % ai_id) as Texture2D
+	var art := AsciiArt.build(tex, ExtTerminal.ART_ROWS, ExtTerminal.ART_MAX_COLS,
+			ExtTerminal.CELL_ASPECT)
+	if art.is_empty():
+		print("[shot=termdump] 字符画为空：图没读到？")
+		get_tree().quit(1)
+		return
+	var wmax := 0
+	for l in art:
+		wmax = maxi(wmax, l.length())
+	var et := ExtTerminal.new()
+	var body := et._compose(ai_name, IntroScript.code_for(ai_id, ai_name), art)
+	et.free()
+	var base := out_path.get_basename()
+	for pair in [[base + ".txt", "\n".join(art) + "\n"], [base + ".ps1", body]]:
+		var f := FileAccess.open(pair[0], FileAccess.WRITE)
+		if f != null:
+			f.store_string(pair[1])
+			f.close()
+	print("[shot=termdump] %d 行 / 最宽 %d 列 → %s.ps1" % [art.size(), wmax, base])
+	get_tree().quit()
 
 
 func _capture_rig(out_path: String) -> void:
