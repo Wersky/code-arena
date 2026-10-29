@@ -13,7 +13,7 @@ signal finished
 const SCRIPT_NAME := "arena_term_intro.ps1"
 const SENTINEL_NAME := "arena_term_intro.done"
 const ANSI_COLS := 96          ## 真彩渲染的横向格数（96 格 ≈ 192 像素宽）
-const ART_ROWS := 52            ## 终端里画多少行（行数决定大小；34 行约占屏幕高度六成）
+const ART_ROWS := 46            ## 终端里画多少行（行数决定大小；34 行约占屏幕高度六成）
 const ART_MAX_COLS := 200
 ## 终端字体格子「高:宽」比例档位：运行时按实测挑最接近的一套，避免人像被横挤成竖条
 const ASPECTS := [3.0]       ## 列数留余量：超过窗口宽会折行，字符画会被拆坏
@@ -39,9 +39,6 @@ func play(ai_id: String, ai_name: String, art_tex: Texture2D, on_done: Callable)
 		var im := art_tex.get_image()
 		if im != null:
 			im.save_png(img_path)
-	# 预渲染 ANSI 真彩文本（两档亮度做淡入）
-	_emit_ansi(art_tex, OS.get_temp_dir().path_join("arena_term_ansi.txt"), 1.0)
-	_emit_ansi(art_tex, OS.get_temp_dir().path_join("arena_term_ansi_dim.txt"), 0.45)
 	var variants: Array = []
 	for a in ASPECTS:
 		variants.append(AsciiArt.build(art_tex, ART_ROWS, ART_MAX_COLS, float(a)))
@@ -228,25 +225,6 @@ func _compose(ai_name: String, code: PackedStringArray, art_variants: Array,
 		+ "Set-Content -Path (Join-Path $env:TEMP 'arena_term_debug.txt') -Encoding UTF8 }catch{}\n"
 	# ── 主路径：真彩半块渲染 —— 一个字符格 = 上下 2 个像素（▀ + 24 位色）──
 	# 这样终端里显示的就是**原图本身**，精度只受窗口字符网格限制，不再受 ASCII 梯度拖累。
-	# ── 主路径：打印游戏侧预渲染好的 ANSI 真彩文本（终端只负责原样输出）──
-	# 之前让终端自己读图渲染，会受安全策略 / 宿主差异影响（白屏就是那次失败）。
-	ps += "$fOn=Join-Path $env:TEMP 'arena_term_ansi.txt'\n"
-	ps += "$fDim=Join-Path $env:TEMP 'arena_term_ansi_dim.txt'\n"
-	ps += "if(Test-Path $fOn){\n"
-	ps += "$artOn=@(Get-Content -Path $fOn -Encoding UTF8)\n"
-	ps += "$artDim=@(Get-Content -Path $fDim -Encoding UTF8)\n"
-	ps += "$padx=[Math]::Max(0,[int](($cwv-%d)/2))\n" % ANSI_COLS
-	ps += "$pady=[Math]::Max(0,[int](($chv-$artOn.Count)/2))\n"
-	ps += "$sp=' '*$padx\n"
-	ps += "for($i=0;$i -lt $pady;$i++){ Write-Host '' }\n"
-	ps += "$top=[Console]::CursorTop\n"
-	ps += "foreach($set in @($artDim,$artOn)){\n"
-	ps += "[Console]::SetCursorPosition(0,$top)\n"
-	ps += "foreach($l in $set){ [Console]::Write($sp); [Console]::Write($l); [Console]::Write([Environment]::NewLine) }\n"
-	ps += "if(Fast){break}\n"
-	ps += "Start-Sleep -Milliseconds 260\n"
-	ps += "}\n"
-	ps += "} else {\n"
 	ps += "} else {\n"
 	# ── 兜底：System.Drawing 不可用时退回 ASCII 字符画（按格子比例选套）──
 	# 为什么：终端字体格子不一定是 1:2，实测某些机器是 1:3.5，硬用 1:2 会把人横着挤成竖条。
@@ -280,7 +258,6 @@ func _compose(ai_name: String, code: PackedStringArray, art_variants: Array,
 		+ "if(Fast){break}; Start-Sleep -Milliseconds 220}\n"
 	ps += "[Console]::SetCursorPosition(0,$top)\n"
 	ps += "foreach($l in $art){ Write-Host ($sp+$l) -ForegroundColor White }\n"
-	ps += "}\n"
 	ps += "Wait %d\n" % ART_HOLD_MS
 	ps += "New-Item -ItemType File -Path $Sentinel -Force | Out-Null\n"
 	ps += "Start-Sleep -Milliseconds 100\n"

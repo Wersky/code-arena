@@ -8,8 +8,8 @@ extends Object
 const RAMP := " .:-=+*#%@"
 const CELL_ASPECT := 2.0        ## 终端字符宽:高 ≈ 1:2
 const STRETCH := 1.0            ## 横向拉伸系数
-const CROP_W := 1.0            ## 横向只取中间 55%：头发太抢画面，裁窄点让身体/手势占比更大
-const BUST := 1.0              ## 取「头 + 手势 + 上半身」高度比例（0.40 只到脸，太小）
+const CROP_W := 0.86            ## 横向只取中间 55%：头发太抢画面，裁窄点让身体/手势占比更大
+const BUST := 0.78              ## 取「头 + 手势 + 上半身」高度比例（0.40 只到脸，太小）
                                 ## 全身缩进去必然糊，胸像才够精细（参考图也是胸像）
 
 
@@ -102,9 +102,9 @@ static func build(tex: Texture2D, rows: int, max_cols: int = 110,
 				else:
 					e = maxf(e, absf(lums[idx] - lums[nidx]))
 			var gi := int(roundf(nv * float(RAMP.length() - 1)))
-			if e > 0.26:
+			if e > 0.99:
 				gi = RAMP.length() - 1                    ## 轮廓：最密字符
-			elif e > 0.15:
+			elif e > 0.98:
 				gi = maxi(gi, RAMP.length() - 3)
 			line += RAMP[clampi(gi, 0, RAMP.length() - 1)]
 		out.append(line.rstrip(" "))

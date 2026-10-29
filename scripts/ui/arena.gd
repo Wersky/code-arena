@@ -548,9 +548,9 @@ func _play_intro() -> void:
 		var hi := "res://assets/art/rig/%s-front/front-hi.png" % ai_id
 		var front := "res://assets/art/rig/%s-front/front.png" % ai_id
 		var cut := "res://assets/art/rig/%s/cutout.png" % ai_id
-		if ResourceLoader.exists(hi):
-			art_tex = load(hi) as Texture2D
-		elif ResourceLoader.exists(front):
+		# 符号画用低清 front.png：平涂色块 + 硬轮廓，字符画才读得出形状
+		# （高清插画细节太多，采样成 52 行必然是噪点汤）
+		if ResourceLoader.exists(front):
 			art_tex = load(front) as Texture2D
 		elif ResourceLoader.exists(cut):
 			art_tex = load(cut) as Texture2D
