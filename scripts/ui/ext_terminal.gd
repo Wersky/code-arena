@@ -223,29 +223,11 @@ func _compose(ai_name: String, code: PackedStringArray, art_variants: Array,
 	ps += "if($chv -lt 10 -or $chv -gt 200){$chv=50}\n"
 	ps += "try{ 'cols={0} rows={1}' -f $cwv,$chv | " \
 		+ "Set-Content -Path (Join-Path $env:TEMP 'arena_term_debug.txt') -Encoding UTF8 }catch{}\n"
-	# ── 主路径：真彩半块渲染 —— 一个字符格 = 上下 2 个像素（▀ + 24 位色）──
 	# 这样终端里显示的就是**原图本身**，精度只受窗口字符网格限制，不再受 ASCII 梯度拖累。
-	ps += "} else {\n"
-	# ── 兜底：System.Drawing 不可用时退回 ASCII 字符画（按格子比例选套）──
 	# 为什么：终端字体格子不一定是 1:2，实测某些机器是 1:3.5，硬用 1:2 会把人横着挤成竖条。
 	for i in art_variants.size():
 		ps += "$art%d = @'\n%s\n'@ -split \"`n\"\n" % [i, "\n".join(art_variants[i])]
-	ps += "$ratios=@(%s)\n" % ", ".join(ASPECTS.map(func(f): return "%.2f" % f))
-	ps += "$ratio=0.0\n"
-	ps += "try{$buf=[Runtime.InteropServices.Marshal]::AllocHGlobal(16);" \
-		+ "$hc=[W]::FindWindowW($null,$title); if($hc -eq [IntPtr]::Zero){$hc=[W]::GetConsoleWindow()};" \
-		+ "$W::GetClientRect($hc,$buf)|Out-Null;" \
-		+ "$pw=[Runtime.InteropServices.Marshal]::ReadInt32($buf,8)-[Runtime.InteropServices.Marshal]::ReadInt32($buf,0);" \
-		+ "$ph=[Runtime.InteropServices.Marshal]::ReadInt32($buf,12)-[Runtime.InteropServices.Marshal]::ReadInt32($buf,4);" \
-		+ "if($pw -gt 0 -and $ph -gt 0){$ratio=($ph/$chv)/($pw/$cwv)}}catch{}\n"
-	ps += "$best=($ratios.Count-1)\n" \
-		+ "if($ratio -gt 0){ $bd=99; for($i=0;$i -lt $ratios.Count;$i++){" \
-		+ "$dd=[Math]::Abs($ratios[$i]-$ratio); if($dd -lt $bd){$bd=$dd;$best=$i}} }\n"
-	ps += "$all=@($art0"
-	for i in range(1, art_variants.size()):
-		ps += ",$art%d" % i
-	ps += ")\n"
-	ps += "$art=@($all[$best])\n"
+	ps += "$art=@($art0)\n"
 	ps += "$wmax=0; foreach($l in $art){ if($l.Length -gt $wmax){$wmax=$l.Length} }\n"
 	ps += "$padx=[Math]::Max(0,[int](($cwv - $wmax)/2))\n"
 	ps += "$pady=[Math]::Max(0,[int](($chv - $art.Count)/2))\n"
