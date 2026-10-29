@@ -12,7 +12,7 @@ signal finished
 ## 脚本与哨兵放系统临时目录：路径无空格无中文，Windows Terminal 传参才不会被拆错
 const SCRIPT_NAME := "arena_term_intro.ps1"
 const SENTINEL_NAME := "arena_term_intro.done"
-const ART_ROWS := 46            ## 终端里画多少行（全屏后行数充足，行数决定 DeepSeek 的大小）
+const ART_ROWS := 34            ## 终端里画多少行（行数决定大小；34 行约占屏幕高度六成）
 const ART_MAX_COLS := 120       ## 列数留余量：超过窗口宽会折行，字符画会被拆坏
 const HOLD_MS := 1000           ## 代码打完停留（主人指定 1 秒）
 const ART_HOLD_MS := 2000       ## 字符画停留 2 秒后融回游戏（主人指定）
@@ -160,6 +160,9 @@ func _compose(ai_name: String, code: PackedStringArray, art: PackedStringArray) 
 	ps += "Clear-Host\n"
 	# 字符画：三档亮度叠印 → 视觉上的淡入
 	ps += "$art = @'\n" + "\n".join(art) + "\n'@ -split \"`n\"\n"
+	# 垂直居中：按窗口高度补空行，字符画不贴在顶上
+	ps += "$pad=[Math]::Max(0,[int](([Console]::WindowHeight - $art.Count)/2))\n"
+	ps += "for($i=0;$i -lt $pad;$i++){ Write-Host '' }\n"
 	ps += "$top=[Console]::CursorTop\n"
 	ps += "foreach($lv in @('DarkGray','Gray','White')){" \
 		+ "[Console]::SetCursorPosition(0,$top);" \
