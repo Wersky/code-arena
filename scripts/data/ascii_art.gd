@@ -8,13 +8,14 @@ extends Object
 const RAMP := " .:-=+*#%@"
 const CELL_ASPECT := 2.0        ## 终端字符宽:高 ≈ 1:2
 const STRETCH := 1.0            ## 横向拉伸系数
-const CROP_W := 0.55            ## 横向只取中间 55%：头发太抢画面，裁窄点让身体/手势占比更大
-const BUST := 0.62              ## 取「头 + 手势 + 上半身」高度比例（0.40 只到脸，太小）
+const CROP_W := 0.86            ## 横向只取中间 55%：头发太抢画面，裁窄点让身体/手势占比更大
+const BUST := 0.78              ## 取「头 + 手势 + 上半身」高度比例（0.40 只到脸，太小）
                                 ## 全身缩进去必然糊，胸像才够精细（参考图也是胸像）
 
 
 ## 返回字符画文本行；rows 为目标行数（字体/窗口能放多少行就传多少）
-static func build(tex: Texture2D, rows: int, max_cols: int = 110) -> PackedStringArray:
+static func build(tex: Texture2D, rows: int, max_cols: int = 110,
+		cell_aspect: float = CELL_ASPECT) -> PackedStringArray:
 	var out := PackedStringArray()
 	if tex == null:
 		return out
@@ -40,10 +41,10 @@ static func build(tex: Texture2D, rows: int, max_cols: int = 110) -> PackedStrin
 	if bb.size.x <= 0 or bb.size.y <= 0:
 		return out
 	var src_aspect := float(bb.size.x) / float(bb.size.y)
-	var cols := int(round(float(rows) * src_aspect * CELL_ASPECT * STRETCH))
+	var cols := int(round(float(rows) * src_aspect * cell_aspect * STRETCH))
 	if cols > max_cols:
 		cols = max_cols
-		rows = maxi(4, int(round(float(cols) / (src_aspect * CELL_ASPECT * STRETCH))))
+		rows = maxi(4, int(round(float(cols) / (src_aspect * cell_aspect * STRETCH))))
 	cols = maxi(8, cols)
 	rows = maxi(4, rows)
 	var lums := PackedFloat32Array()

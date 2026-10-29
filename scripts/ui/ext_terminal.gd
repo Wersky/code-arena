@@ -12,8 +12,10 @@ signal finished
 ## 脚本与哨兵放系统临时目录：路径无空格无中文，Windows Terminal 传参才不会被拆错
 const SCRIPT_NAME := "arena_term_intro.ps1"
 const SENTINEL_NAME := "arena_term_intro.done"
-const ART_ROWS := 34            ## 终端里画多少行（行数决定大小；34 行约占屏幕高度六成）
-const ART_MAX_COLS := 120       ## 列数留余量：超过窗口宽会折行，字符画会被拆坏
+const ART_ROWS := 46            ## 终端里画多少行（行数决定大小；34 行约占屏幕高度六成）
+const ART_MAX_COLS := 180
+## 终端字体格子「高:宽」比例档位：运行时按实测挑最接近的一套，避免人像被横挤成竖条
+const ASPECTS := [1.8, 2.4, 3.0]       ## 列数留余量：超过窗口宽会折行，字符画会被拆坏
 const HOLD_MS := 1000           ## 代码打完停留（主人指定 1 秒）
 const ART_HOLD_MS := 2000       ## 字符画停留 2 秒后融回游戏（主人指定）
 const TIMEOUT := 45.0
@@ -30,9 +32,11 @@ func play(ai_id: String, ai_name: String, art_tex: Texture2D, on_done: Callable)
 	if FileAccess.file_exists(sentinel):
 		DirAccess.remove_absolute(sentinel)
 
-	var art := AsciiArt.build(art_tex, ART_ROWS, ART_MAX_COLS)
+	var variants: Array = []
+	for a in ASPECTS:
+		variants.append(AsciiArt.build(art_tex, ART_ROWS, ART_MAX_COLS, float(a)))
 	var code := IntroScript.code_for(ai_id, ai_name)
-	var script := _compose(ai_name, code, art)
+	var script := _compose(ai_name, code, variants)
 
 	var f := FileAccess.open(script_abs, FileAccess.WRITE)
 	if f == null:
@@ -111,7 +115,7 @@ func _finish() -> void:
 
 
 # ── 拼脚本正文 ───────────────────────────────
-func _compose(ai_name: String, code: PackedStringArray, art: PackedStringArray) -> String:
+func _compose(ai_name: String, code: PackedStringArray, art_variants: Array) -> String:
 	var delay := GameSettings.type_delay()
 	var chunk := GameSettings.type_chunk()
 	var ps := ""
@@ -124,7 +128,10 @@ func _compose(ai_name: String, code: PackedStringArray, art: PackedStringArray) 
 	ps += "$sig='[DllImport(\"user32.dll\")] public static extern short GetAsyncKeyState(int v);" \
 		+ "[DllImport(\"user32.dll\")] public static extern bool ShowWindow(IntPtr h,int n);" \
 		+ "[DllImport(\"kernel32.dll\")] public static extern IntPtr GetStdHandle(int n);" \
-		+ "[DllImport(\"kernel32.dll\")] public static extern bool SetConsoleDisplayMode(IntPtr h,uint f,IntPtr d);'\n"
+		+ "[DllImport(\"kernel32.dll\")] public static extern bool SetConsoleDisplayMode(IntPtr h,uint f,IntPtr d);" \
+		+ "[DllImport(\"kernel32.dll\")] public static extern IntPtr GetConsoleWindow();" \
+		+ "[DllImport(\"user32.dll\")] public static extern bool GetClientRect(IntPtr h,IntPtr r);" \
+		+ "[DllImport(\"user32.dll\",CharSet=CharSet.Unicode)] public static extern IntPtr FindWindowW(string c,string t);'\n"
 	ps += "$W = Add-Type -MemberDefinition $sig -Name 'W' -PassThru\n"
 	ps += "function Fast(){ return (($W::GetAsyncKeyState(0x11) -band 0x8000) -ne 0) }\n"
 	# 窗口铺满屏幕（不是全屏）：
@@ -158,18 +165,54 @@ func _compose(ai_name: String, code: PackedStringArray, art: PackedStringArray) 
 	ps += "foreach($l in $code){ T $l %d %d; [Console]::WriteLine() }\n" % [chunk, delay]
 	ps += "Wait %d\n" % HOLD_MS
 	ps += "Clear-Host\n"
-	# 字符画：三档亮度叠印 → 视觉上的淡入
-	ps += "$art = @'\n" + "\n".join(art) + "\n'@ -split \"`n\"\n"
-	# 垂直居中：按窗口高度补空行，字符画不贴在顶上
-	ps += "$pad=[Math]::Max(0,[int](([Console]::WindowHeight - $art.Count)/2))\n"
-	ps += "for($i=0;$i -lt $pad;$i++){ Write-Host '' }\n"
+	# ── 字符画：按终端字体格子比例预生成多套，运行时量出来挑最接近的 ──
+	# 为什么：终端字体格子不一定是 1:2，实测某些机器是 1:3.5，硬用 1:2 会把人横着挤成竖条。
+	for i in art_variants.size():
+		ps += "$art%d = @'\n%s\n'@ -split \"`n\"\n" % [i, "\n".join(art_variants[i])]
+	ps += "$ratios=@(%s)\n" % ", ".join(ASPECTS.map(func(f): return "%.2f" % f))
+	# 量客户区像素 / 字符数 = 真实格子比例；窗口字符宽高要稳（[Console] 在 wt 里可能取不到）
+	ps += "$ratio=0.0\n"
+	ps += "$cwv=0;$chv=0\n"
+	ps += "try{$cwv=[Console]::WindowWidth}catch{}\n"
+	ps += "try{$chv=[Console]::WindowHeight}catch{}\n"
+	ps += "if($cwv -lt 10 -or $cwv -gt 400){try{$cwv=$Host.UI.RawUI.WindowSize.Width}catch{}}\n"
+	ps += "if($chv -lt 5 -or $chv -gt 200){try{$chv=$Host.UI.RawUI.WindowSize.Height}catch{}}\n"
+	# 有些宿主把「像素」当字符数返回（实测 2544x97）→ 超出合理范围就退回常见值，
+	# 否则 padx 会被算成上千个空格、字符画被推到一边
+	ps += "if($cwv -lt 20 -or $cwv -gt 400){$cwv=160}\n"
+	ps += "if($chv -lt 10 -or $chv -gt 200){$chv=50}\n"
+	ps += "try{$buf=[Runtime.InteropServices.Marshal]::AllocHGlobal(16);" \
+		+ "$hc=[W]::FindWindowW($null,$title); if($hc -eq [IntPtr]::Zero){$hc=[W]::GetConsoleWindow()};" \
+		+ "$W::GetClientRect($hc,$buf)|Out-Null;" \
+		+ "$pw=[Runtime.InteropServices.Marshal]::ReadInt32($buf,8)-[Runtime.InteropServices.Marshal]::ReadInt32($buf,0);" \
+		+ "$ph=[Runtime.InteropServices.Marshal]::ReadInt32($buf,12)-[Runtime.InteropServices.Marshal]::ReadInt32($buf,4);" \
+		+ "if($pw -gt 0 -and $ph -gt 0){$ratio=($ph/$chv)/($pw/$cwv)}}catch{}\n"
+	ps += "$best=($ratios.Count-1)\n" \
+		+ "if($ratio -gt 0){ $bd=99; for($i=0;$i -lt $ratios.Count;$i++){" \
+		+ "$dd=[Math]::Abs($ratios[$i]-$ratio); if($dd -lt $bd){$bd=$dd;$best=$i}} }\n"
+	ps += "$all=@($art0"
+	for i in range(1, art_variants.size()):
+		ps += ",$art%d" % i
+	ps += ")\n"
+	ps += "$art=@($all[$best])\n"
+	# 双轴居中：水平按最长行补空格，垂直按窗口高度补空行
+	ps += "$wmax=0; foreach($l in $art){ if($l.Length -gt $wmax){$wmax=$l.Length} }\n"
+	ps += "$padx=[Math]::Max(0,[int](($cwv - $wmax)/2))\n"
+	ps += "$pady=[Math]::Max(0,[int](($chv - $art.Count)/2))\n"
+	# 调试落盘：便于核对实际取到的尺寸（不进游戏界面）
+	ps += "try{ 'ratio={0:N2} best={1} cols={2} rows={3} padx={4} pady={5} art={6} wmax={7}' -f " \
+		+ "$ratio,$best,$cwv,$chv,$padx,$pady,$art.Count,$wmax | " \
+		+ "Set-Content -Path (Join-Path $env:TEMP 'arena_term_debug.txt') -Encoding UTF8 }catch{}\n"
+	ps += "for($i=0;$i -lt $pady;$i++){ Write-Host '' }\n"
+	ps += "$sp=' ' * $padx\n"
 	ps += "$top=[Console]::CursorTop\n"
+	# 三档亮度叠印 = 淡入；每遍都带水平缩进
 	ps += "foreach($lv in @('DarkGray','Gray','White')){" \
 		+ "[Console]::SetCursorPosition(0,$top);" \
-		+ "foreach($l in $art){ Write-Host $l -ForegroundColor $lv };" \
+		+ "foreach($l in $art){ Write-Host ($sp+$l) -ForegroundColor $lv };" \
 		+ "if(Fast){break}; Start-Sleep -Milliseconds 220}\n"
 	ps += "[Console]::SetCursorPosition(0,$top)\n"
-	ps += "foreach($l in $art){ Write-Host $l -ForegroundColor White }\n"
+	ps += "foreach($l in $art){ Write-Host ($sp+$l) -ForegroundColor White }\n"
 	ps += "Wait %d\n" % ART_HOLD_MS
 	ps += "New-Item -ItemType File -Path $Sentinel -Force | Out-Null\n"
 	ps += "Start-Sleep -Milliseconds 100\n"
