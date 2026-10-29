@@ -17,6 +17,9 @@ signal finished
 ## 脚本与哨兵放系统临时目录：路径无空格无中文，Windows Terminal 传参才不会被拆错
 const SCRIPT_NAME := "arena_term_intro.ps1"
 const SENTINEL_NAME := "arena_term_intro.done"
+## 终端把自己「把字符画摆在哪」写回这个文件，Godot 侧据此把立绘放进同一个矩形。
+## 这是位置严格对齐的唯一依据——两边各算各的必然有偏差（画布 16:9 vs 屏幕 16:10）。
+const GEOM_NAME := "arena_term_geom.txt"
 const ART_ROWS := 50            ## 字符画行数（终端约 54 行 → 占屏高约 93%，上下仍各留 2 行余量）
 const ART_MAX_COLS := 120       ## 宽度上限（终端约 179 列，留足留白）
 ## 终端字符格「高:宽」——实测 14.3 x 28.1 px。横向比例必须按它算，否则人物被拉成鸡蛋。
@@ -34,8 +37,9 @@ func play(ai_id: String, ai_name: String, art_tex: Texture2D, on_done: Callable)
 	_on_done = on_done
 	var script_abs := _script_path()
 	var sentinel := _sentinel_path()
-	if FileAccess.file_exists(sentinel):
-		DirAccess.remove_absolute(sentinel)
+	for p in [sentinel, _geom_path()]:
+		if FileAccess.file_exists(p):
+			DirAccess.remove_absolute(p)
 
 	var art := AsciiArt.build(art_tex, ART_ROWS, ART_MAX_COLS, CELL_ASPECT)
 	if art.is_empty():
@@ -65,6 +69,44 @@ func _script_path() -> String:
 
 func _sentinel_path() -> String:
 	return OS.get_temp_dir().path_join(SENTINEL_NAME)
+
+
+func _geom_path() -> String:
+	return OS.get_temp_dir().path_join(GEOM_NAME)
+
+
+## 清掉上一次的排版。走游戏内兜底终端时没人为它写新值，
+## 不清就会读到上次外部终端留下的矩形，立绘位置会错。
+static func clear_geometry() -> void:
+	var path := OS.get_temp_dir().path_join(GEOM_NAME)
+	if FileAccess.file_exists(path):
+		DirAccess.remove_absolute(path)
+
+
+## 读回终端画字符画的排版（全整数，避开本地化小数点：某些区域设置会写 "0,24"）。
+## 返回空字典 = 这次没走外部终端（比如退了游戏内兜底版），调用方按居中兜底。
+static func read_geometry() -> Dictionary:
+	var path := OS.get_temp_dir().path_join(GEOM_NAME)
+	if not FileAccess.file_exists(path):
+		return {}
+	var f := FileAccess.open(path, FileAccess.READ)
+	if f == null:
+		return {}
+	var out: Dictionary = {}
+	# 逗号和换行都当分隔符：写的是单行逗号分隔，但换行也认（手工调试改过文件时更稳）
+	var text := f.get_as_text().replace("\r", "").replace("\n", ",")
+	f.close()
+	for kv in text.split(",", false):
+		var pair := kv.split("=")
+		if pair.size() == 2:
+			var key := pair[0].strip_edges()
+			var val := pair[1].strip_edges()
+			if val.is_valid_int():
+				out[key] = int(val)
+	for k in ["cols", "rows", "padx", "pady", "artw", "arth"]:
+		if int(out.get(k, 0)) <= 0:
+			return {}
+	return out
 
 
 ## 启动终端：
@@ -183,9 +225,16 @@ func _compose(ai_name: String, code: PackedStringArray, art: PackedStringArray) 
 	ps += "if($padx -gt 0 -and ($padx + $wmax) -ge $cwv){ $padx=0 }\n"
 	ps += "$maxpady=$chv - $art.Count - 2; if($maxpady -lt 0){$maxpady=0}\n"
 	ps += "if($pady -gt $maxpady){ $pady=$maxpady }\n"
-	ps += "try{ ('cols={0} rows={1} padx={2} pady={3} wmax={4} artn={5}' -f " \
-		+ "$cwv,$chv,$padx,$pady,$wmax,$art.Count) | " \
-		+ "Set-Content -Path (Join-Path $env:TEMP 'arena_term_debug.txt') -Encoding UTF8 }catch{}\n"
+	# 把排版写回给 Godot：立绘要落在**和字符画完全同一个矩形**里。
+	# 三处刻意选择，都是踩出来的：
+	#   · 单条插值字符串，**不要**写 @('k='+$a,'k2='+$b) —— PowerShell 会解析成
+	#     'k=' + ($a,'k2=') + $b，数组被 $OFS（空格）拼成一个串，分隔符全丢
+	#   · 逗号分隔、单行写出 —— 不依赖换行（宿主对换行的处理不保证）
+	#   · Ascii 编码 —— PS 5.1 的 UTF8 会加 BOM，第一行的键会变成 "\ufeffcols"
+	ps += "$geo=\"cols=$cwv,rows=$chv,padx=$padx,pady=$pady," \
+		+ "artw=$wmax,arth=$($art.Count)\"\n"
+	ps += "try{ $geo | Set-Content -NoNewline " \
+		+ "-Path (Join-Path $env:TEMP 'arena_term_geom.txt') -Encoding Ascii }catch{}\n"
 	ps += "$sp=' ' * $padx\n"
 	ps += "for($i=0;$i -lt $pady;$i++){ Write-Host '' }\n"
 	ps += "$top=-1; try{$top=[Console]::CursorTop}catch{}\n"

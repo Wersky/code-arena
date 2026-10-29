@@ -41,6 +41,9 @@ const STAGE_BOTTOM := 812.0
 # ── 进场立绘（终端 → 战斗的衔接点）────────────────────
 const HERO_HOLD := 1.7          ## 立绘停留时长（不含淡出）
 const HERO_FADE_OUT := 0.45     ## 淡出时长，之后才揭幕进战斗
+const MOSAIC_SHADER := preload("res://shaders/mosaic.gdshader")
+const MOSAIC_CELLS := 2.2       ## 起始马赛克块 = 终端一个字符格 × 这个倍数（越大越糊）
+const MOSAIC_TIME := 1.1        ## 从糊到清的时长
 
 var run: RunState = null
 var level: LevelData = null
@@ -519,6 +522,9 @@ func _start_battle() -> void:
 
 ## 进场转场：手牌与敌人先藏起，3D 翻飞结束后 2D 弹入
 func _play_intro() -> void:
+	# --nointro：跳过整个进场（只给 --shot=hero 这类定点验收用）
+	if OS.get_cmdline_user_args().has("--nointro"):
+		return
 	_busy = true
 	_end_turn_button.disabled = true
 	for v in _hand_views:
@@ -592,18 +598,25 @@ func _play_intro() -> void:
 	var term := TerminalIntro.new()
 	term.name = "TerminalIntro"
 	add_child(term)
+	# 游戏内终端不写排版文件 → 先清掉上次外部终端留下的，否则立绘会按旧矩形摆
+	ExtTerminal.clear_geometry()
 	term.play(ai_id, ai_name, art_tex, on_done)
 
 
-## 全屏展示角色立绘（原分辨率）：**直接呈现**（不淡入）→ 停留 → 淡出，然后回调。
+## 终端切回 Godot 的立绘：直接呈现 → 马赛克对焦 → 停留 → 淡出 → 回调。
 ##
-## 为什么不淡入：终端那边已经把 DeepSeek 画在画面上并停住了，终端一关这里就该是同一张图。
-## 再补一层「黑幕淡入 + 立绘淡入」，等于中间多插了 0.85 秒的空黑，衔接被切断。
-## 所以底板用纯黑、透明度直接拉满（与终端背景同色，看不出切换），立绘 alpha 保持默认 1.0。
+## 三条约束都为了让「终端 → Godot」接成一件事，而不是两次播放：
+##  ① 不淡入：终端已经把 DeepSeek 画在屏幕上并停住，再淡入等于中间插 0.85 秒空黑。
+##  ② 位置严格对齐：矩形由终端写回的排版反算，见 _portrait_box()。
+##  ③ 马赛克从「一个终端字符格」起步再逐帧收细：第一帧的画面结构正好等于终端里的符号网格，
+##     观感就是「符号直接上了色」，然后对焦到清晰。
 func _show_hero_portrait(tex: Texture2D, on_end: Callable) -> void:
 	if tex == null:
 		on_end.call()
 		return
+	var geom := ExtTerminal.read_geometry()
+	var box := _portrait_box(tex, geom)
+
 	var bg := ColorRect.new()
 	bg.name = "HeroBackdrop"
 	bg.color = Color.BLACK      ## 与终端背景同色：切换瞬间看不出边界
@@ -615,20 +628,82 @@ func _show_hero_portrait(tex: Texture2D, on_end: Callable) -> void:
 	img.name = "HeroPortrait"
 	img.texture = tex
 	img.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
-	img.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
-	img.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	# STRETCH_SCALE 而不是 KEEP_ASPECT_CENTERED：矩形已经是终端那块的尺寸，
+	# 再让 TextureRect 自己等比适配一次就会缩回去，对齐就白算了。
+	img.stretch_mode = TextureRect.STRETCH_SCALE
 	img.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	# 不设 modulate.a = 0：默认就是 1，立绘第一帧即全亮 —— 这就是「直接呈现」
 	add_child(img)
+	img.position = box.position
+	img.size = box.size
+
+	var mat := ShaderMaterial.new()
+	mat.shader = MOSAIC_SHADER
+	var block0 := _mosaic_block0(tex.get_width(), geom)
+	mat.set_shader_parameter("block", block0)
+	mat.set_shader_parameter("alpha", 1.0)
+	img.material = mat
 
 	var tw := create_tween()
+	# 线性、不要 EASE_OUT：实测 cubic/ease_out 会把变化全堆在前 0.3 秒，
+	# 0.5 秒就已经完全清晰，后半段等于空转。线性才「逐渐」。
+	tw.tween_method(func(v: float) -> void: mat.set_shader_parameter("block", v),
+			block0, 1.0, MOSAIC_TIME)
 	tw.tween_interval(HERO_HOLD)
-	tw.tween_property(img, "modulate:a", 0.0, HERO_FADE_OUT).set_trans(Tween.TRANS_SINE)
-	tw.parallel().tween_property(bg, "color:a", 0.0, HERO_FADE_OUT).set_trans(Tween.TRANS_SINE)
+	tw.tween_method(func(v: float) -> void: mat.set_shader_parameter("alpha", v),
+			1.0, 0.0, HERO_FADE_OUT).set_trans(Tween.TRANS_SINE)
+	tw.parallel().tween_property(bg, "color:a", 0.0, HERO_FADE_OUT)
 	tw.tween_callback(func() -> void:
 		bg.queue_free()
 		img.queue_free()
 		on_end.call())
+
+
+## 立绘该占的矩形（画布坐标）。
+##
+## 关键：终端排版是「屏幕比例」，而 Godot 画布 1600x900 全屏时会按 keep 信箱化
+## （16:10 屏幕上上下各 80px 黑边）。直接拿比例当画布坐标用，上下就差 4%——
+## 这就是「位置还是有些偏差」的真因。所以先还原屏幕比例，再换回画布坐标。
+func _portrait_box(tex: Texture2D, geom: Dictionary) -> Rect2:
+	var base := get_viewport_rect().size
+	var win := Vector2(DisplayServer.window_get_size())
+	if win.x < 1.0 or win.y < 1.0:
+		win = base
+	var s := minf(win.x / base.x, win.y / base.y)      ## 信箱化缩放比
+	var off := (win - base * s) * 0.5                  ## 黑边宽度
+
+	var rect: Rect2
+	if geom.is_empty():
+		# 兜底（走的是游戏内终端）：画布内居中、高度占 90%
+		var src := tex.get_size()
+		var h := base.y * 0.90
+		var w := h * (src.x / maxf(1.0, src.y))
+		rect = Rect2((base - Vector2(w, h)) * 0.5, Vector2(w, h))
+	else:
+		var cols := float(geom["cols"])
+		var rows := float(geom["rows"])
+		rect = Rect2(
+			(float(geom["padx"]) / cols * win.x - off.x) / s,
+			(float(geom["pady"]) / rows * win.y - off.y) / s,
+			float(geom["artw"]) / cols * win.x / s,
+			float(geom["arth"]) / rows * win.y / s)
+
+	# 保险：掉进黑边会被画布裁掉 → 先等比缩进画布，再夹位置
+	var fit := minf(base.x / maxf(1.0, rect.size.x), base.y / maxf(1.0, rect.size.y))
+	if fit < 1.0:
+		var c := rect.get_center()
+		rect.size *= fit
+		rect.position = c - rect.size * 0.5
+	rect.position.x = clampf(rect.position.x, 0.0, maxf(0.0, base.x - rect.size.x))
+	rect.position.y = clampf(rect.position.y, 0.0, maxf(0.0, base.y - rect.size.y))
+	return rect
+
+
+## 起始马赛克块（纹理像素）：一块 = 终端的一个字符格，再乘 MOSAIC_CELLS 让第一帧更糊。
+func _mosaic_block0(tex_w: int, geom: Dictionary) -> float:
+	var artw := 90.0
+	if not geom.is_empty():
+		artw = float(geom["artw"])
+	return clampf(float(tex_w) / maxf(1.0, artw) * MOSAIC_CELLS, 2.0, 128.0)
 
 
 ## 转场落回 2D：手牌错峰弹出、敌人砸落 + 震屏

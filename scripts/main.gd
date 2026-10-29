@@ -175,8 +175,13 @@ func _maybe_capture() -> void:
 		return
 	if screen in ["menu", "arena", "battle", "intro", "reward", "result",
 			"menuhover", "rig", "rigwalk", "loadrun", "card", "cardtext", "cardcost", "terminal", "termgif",
-			"termdump"]:
+			"termdump", "hero"]:
 		run.reset_run()
+		if screen == "hero":
+			# 只验「终端 → Godot 立绘」这一段：假造终端排版，抓 4 帧看马赛克收敛与对齐。
+			# 配套参数：--nointro（跳过真实进场）
+			await _capture_hero_mosaic(out_path)
+			return
 		if screen == "termdump":
 			# 只生成 .ps1 + 字符画文本，**不启动终端**：给宿主侧做语法/尺寸自检
 			_capture_term_dump(out_path)
@@ -288,6 +293,42 @@ const RIG_SPLIT := Color("#2e3648")
 ## 腿部专图的裁剪窗口（画布坐标）：x 62..124、y 206..257 = 审核给的 strip（68..130, 232..283）减去格内偏移
 const LEG_RECT := Rect2i(62, 206, 62, 51)
 const LEG_RECT4 := Rect2i(52, 216, 84, 52)
+
+
+## 定点验收「终端 → Godot 立绘」：假造一份终端排版（全屏 179x56 格、50 行字符画、居中），
+## 然后抓 4 帧看马赛克是否收敛、矩形是否落在预期位置。配套 --nointro。
+##   godot --path <项目> -w --resolution 1600x1000 -- --shot=hero --nointro --shotout=<绝对路径>.png
+func _capture_hero_mosaic(out_path: String) -> void:
+	var geom := "cols=179,rows=56,padx=44,pady=3,artw=90,arth=50"
+	var gf := FileAccess.open(OS.get_temp_dir().path_join("arena_term_geom.txt"), FileAccess.WRITE)
+	if gf == null:
+		print("[shot=hero] 几何文件写不进去")
+		get_tree().quit(1)
+		return
+	gf.store_string(geom)
+	gf.close()
+
+	_show_level(_levels[0])
+	await get_tree().process_frame
+	await get_tree().process_frame
+	var arena := _current as ArenaScreen
+	if arena == null:
+		print("[shot=hero] 没拿到 ArenaScreen")
+		get_tree().quit(1)
+		return
+	var tex := load("res://assets/art/rig/deepdeek-front/front-hi.png") as Texture2D
+	if tex == null:
+		print("[shot=hero] 立绘没读到")
+		get_tree().quit(1)
+		return
+	arena._show_hero_portrait(tex, func() -> void: pass)
+	await get_tree().process_frame      ## 等一帧：节点是本帧加进来的，立刻抓会抓到上一帧
+	for i in 5:
+		get_viewport().get_texture().get_image().save_png(
+				_outname(out_path, "hero", "f%d" % i))
+		await get_tree().create_timer(0.25).timeout
+	print("[shot=hero] 5 帧已存（0/0.25/0.5/0.75/1.0s）几何=%s" % geom)
+	get_tree().quit()
 
 
 ## 只把终端脚本 + 字符画落盘（不启动终端），给宿主侧做语法与尺寸自检：
