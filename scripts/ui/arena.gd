@@ -548,9 +548,10 @@ func _play_intro() -> void:
 		var hi := "res://assets/art/rig/%s-front/front-hi.png" % ai_id
 		var front := "res://assets/art/rig/%s-front/front.png" % ai_id
 		var cut := "res://assets/art/rig/%s/cutout.png" % ai_id
-		# 符号画用低清 front.png：平涂色块 + 硬轮廓，字符画才读得出形状
-		# （高清插画细节太多，采样成 52 行必然是噪点汤）
-		if ResourceLoader.exists(front):
+		# 主人钦定：用这张高清立绘（front-hi = 从"蓝发女仆的挑衅邀战"抠出的 1114x1210）
+		if ResourceLoader.exists(hi):
+			art_tex = load(hi) as Texture2D
+		elif ResourceLoader.exists(front):
 			art_tex = load(front) as Texture2D
 		elif ResourceLoader.exists(cut):
 			art_tex = load(cut) as Texture2D
@@ -564,11 +565,14 @@ func _play_intro() -> void:
 	veil.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	add_child(veil)
 	var on_done := func() -> void:
-		_reveal_from_intro()
-		var tw := create_tween()
-		tw.tween_property(veil, "color:a", 0.0, 0.75).set_trans(Tween.TRANS_SINE) \
-			.set_ease(Tween.EASE_OUT)
-		tw.tween_callback(veil.queue_free)
+		# 终端关掉后：把这张立绘**原分辨率全屏淡入**（终端只有 179x54 格，画不出五官，
+		# 但游戏窗口可以 1:1 显示），再淡出进战斗。
+		_show_hero_portrait(art_tex, func() -> void:
+			_reveal_from_intro()
+			var tw := create_tween()
+			tw.tween_property(veil, "color:a", 0.0, 0.75).set_trans(Tween.TRANS_SINE) \
+				.set_ease(Tween.EASE_OUT)
+			tw.tween_callback(veil.queue_free))
 
 	# 先试「真实系统终端」（主人钦定：要电脑本体的终端）；
 	# --interm 强制游戏内版本，启动失败也自动回退。
@@ -585,6 +589,40 @@ func _play_intro() -> void:
 	term.name = "TerminalIntro"
 	add_child(term)
 	term.play(ai_id, ai_name, art_tex, on_done)
+
+
+## 全屏展示角色立绘（原分辨率），淡入 → 停留 → 淡出，然后回调
+func _show_hero_portrait(tex: Texture2D, on_end: Callable) -> void:
+	if tex == null:
+		on_end.call()
+		return
+	var bg := ColorRect.new()
+	bg.name = "HeroBackdrop"
+	bg.color = Color(0.02, 0.03, 0.05, 0.0)
+	bg.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	bg.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	add_child(bg)
+
+	var img := TextureRect.new()
+	img.name = "HeroPortrait"
+	img.texture = tex
+	img.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	img.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+	img.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	img.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	img.modulate.a = 0.0
+	add_child(img)
+
+	var tw := create_tween()
+	tw.tween_property(bg, "color:a", 1.0, 0.30).set_trans(Tween.TRANS_SINE)
+	tw.tween_property(img, "modulate:a", 1.0, 0.55).set_trans(Tween.TRANS_SINE)
+	tw.tween_interval(1.7)
+	tw.tween_property(img, "modulate:a", 0.0, 0.45).set_trans(Tween.TRANS_SINE)
+	tw.parallel().tween_property(bg, "color:a", 0.0, 0.45)
+	tw.tween_callback(func() -> void:
+		bg.queue_free()
+		img.queue_free()
+		on_end.call())
 
 
 ## 转场落回 2D：手牌错峰弹出、敌人砸落 + 震屏
