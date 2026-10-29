@@ -544,9 +544,13 @@ func _play_intro() -> void:
 		ai_name = run.ai.display_name
 		# 优先用带透明底的切件（字符画背景才干净），没有再退回立绘
 		# 主人指定：字符画统一用「设定图正面视图」那一套；没有才退回切件/立绘
+		# 优先高清版（front-hi = 立绘原图 1114x1210）；front.png 是低清像素版，只做兜底
+		var hi := "res://assets/art/rig/%s-front/front-hi.png" % ai_id
 		var front := "res://assets/art/rig/%s-front/front.png" % ai_id
 		var cut := "res://assets/art/rig/%s/cutout.png" % ai_id
-		if ResourceLoader.exists(front):
+		if ResourceLoader.exists(hi):
+			art_tex = load(hi) as Texture2D
+		elif ResourceLoader.exists(front):
 			art_tex = load(front) as Texture2D
 		elif ResourceLoader.exists(cut):
 			art_tex = load(cut) as Texture2D
