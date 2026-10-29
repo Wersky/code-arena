@@ -38,6 +38,10 @@ const HOVER_LIFT := 30.0
 const STAGE_TOP := 348.0
 const STAGE_BOTTOM := 812.0
 
+# ── 进场立绘（终端 → 战斗的衔接点）────────────────────
+const HERO_HOLD := 1.7          ## 立绘停留时长（不含淡出）
+const HERO_FADE_OUT := 0.45     ## 淡出时长，之后才揭幕进战斗
+
 var run: RunState = null
 var level: LevelData = null
 var combat: StsCombat = null
@@ -591,14 +595,18 @@ func _play_intro() -> void:
 	term.play(ai_id, ai_name, art_tex, on_done)
 
 
-## 全屏展示角色立绘（原分辨率），淡入 → 停留 → 淡出，然后回调
+## 全屏展示角色立绘（原分辨率）：**直接呈现**（不淡入）→ 停留 → 淡出，然后回调。
+##
+## 为什么不淡入：终端那边已经把 DeepSeek 画在画面上并停住了，终端一关这里就该是同一张图。
+## 再补一层「黑幕淡入 + 立绘淡入」，等于中间多插了 0.85 秒的空黑，衔接被切断。
+## 所以底板用纯黑、透明度直接拉满（与终端背景同色，看不出切换），立绘 alpha 保持默认 1.0。
 func _show_hero_portrait(tex: Texture2D, on_end: Callable) -> void:
 	if tex == null:
 		on_end.call()
 		return
 	var bg := ColorRect.new()
 	bg.name = "HeroBackdrop"
-	bg.color = Color(0.02, 0.03, 0.05, 0.0)
+	bg.color = Color.BLACK      ## 与终端背景同色：切换瞬间看不出边界
 	bg.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	bg.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	add_child(bg)
@@ -610,15 +618,13 @@ func _show_hero_portrait(tex: Texture2D, on_end: Callable) -> void:
 	img.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
 	img.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	img.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	img.modulate.a = 0.0
+	# 不设 modulate.a = 0：默认就是 1，立绘第一帧即全亮 —— 这就是「直接呈现」
 	add_child(img)
 
 	var tw := create_tween()
-	tw.tween_property(bg, "color:a", 1.0, 0.30).set_trans(Tween.TRANS_SINE)
-	tw.tween_property(img, "modulate:a", 1.0, 0.55).set_trans(Tween.TRANS_SINE)
-	tw.tween_interval(1.7)
-	tw.tween_property(img, "modulate:a", 0.0, 0.45).set_trans(Tween.TRANS_SINE)
-	tw.parallel().tween_property(bg, "color:a", 0.0, 0.45)
+	tw.tween_interval(HERO_HOLD)
+	tw.tween_property(img, "modulate:a", 0.0, HERO_FADE_OUT).set_trans(Tween.TRANS_SINE)
+	tw.parallel().tween_property(bg, "color:a", 0.0, HERO_FADE_OUT).set_trans(Tween.TRANS_SINE)
 	tw.tween_callback(func() -> void:
 		bg.queue_free()
 		img.queue_free()
