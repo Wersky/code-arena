@@ -32,8 +32,13 @@ static func build(tex: Texture2D, rows: int, max_cols: int = 110) -> PackedStrin
 	# 先按比例裁出「头 + 肩」的取景框（横向居中），否则长发会把构图撑成扁的
 	var crop_h := maxi(8, int(float(bb.size.y) * BUST))
 	var crop_w := maxi(8, int(float(bb.size.x) * CROP_W))
-	bb = Rect2i(Vector2i(bb.position.x + (bb.size.x - crop_w) / 2, bb.position.y),
+	var crop_rect := Rect2i(Vector2i(bb.position.x + (bb.size.x - crop_w) / 2, bb.position.y),
 			Vector2i(crop_w, mini(crop_h, bb.size.y)))
+	# 裁完再算一次内容包围盒：裁切框比角色宽时，网格里会有一半空列、角色被挤到一边
+	img = img.get_region(crop_rect)
+	bb = _alpha_bbox(img)
+	if bb.size.x <= 0 or bb.size.y <= 0:
+		return out
 	var src_aspect := float(bb.size.x) / float(bb.size.y)
 	var cols := int(round(float(rows) * src_aspect * CELL_ASPECT * STRETCH))
 	if cols > max_cols:
