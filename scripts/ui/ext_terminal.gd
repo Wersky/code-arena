@@ -59,15 +59,17 @@ func _sentinel_path() -> String:
 
 
 ## 启动终端：
-##   ① 有 Windows Terminal → 用它的 `-F` 参数开全屏。
-##      **关键**：wt 的窗口不响应 ShowWindow/SetConsoleDisplayMode，
-##      上一版对着该句柄调 Win32 一律无效——这就是「怎么都全屏不了」的真因。
-##   ② 没有 wt → conhost.exe，脚本内再用 SetConsoleDisplayMode 切全屏。
+##   ① 有 Windows Terminal → 用它的 `-M`（最大化）开一个**铺满屏幕的窗口**。
+##      注意别用 `-F`（那是真全屏，主人要的是「窗口铺满」而不是全屏）。
+##      wt 的窗口也不响应 ShowWindow/SetConsoleDisplayMode，只能靠它自己的参数。
+##   ② 没有 wt → conhost.exe + ShowWindow(SW_MAXIMIZE) 最大化。
 func _launch(script_abs: String, sentinel: String) -> int:
 	var wt := _find_wt()
 	if wt != "":
+		# 主人偏好：默认「铺满屏幕」（-M 最大化窗口）；切成全屏才用 -F
+		var mode_flag := "-F" if GameSettings.term_fullscreen else "-M"
 		var ok_pid := OS.create_process(wt, [
-			"-F", "-w", "-1", "--title", "arena_os", "powershell",
+			mode_flag, "-w", "-1", "--title", "arena_os", "powershell",
 			"-NoProfile", "-ExecutionPolicy", "Bypass", "-File", script_abs, sentinel])
 		if ok_pid > 0:
 			return ok_pid
@@ -125,13 +127,11 @@ func _compose(ai_name: String, code: PackedStringArray, art: PackedStringArray) 
 		+ "[DllImport(\"kernel32.dll\")] public static extern bool SetConsoleDisplayMode(IntPtr h,uint f,IntPtr d);'\n"
 	ps += "$W = Add-Type -MemberDefinition $sig -Name 'W' -PassThru\n"
 	ps += "function Fast(){ return (($W::GetAsyncKeyState(0x11) -band 0x8000) -ne 0) }\n"
-	# 全屏策略（这是「怎么都全屏不了」的关键）：
-	#   · 在 Windows Terminal 里（WT_SESSION 存在）→ 全屏已由启动参数 wt -F 完成，
-	#     这里**什么都不做**。wt 的窗口不响应 ShowWindow/SetConsoleDisplayMode，
-	#     硬调这些反而会把它从全屏踢回窗口。
-	#   · 经典 conhost → SetConsoleDisplayMode(CONSOLE_FULLSCREEN_MODE=1) 才是真全屏。
+	# 窗口铺满屏幕（不是全屏）：
+	#   · 在 Windows Terminal 里（WT_SESSION 存在）→ 已由启动参数 wt -M 最大化，这里不做任何事
+	#     （wt 不响应 ShowWindow/SetConsoleDisplayMode，硬调会被它忽略甚至踢出最大化）
+	#   · 经典 conhost → ShowWindow(SW_MAXIMIZE) 最大化窗口（**不**用 SetConsoleDisplayMode，那是真全屏）
 	ps += "if(-not $env:WT_SESSION){" \
-		+ "try{$W::SetConsoleDisplayMode($W::GetStdHandle(-11),1,[IntPtr]::Zero)|Out-Null}catch{};" \
 		+ "try{$h=(Get-Process -Id $PID).MainWindowHandle;" \
 		+ "if($h -ne 0){$W::ShowWindow($h,3)|Out-Null}}catch{} }\n"
 	# conhost 下再把缓冲区/窗口拉到物理上限，字符画才吃满屏（wt 里改了无效，跳过）

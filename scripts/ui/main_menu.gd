@@ -35,6 +35,7 @@ var _divider: TextureRect = null
 var _start_btn: JuiceButton = null
 var _quit_btn: JuiceButton = null
 var _speed_btn: JuiceButton = null
+var _win_btn: JuiceButton = null
 var _hint: Label = null
 var _foot_left: Label = null
 var _foot_right: Label = null
@@ -167,15 +168,29 @@ func _build_content() -> void:
 	_speed_btn = JuiceButton.new()
 	_speed_btn.name = "SpeedButton"
 	_speed_btn.bare = true
-	_speed_btn.font_size = 20
-	_speed_btn.custom_minimum_size = Vector2(360, 40)
-	_speed_btn.size = Vector2(360, 40)
+	_speed_btn.font_size = 18
+	_speed_btn.custom_minimum_size = Vector2(178, 40)
+	_speed_btn.size = Vector2(178, 40)
 	_speed_btn.text = _speed_text()
 	_speed_btn.pressed.connect(func() -> void:
 		SfxNode.play("ui_click")
 		GameSettings.cycle_speed()
 		_speed_btn.text = _speed_text())
 	add_child(_speed_btn)
+
+	# 终端窗口模式：铺满屏幕（最大化） / 全屏
+	_win_btn = JuiceButton.new()
+	_win_btn.name = "WindowModeButton"
+	_win_btn.bare = true
+	_win_btn.font_size = 18
+	_win_btn.custom_minimum_size = Vector2(178, 40)
+	_win_btn.size = Vector2(178, 40)
+	_win_btn.text = _win_text()
+	_win_btn.pressed.connect(func() -> void:
+		SfxNode.play("ui_click")
+		GameSettings.toggle_window_mode()
+		_win_btn.text = _win_text())
+	add_child(_win_btn)
 
 	# 面板底部一行操作提示（不抢戏，但新手看得见）
 	_hint = UiKit.dim("纯鼠标操作 ｜ 点手牌选牌 → 点「运行」出牌", 15, Color(0.45, 0.55, 0.68))
@@ -185,7 +200,12 @@ func _build_content() -> void:
 
 ## 速度按钮文案
 func _speed_text() -> String:
-	return "终端打字速度：%s（点击切换）" % GameSettings.speed_name()
+	return "打字速度：%s" % GameSettings.speed_name()
+
+
+## 终端窗口模式文案
+func _win_text() -> String:
+	return "窗口：%s" % GameSettings.window_mode_name()
 
 
 ## 一个「图标 + 说明」的小单元
@@ -286,7 +306,8 @@ func _layout() -> void:
 		_start_btn.size = bs
 
 	if _quit_btn != null:
-		_speed_btn.position = Vector2(roundf(cx - 180.0), py + 452.0)
+		_speed_btn.position = Vector2(roundf(cx - 184.0), py + 452.0)
+	_win_btn.position = Vector2(roundf(cx + 6.0), py + 452.0)
 	_quit_btn.position = Vector2(roundf(cx - 180.0), py + 404.0)
 
 	if _hint != null:

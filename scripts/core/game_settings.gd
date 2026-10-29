@@ -14,6 +14,8 @@ const SPEED_DELAY := [45, 22, 9]
 const SPEED_CHUNK := [3, 5, 8]
 
 static var term_speed: int = 0        ## 0=慢（默认） 1=中 2=快
+## 终端窗口模式：false = 最大化（铺满屏幕，默认）；true = 真全屏
+static var term_fullscreen: bool = false
 
 
 static func load_from_disk() -> void:
@@ -21,11 +23,13 @@ static func load_from_disk() -> void:
 	if cfg.load(PATH) != OK:
 		return
 	term_speed = clampi(int(cfg.get_value("term", "speed", 0)), 0, 2)
+	term_fullscreen = bool(cfg.get_value("term", "fullscreen", false))
 
 
 static func save_to_disk() -> void:
 	var cfg := ConfigFile.new()
 	cfg.set_value("term", "speed", term_speed)
+	cfg.set_value("term", "fullscreen", term_fullscreen)
 	cfg.save(PATH)
 
 
@@ -44,4 +48,14 @@ static func type_chunk() -> int:
 ## 下一档（开始界面的按钮用）
 static func cycle_speed() -> void:
 	term_speed = (clampi(term_speed, 0, 2) + 1) % 3
+	save_to_disk()
+
+
+static func window_mode_name() -> String:
+	return "全屏" if term_fullscreen else "铺满屏幕"
+
+
+## 切换终端窗口模式：铺满屏幕（最大化） ↔ 真全屏
+static func toggle_window_mode() -> void:
+	term_fullscreen = not term_fullscreen
 	save_to_disk()
