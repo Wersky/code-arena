@@ -322,9 +322,11 @@ func _capture_hero_mosaic(out_path: String) -> void:
 		get_tree().quit(1)
 		return
 	arena._show_hero_portrait(tex, func() -> void: pass)
-	# 立刻停住：不然后续每一帧都会推进，拍不到首帧
+	# 立刻停住：不然后续每一帧都会推进，拍不到首帧。进度条是独立 tween，要一起停
 	if arena._hero_tween != null:
 		arena._hero_tween.pause()
+	if arena._hero_bar_tween != null:
+		arena._hero_bar_tween.pause()
 	await get_tree().process_frame      ## 这一帧把着色器编译掉（tween 已停，画面不变）
 	var dbg := arena.get_node_or_null("HeroPortrait") as TextureRect
 	var sym := arena.get_node_or_null("HeroSymbol") as SymbolFrame
@@ -335,18 +337,21 @@ func _capture_hero_mosaic(out_path: String) -> void:
 			float(dm.get_shader_parameter("block")), float(dm.get_shader_parameter("alpha")),
 			str(dbg.size)])
 	get_viewport().get_texture().get_image().save_png(_outname(out_path, "hero", "f0"))
-	# 解冻，按 0.15s 间隔抓完三段：0~0.32 符号转马赛克 → 0.32~1.32 收到清晰
+	# 解冻，每 0.45s 一张：0~2.2 上色、2.2~3.6 收细
 	arena._hero_tween.play()
+	if arena._hero_bar_tween != null:
+		arena._hero_bar_tween.play()
 	for i in range(1, 9):
-		await get_tree().create_timer(0.15, true, false, true).timeout
+		await get_tree().create_timer(0.45, true, false, true).timeout
 		get_viewport().get_texture().get_image().save_png(
 				_outname(out_path, "hero", "f%d" % i))
 		if dbg != null:
 			var m2 := dbg.material as ShaderMaterial
-			print("  f%d block=%.2f alpha=%.2f symA=%.2f" % [i,
+			var bar := arena.get_node_or_null("HeroLoadPlate/HeroLoadBar") as PixelBar
+			print("  f%d t=%.2fs block=%.2f alpha=%.2f 进度=%.2f" % [i, i * 0.45,
 				float(m2.get_shader_parameter("block")),
 				float(m2.get_shader_parameter("alpha")),
-				sym.modulate.a if sym != null else -1.0])
+				bar.value if bar != null else -1.0])
 	print("[shot=hero] 9 帧已存（首帧为纯符号帧）几何=%s" % geom)
 	get_tree().quit()
 
@@ -373,9 +378,13 @@ func _capture_term_dump(out_path: String) -> void:
 	var body := et._compose(ai_name, IntroScript.code_for(ai_id, ai_name), art)
 	et.free()
 	var base := out_path.get_basename()
-	for pair in [[base + ".txt", "\n".join(art) + "\n"], [base + ".ps1", body]]:
+	# .ps1 必须带 UTF-8 BOM（和生产路径 ExtTerminal.play 一致），
+	# 否则 PS 5.1 按系统 ANSI 解码，中文注释全变乱码——自检也就白验了
+	for pair in [[base + ".txt", "\n".join(art) + "\n", false], [base + ".ps1", body, true]]:
 		var f := FileAccess.open(pair[0], FileAccess.WRITE)
 		if f != null:
+			if bool(pair[2]):
+				f.store_buffer(PackedByteArray([0xEF, 0xBB, 0xBF]))
 			f.store_string(pair[1])
 			f.close()
 	print("[shot=termdump] %d 行 / 最宽 %d 列 → %s.ps1" % [art.size(), wmax, base])

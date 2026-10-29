@@ -56,6 +56,9 @@ func play(ai_id: String, ai_name: String, art_tex: Texture2D, on_done: Callable)
 	if f == null:
 		push_warning("[ExtTerminal] 脚本写不进去：%s" % script_abs)
 		return false
+	# 必须写 UTF-8 BOM：PS 5.1 读**无 BOM** 的脚本按系统 ANSI 解码，
+	# 代码里的中文注释会整片变成乱码。
+	f.store_buffer(PackedByteArray([0xEF, 0xBB, 0xBF]))
 	f.store_string(script)
 	f.close()
 
@@ -166,9 +169,8 @@ func _finish() -> void:
 
 
 # ── 拼脚本正文 ───────────────────────────────
+## [param code] 的节奏全在脚本里自校准（见下方打字段），这里只传文案与字符画。
 func _compose(ai_name: String, code: PackedStringArray, art: PackedStringArray) -> String:
-	var delay := GameSettings.type_delay()
-	var chunk := GameSettings.type_chunk()
 	var ps := ""
 	ps += "param([string]$Sentinel)\n"
 	ps += "$ErrorActionPreference='SilentlyContinue'\n"
@@ -191,12 +193,6 @@ func _compose(ai_name: String, code: PackedStringArray, art: PackedStringArray) 
 		+ "$w=$Host.UI.RawUI.WindowSize;$w.Width=$mp.Width;$w.Height=$mp.Height;" \
 		+ "$Host.UI.RawUI.WindowSize=$w}catch{} }\n"
 	ps += "Clear-Host\n"
-	# 打字：分块写；扫到 Ctrl 就把本行剩余一次吐出
-	ps += "function T([string]$s,[int]$chunk,[int]$d){" \
-		+ "for($i=0;$i -lt $s.Length;$i+=$chunk){" \
-		+ "if(Fast){[Console]::Write($s.Substring($i));return}" \
-		+ "[Console]::Write($s.Substring($i,[Math]::Min($chunk,$s.Length-$i)));" \
-		+ "Start-Sleep -Milliseconds $d}}\n"
 	# 等待：Ctrl 可提前结束
 	ps += "function Wait([int]$ms){$t=0;while($t -lt $ms){if(Fast){return};" \
 		+ "Start-Sleep -Milliseconds 40;$t+=40}}\n"
@@ -205,9 +201,26 @@ func _compose(ai_name: String, code: PackedStringArray, art: PackedStringArray) 
 		ps += "Wait 120\n"
 	ps += "Wait 150\n"
 	ps += "$code = @'\n" + "\n".join(code) + "\n'@ -split \"`n\" | ForEach-Object { $_.TrimEnd(\"`r\") }\n"
-	# 代码全部走同一个输出通道（[Console]::Write + 显式 "`r`n"）。
-	# 别混用 Write-Host：两条通道的写入顺序不保证，会出现两行粘一起。
-	ps += "foreach($l in $code){ if($l.Length -gt 0){ T $l %d %d }; [Console]::Write(\"`r`n\") }\n" % [chunk, delay]
+	# 打字节奏 = **绝对时间表**，不是「每块 sleep 固定毫秒」。
+	# 为什么：Windows 定时器粒度不稳，实测 sleep(16) 在这台机器上实际要 30ms，
+	# 按毫秒硬算总时长会超一倍。这里先量一次粒度（$unit），再按 $n*$unit 的时间表推进，
+	# 漂移不累积——实测 141 拍预计 2333ms、实测 2348ms。
+	# 每拍吐多少字由总字数摊：$ticks = 目标时长/$unit，$chunk = 字数/$ticks。
+	# 所以文案加长不会变慢，只会滚得更快。
+	ps += "$tp=[System.Diagnostics.Stopwatch]::StartNew();Start-Sleep -Milliseconds 1;$tp.Stop()\n"
+	ps += "$unit=[Math]::Max(2.0,$tp.Elapsed.TotalMilliseconds)\n"
+	ps += "$chars=0;foreach($l in $code){$chars+=$l.Length}\n"
+	ps += "$ticks=[Math]::Max(1,[int][Math]::Floor(%d/$unit))\n" % GameSettings.type_total_ms()
+	ps += "$chunk=[Math]::Max(1,[int][Math]::Ceiling($chars/[double]$ticks))\n"
+	ps += "$cs=[System.Diagnostics.Stopwatch]::StartNew();$n=0\n"
+	ps += "foreach($l in $code){" \
+		+ "if($l.Length -gt 0){" \
+		+ "for($p=0;$p -lt $l.Length;$p+=$chunk){" \
+		+ "[Console]::Write($l.Substring($p,[Math]::Min($chunk,$l.Length-$p)));" \
+		+ "$n++;$goal=$n*$unit;" \
+		+ "while($cs.Elapsed.TotalMilliseconds -lt $goal){if(Fast){break};" \
+		+ "Start-Sleep -Milliseconds 1}}}" \
+		+ "[Console]::Write(\"`r`n\")}\n"
 	ps += "Wait %d\n" % HOLD_MS
 	ps += "Clear-Host\n"
 

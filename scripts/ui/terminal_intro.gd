@@ -146,6 +146,13 @@ func _draw_terminal_text() -> void:
 	var budget := int(floorf((_t - T_BOOT) * T_CPS))
 	if budget <= 0:
 		return
+	# 代码行变长后总高会超出屏幕：整体上移，让最新一行贴住可视区底部（终端式滚屏）。
+	# 不这么做的话后半段全画到屏幕外面去，看起来像卡住了。
+	var line_h := 29.0
+	var code_bottom := get_viewport_rect().size.y - 44.0
+	var total_h := float(_code.size()) * line_h
+	if y + total_h > code_bottom:
+		y = maxf(34.0, code_bottom - total_h)
 	var consumed := 0
 	for line in _code:
 		if consumed >= budget:

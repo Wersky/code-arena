@@ -9,11 +9,11 @@ const PATH := "user://arena_settings.cfg"
 ## 配置版本。**改默认值时必须 +1**，否则主人本地存的旧值会盖掉新默认（迁移见 load_from_disk）。
 const CFG_VERSION := 2
 
-## 三档速度：名字 / 每块间隔(ms) / 每块字数
-## 注意：宿主的 sleep 有 ~15ms 下限，慢档实际会更慢一点，这是有意的。
+## 三档速度：名字 / 该档的**目标总时长**(ms)
+## 为什么用「目标总时长」而不是每字间隔：文案会加长，而主人要求「行数加长但总耗时不变」。
+## 具体怎么摊到每一拍，由终端脚本运行时自校准（见 ExtTerminal 的打字段）。
 const SPEED_NAMES := ["慢", "中", "快"]
-const SPEED_DELAY := [45, 22, 9]
-const SPEED_CHUNK := [3, 5, 8]
+const SPEED_TOTAL_MS := [6800, 2400, 900]
 
 static var term_speed: int = 0        ## 0=慢（默认） 1=中 2=快
 ## 终端窗口模式：true = 真全屏（**默认**）；false = 最大化（铺满但不隐藏任务栏）
@@ -45,12 +45,9 @@ static func speed_name() -> String:
 	return String(SPEED_NAMES[clampi(term_speed, 0, 2)])
 
 
-static func type_delay() -> int:
-	return int(SPEED_DELAY[clampi(term_speed, 0, 2)])
-
-
-static func type_chunk() -> int:
-	return int(SPEED_CHUNK[clampi(term_speed, 0, 2)])
+## 该档的代码打字**目标总时长**（毫秒）。文案加长不变，只是滚得更快。
+static func type_total_ms() -> int:
+	return int(SPEED_TOTAL_MS[clampi(term_speed, 0, 2)])
 
 
 ## 下一档（开始界面的按钮用）
