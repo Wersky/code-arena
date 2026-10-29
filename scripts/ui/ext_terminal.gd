@@ -15,7 +15,7 @@ const SENTINEL_NAME := "arena_term_intro.done"
 const ART_ROWS := 52            ## 终端里画多少行（行数决定大小；34 行约占屏幕高度六成）
 const ART_MAX_COLS := 200
 ## 终端字体格子「高:宽」比例档位：运行时按实测挑最接近的一套，避免人像被横挤成竖条
-const ASPECTS := [1.8, 2.4, 3.0]       ## 列数留余量：超过窗口宽会折行，字符画会被拆坏
+const ASPECTS := [3.0]       ## 列数留余量：超过窗口宽会折行，字符画会被拆坏
 const HOLD_MS := 1000           ## 代码打完停留（主人指定 1 秒）
 const ART_HOLD_MS := 2000       ## 字符画停留 2 秒后融回游戏（主人指定）
 const TIMEOUT := 45.0
@@ -32,11 +32,17 @@ func play(ai_id: String, ai_name: String, art_tex: Texture2D, on_done: Callable)
 	if FileAccess.file_exists(sentinel):
 		DirAccess.remove_absolute(sentinel)
 
+	# 导出包里的 res:// 是打包资源，外部终端读不到 → 先落一张临时 PNG
+	var img_path := OS.get_temp_dir().path_join("arena_term_img.png")
+	if art_tex != null:
+		var im := art_tex.get_image()
+		if im != null:
+			im.save_png(img_path)
 	var variants: Array = []
 	for a in ASPECTS:
 		variants.append(AsciiArt.build(art_tex, ART_ROWS, ART_MAX_COLS, float(a)))
 	var code := IntroScript.code_for(ai_id, ai_name)
-	var script := _compose(ai_name, code, variants)
+	var script := _compose(ai_name, code, variants, img_path)
 
 	var f := FileAccess.open(script_abs, FileAccess.WRITE)
 	if f == null:
@@ -115,7 +121,8 @@ func _finish() -> void:
 
 
 # ── 拼脚本正文 ───────────────────────────────
-func _compose(ai_name: String, code: PackedStringArray, art_variants: Array) -> String:
+func _compose(ai_name: String, code: PackedStringArray, art_variants: Array,
+		img_path: String = "") -> String:
 	var delay := GameSettings.type_delay()
 	var chunk := GameSettings.type_chunk()
 	var ps := ""
@@ -165,22 +172,61 @@ func _compose(ai_name: String, code: PackedStringArray, art_variants: Array) -> 
 	ps += "foreach($l in $code){ T $l %d %d; [Console]::WriteLine() }\n" % [chunk, delay]
 	ps += "Wait %d\n" % HOLD_MS
 	ps += "Clear-Host\n"
-	# ── 字符画：按终端字体格子比例预生成多套，运行时量出来挑最接近的 ──
+	# ── 尺寸：居中与采样都靠它（宿主可能把像素当字符数返回，做合法性钳制）──
+	ps += "$cwv=0;$chv=0\n"
+	ps += "try{$cwv=[Console]::WindowWidth}catch{}\n"
+	ps += "try{$chv=[Console]::WindowHeight}catch{}\n"
+	ps += "if($cwv -lt 20 -or $cwv -gt 400){try{$cwv=$Host.UI.RawUI.WindowSize.Width}catch{}}\n"
+	ps += "if($chv -lt 10 -or $chv -gt 200){try{$chv=$Host.UI.RawUI.WindowSize.Height}catch{}}\n"
+	ps += "if($cwv -lt 20 -or $cwv -gt 400){$cwv=160}\n"
+	ps += "if($chv -lt 10 -or $chv -gt 200){$chv=50}\n"
+	ps += "try{ 'cols={0} rows={1}' -f $cwv,$chv | " \
+		+ "Set-Content -Path (Join-Path $env:TEMP 'arena_term_debug.txt') -Encoding UTF8 }catch{}\n"
+	# ── 主路径：真彩半块渲染 —— 一个字符格 = 上下 2 个像素（▀ + 24 位色）──
+	# 这样终端里显示的就是**原图本身**，精度只受窗口字符网格限制，不再受 ASCII 梯度拖累。
+	ps += "$bmp=$null\n"
+	ps += "try{ Add-Type -AssemblyName System.Drawing | Out-Null; " \
+		+ "$bmp=[System.Drawing.Bitmap]::FromFile('%s') }catch{}\n" % _esc(img_path)
+	ps += "if($bmp -ne $null){\n"
+	ps += "$esc=[char]27\n"
+	ps += "$iw=$bmp.Width; $ih=$bmp.Height\n"
+	ps += "$maxc=$cwv-2; if($maxc -gt 200){$maxc=200}\n"
+	ps += "$maxr=$chv-3; if($maxr -lt 6){$maxr=6}\n"
+	ps += "$cols=$maxc; $rows=[int]($cols*($ih/$iw)/2)\n"
+	ps += "if($rows -gt $maxr){ $rows=$maxr; $cols=[int]($rows*2*($iw/$ih)) }\n"
+	ps += "if($cols -lt 10){$cols=10}; if($rows -lt 5){$rows=5}\n"
+	ps += "$padx=[Math]::Max(0,[int](($cwv-$cols)/2))\n"
+	ps += "$pady=[Math]::Max(0,[int](($chv-$rows)/2))\n"
+	ps += "$sp=' '*$padx\n"
+	ps += "for($i=0;$i -lt $pady;$i++){ Write-Host '' }\n"
+	ps += "$top=[Console]::CursorTop\n"
+	ps += "foreach($lv in @(0.45,1.0)){\n"
+	ps += "[Console]::SetCursorPosition(0,$top)\n"
+	ps += "for($y=0;$y -lt $rows;$y++){\n"
+	ps += "$sb=New-Object System.Text.StringBuilder\n"
+	ps += "[void]$sb.Append($sp)\n"
+	ps += "$ry0=[int](($y*2)/($rows*2)*$ih); $ry1=[int]((($y*2)+1)/($rows*2)*$ih)\n"
+	ps += "for($x=0;$x -lt $cols;$x++){\n"
+	ps += "$rx=[int]($x/$cols*$iw)\n"
+	ps += "$p0=$bmp.GetPixel($rx,$ry0); $p1=$bmp.GetPixel($rx,$ry1)\n"
+	ps += "if($p0.A -lt 90 -and $p1.A -lt 90){ [void]$sb.Append(' '); continue }\n"
+	ps += "$r0=[int]($p0.R*$lv);$g0=[int]($p0.G*$lv);$b0=[int]($p0.B*$lv)\n"
+	ps += "$r1=[int]($p1.R*$lv);$g1=[int]($p1.G*$lv);$b1=[int]($p1.B*$lv)\n"
+	ps += "[void]$sb.Append(\"$esc[38;2;$r0;$g0;$b0m$esc[48;2;$r1;$g1;$b1m▀\")\n"
+	ps += "}\n"
+	ps += "[void]$sb.Append(\"$esc[0m\")\n"
+	ps += "Write-Host $sb.ToString()\n"
+	ps += "}\n"
+	ps += "if(Fast){break}\n"
+	ps += "Start-Sleep -Milliseconds 240\n"
+	ps += "}\n"
+	ps += "} else {\n"
+	# ── 兜底：System.Drawing 不可用时退回 ASCII 字符画（按格子比例选套）──
 	# 为什么：终端字体格子不一定是 1:2，实测某些机器是 1:3.5，硬用 1:2 会把人横着挤成竖条。
 	for i in art_variants.size():
 		ps += "$art%d = @'\n%s\n'@ -split \"`n\"\n" % [i, "\n".join(art_variants[i])]
 	ps += "$ratios=@(%s)\n" % ", ".join(ASPECTS.map(func(f): return "%.2f" % f))
-	# 量客户区像素 / 字符数 = 真实格子比例；窗口字符宽高要稳（[Console] 在 wt 里可能取不到）
 	ps += "$ratio=0.0\n"
-	ps += "$cwv=0;$chv=0\n"
-	ps += "try{$cwv=[Console]::WindowWidth}catch{}\n"
-	ps += "try{$chv=[Console]::WindowHeight}catch{}\n"
-	ps += "if($cwv -lt 10 -or $cwv -gt 400){try{$cwv=$Host.UI.RawUI.WindowSize.Width}catch{}}\n"
-	ps += "if($chv -lt 5 -or $chv -gt 200){try{$chv=$Host.UI.RawUI.WindowSize.Height}catch{}}\n"
-	# 有些宿主把「像素」当字符数返回（实测 2544x97）→ 超出合理范围就退回常见值，
-	# 否则 padx 会被算成上千个空格、字符画被推到一边
-	ps += "if($cwv -lt 20 -or $cwv -gt 400){$cwv=160}\n"
-	ps += "if($chv -lt 10 -or $chv -gt 200){$chv=50}\n"
 	ps += "try{$buf=[Runtime.InteropServices.Marshal]::AllocHGlobal(16);" \
 		+ "$hc=[W]::FindWindowW($null,$title); if($hc -eq [IntPtr]::Zero){$hc=[W]::GetConsoleWindow()};" \
 		+ "$W::GetClientRect($hc,$buf)|Out-Null;" \
@@ -195,24 +241,19 @@ func _compose(ai_name: String, code: PackedStringArray, art_variants: Array) -> 
 		ps += ",$art%d" % i
 	ps += ")\n"
 	ps += "$art=@($all[$best])\n"
-	# 双轴居中：水平按最长行补空格，垂直按窗口高度补空行
 	ps += "$wmax=0; foreach($l in $art){ if($l.Length -gt $wmax){$wmax=$l.Length} }\n"
 	ps += "$padx=[Math]::Max(0,[int](($cwv - $wmax)/2))\n"
 	ps += "$pady=[Math]::Max(0,[int](($chv - $art.Count)/2))\n"
-	# 调试落盘：便于核对实际取到的尺寸（不进游戏界面）
-	ps += "try{ 'ratio={0:N2} best={1} cols={2} rows={3} padx={4} pady={5} art={6} wmax={7}' -f " \
-		+ "$ratio,$best,$cwv,$chv,$padx,$pady,$art.Count,$wmax | " \
-		+ "Set-Content -Path (Join-Path $env:TEMP 'arena_term_debug.txt') -Encoding UTF8 }catch{}\n"
 	ps += "for($i=0;$i -lt $pady;$i++){ Write-Host '' }\n"
 	ps += "$sp=' ' * $padx\n"
 	ps += "$top=[Console]::CursorTop\n"
-	# 三档亮度叠印 = 淡入；每遍都带水平缩进
 	ps += "foreach($lv in @('DarkGray','Gray','White')){" \
 		+ "[Console]::SetCursorPosition(0,$top);" \
 		+ "foreach($l in $art){ Write-Host ($sp+$l) -ForegroundColor $lv };" \
 		+ "if(Fast){break}; Start-Sleep -Milliseconds 220}\n"
 	ps += "[Console]::SetCursorPosition(0,$top)\n"
 	ps += "foreach($l in $art){ Write-Host ($sp+$l) -ForegroundColor White }\n"
+	ps += "}\n"
 	ps += "Wait %d\n" % ART_HOLD_MS
 	ps += "New-Item -ItemType File -Path $Sentinel -Force | Out-Null\n"
 	ps += "Start-Sleep -Milliseconds 100\n"
