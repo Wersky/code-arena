@@ -13,10 +13,10 @@ signal finished
 const SCRIPT_NAME := "arena_term_intro.ps1"
 const SENTINEL_NAME := "arena_term_intro.done"
 const ANSI_COLS := 96          ## 真彩渲染的横向格数（96 格 ≈ 192 像素宽）
-const ART_ROWS := 46            ## 终端里画多少行（行数决定大小；34 行约占屏幕高度六成）
+const ART_ROWS := 52            ## 终端里画多少行（行数决定大小；34 行约占屏幕高度六成）
 const ART_MAX_COLS := 200
 ## 终端字体格子「高:宽」比例档位：运行时按实测挑最接近的一套，避免人像被横挤成竖条
-const ASPECTS := [3.0]       ## 列数留余量：超过窗口宽会折行，字符画会被拆坏
+const ASPECTS := [2.0]       ## 列数留余量：超过窗口宽会折行，字符画会被拆坏
 const HOLD_MS := 1000           ## 代码打完停留（主人指定 1 秒）
 const ART_HOLD_MS := 2000       ## 字符画停留 2 秒后融回游戏（主人指定）
 const TIMEOUT := 45.0

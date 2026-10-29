@@ -1,30 +1,18 @@
 class_name AsciiArt
 extends Object
-## 像素图 → ASCII 字符画（纯文本，供游戏内终端 / 真实系统终端共用）。
+## 像素图 → ASCII 字符画（纯文本）。
 ##
-## 用「疏密梯度」表现明暗：空格 → . : - = + * # % @ $，越亮字符越密。
-## 终端字符天生窄高一倍，所以按 cell 宽 1 : 高 2 的假设换算列数。
+## 关键实现：**先把整幅图缩放到字符网格大小（面积平均）再逐格取色**。
+## 早期版本每格只采一个像素（最近邻），对平涂插画等于纯噪声——这是「糊成一片」的真因。
 
 const RAMP := " .:-=+*#%@"
-## Bayer 8x8 有序抖动矩阵（0..63）——字符画有渐变感全靠它，否则大片同色就是一面墙
-const BAYER := [
-	0, 32, 8, 40, 2, 34, 10, 42,
-	48, 16, 56, 24, 50, 18, 58, 26,
-	12, 44, 4, 36, 14, 46, 6, 38,
-	60, 28, 52, 20, 62, 30, 54, 22,
-	3, 35, 11, 43, 1, 33, 9, 41,
-	51, 19, 59, 27, 49, 17, 57, 25,
-	15, 47, 7, 39, 13, 45, 5, 37,
-	63, 31, 55, 23, 61, 29, 53, 21]
-const CELL_ASPECT := 2.0        ## 终端字符宽:高 ≈ 1:2
-const STRETCH := 1.0            ## 横向拉伸系数
-const CROP_W := 0.86            ## 横向只取中间 55%：头发太抢画面，裁窄点让身体/手势占比更大
-const BUST := 0.52              ## 取「头 + 手势 + 上半身」高度比例（0.40 只到脸，太小）
-                                ## 全身缩进去必然糊，胸像才够精细（参考图也是胸像）
+const CELL_ASPECT := 2.0        ## 终端字符 高:宽
+const STRETCH := 2.2            ## 横向拉伸：竖构图人物正常比例只占屏宽三成，撑宽才「大」
+const CROP_W := 1.0             ## 横向取景比例（1.0 = 全宽）
+const BUST := 1.0               ## 纵向取景比例（1.0 = 全身）
 
 
-## 返回字符画文本行；rows 为目标行数（字体/窗口能放多少行就传多少）
-static func build(tex: Texture2D, rows: int, max_cols: int = 110,
+static func build(tex: Texture2D, rows: int, max_cols: int = 200,
 		cell_aspect: float = CELL_ASPECT) -> PackedStringArray:
 	var out := PackedStringArray()
 	if tex == null:
@@ -34,84 +22,65 @@ static func build(tex: Texture2D, rows: int, max_cols: int = 110,
 		return out
 	img.convert(Image.FORMAT_RGBA8)
 	_key_background(img)
-	# 像素图色块太硬，直接采样会变噪点汤；先双线性放大当"柔化"，阶梯色调才会平滑
-	img.resize(img.get_width() * 3, img.get_height() * 3, Image.INTERPOLATE_BILINEAR)
 	var bb := _alpha_bbox(img)
 	if bb.size.x <= 0 or bb.size.y <= 0:
 		return out
-	# 只取上半身（胸像）：从内容顶部裁剪 BUST 比例的高度
-	# 先按比例裁出「头 + 肩」的取景框（横向居中），否则长发会把构图撑成扁的
-	var crop_h := maxi(8, int(float(bb.size.y) * BUST))
+
+	# 取景框（居中横切 + 顶部起纵向切）
 	var crop_w := maxi(8, int(float(bb.size.x) * CROP_W))
-	var crop_rect := Rect2i(Vector2i(bb.position.x + (bb.size.x - crop_w) / 2, bb.position.y),
-			Vector2i(crop_w, mini(crop_h, bb.size.y)))
-	# 裁完再算一次内容包围盒：裁切框比角色宽时，网格里会有一半空列、角色被挤到一边
-	img = img.get_region(crop_rect)
+	var crop_h := maxi(8, int(float(bb.size.y) * BUST))
+	var crop := Rect2i(
+		Vector2i(bb.position.x + (bb.size.x - crop_w) / 2, bb.position.y),
+		Vector2i(mini(crop_w, bb.size.x), mini(crop_h, bb.size.y)))
+	img = img.get_region(crop)
 	bb = _alpha_bbox(img)
 	if bb.size.x <= 0 or bb.size.y <= 0:
 		return out
-	var src_aspect := float(bb.size.x) / float(bb.size.y)
+	img = img.get_region(bb)
+
+	var src_aspect := float(img.get_width()) / float(img.get_height())
 	var cols := int(round(float(rows) * src_aspect * cell_aspect * STRETCH))
 	if cols > max_cols:
 		cols = max_cols
 		rows = maxi(4, int(round(float(cols) / (src_aspect * cell_aspect * STRETCH))))
 	cols = maxi(8, cols)
 	rows = maxi(4, rows)
-	var lums := PackedFloat32Array()
-	var covers := PackedFloat32Array()
-	lums.resize(cols * rows)
-	covers.resize(cols * rows)
+
+	# 面积平均缩放：一格 = 这块图案的平均色，不会出现采样噪点
+	img.resize(cols, rows, Image.INTERPOLATE_BILINEAR)
+
+	var lum := PackedFloat32Array()
+	var cov := PackedFloat32Array()
+	lum.resize(cols * rows)
+	cov.resize(cols * rows)
 	for r in rows:
 		for c in cols:
-			var sx0 := bb.position.x + int(float(c) / cols * bb.size.x)
-			var sx1 := maxi(sx0 + 1, bb.position.x + int(float(c + 1) / cols * bb.size.x))
-			var sy0 := bb.position.y + int(float(r) / rows * bb.size.y)
-			var sy1 := maxi(sy0 + 1, bb.position.y + int(float(r + 1) / rows * bb.size.y))
-			var lum := 0.0
-			var n := 0
-			for y in range(sy0, mini(sy1, img.get_height())):
-				for x in range(sx0, mini(sx1, img.get_width())):
-					var px := img.get_pixel(x, y)
-					if px.a < 0.35:
-						continue
-					lum += px.r * 0.299 + px.g * 0.587 + px.b * 0.114
-					n += 1
-			var idx := r * cols + c
-			covers[idx] = float(n) / float(maxi(1, (sy1 - sy0) * (sx1 - sx0)))
-			lums[idx] = lum / float(maxi(1, n))
-	# 亮度归一化（只看有像素的格子），否则深色头发会掉到最暗档
+			var px := img.get_pixel(c, r)
+			var i := r * cols + c
+			cov[i] = px.a
+			lum[i] = (px.r * 0.299 + px.g * 0.587 + px.b * 0.114) if px.a > 0.0 else 0.0
+
+	# 只在有内容的格子上归一化，深色头发才不会塌成空格
 	var lo := 1.0
 	var hi := 0.0
-	for idx in covers.size():
-		if covers[idx] < 0.12:
+	for i in cov.size():
+		if cov[i] < 0.35:
 			continue
-		lo = minf(lo, lums[idx])
-		hi = maxf(hi, lums[idx])
+		lo = minf(lo, lum[i])
+		hi = maxf(hi, lum[i])
 	var span := maxf(0.05, hi - lo)
+
 	for r in rows:
 		var line := ""
 		for c in cols:
-			var idx := r * cols + c
-			if covers[idx] < 0.12:
+			var i := r * cols + c
+			if cov[i] < 0.35:
 				line += " "
 				continue
-			# 直接用亮度（不要覆盖率混合，否则像素图的平涂色块会变成噪点汤）；
-			# gamma 提亮中间调，白围裙才会亮起来、深色头发才落到低档
-			var nv := 0.22 + 0.78 * clampf(pow(clampf(lums[idx], 0.0, 1.0), 1.15), 0.0, 1.0)
-			# 边缘检测：轮廓用最密的字符描出来，内部才按明暗填 —— 字符画能不能看清，全看这步
-			var e := 0.0
-			var dirs: Array[Vector2i] = [Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1)]
-			for d: Vector2i in dirs:
-				var nr: int = r + d.y
-				var nc: int = c + d.x
-				if nr < 0 or nr >= rows or nc < 0 or nc >= cols:
-					continue
-				var nidx: int = nr * cols + nc
-				if covers[nidx] < 0.12:
-					e = maxf(e, covers[idx])              ## 挨着背景的格子必然算轮廓
-				else:
-					e = maxf(e, absf(lums[idx] - lums[nidx]))
-			line += RAMP[clampi(int(roundf(nv * float(RAMP.length() - 1))), 0, RAMP.length() - 1)]
+			var nv := (lum[i] - lo) / span
+			nv = pow(clampf(nv, 0.0, 1.0), 1.15)      ## 略提亮中间调
+			var gi := clampi(int(roundf(nv * float(RAMP.length() - 1))), 0, RAMP.length() - 1)
+			line += RAMP[gi]
 		out.append(line.rstrip(" "))
 	return out
 
@@ -119,6 +88,8 @@ static func build(tex: Texture2D, rows: int, max_cols: int = 110,
 static func _key_background(img: Image) -> void:
 	var w := img.get_width()
 	var h := img.get_height()
+	if w < 2 or h < 2:
+		return
 	var corners: Array[Color] = [
 		img.get_pixel(0, 0), img.get_pixel(w - 1, 0),
 		img.get_pixel(0, h - 1), img.get_pixel(w - 1, h - 1)]
