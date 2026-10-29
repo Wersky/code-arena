@@ -8,8 +8,8 @@ extends Object
 const RAMP := " .:-=+*#%@"
 const CELL_ASPECT := 2.0        ## 终端字符宽:高 ≈ 1:2
 const STRETCH := 1.0            ## 横向拉伸系数
-const CROP_W := 0.86            ## 横向只取中间 55%：头发太抢画面，裁窄点让身体/手势占比更大
-const BUST := 0.78              ## 取「头 + 手势 + 上半身」高度比例（0.40 只到脸，太小）
+const CROP_W := 1.0            ## 横向只取中间 55%：头发太抢画面，裁窄点让身体/手势占比更大
+const BUST := 1.0              ## 取「头 + 手势 + 上半身」高度比例（0.40 只到脸，太小）
                                 ## 全身缩进去必然糊，胸像才够精细（参考图也是胸像）
 
 
@@ -88,7 +88,25 @@ static func build(tex: Texture2D, rows: int, max_cols: int = 110,
 			# 直接用亮度（不要覆盖率混合，否则像素图的平涂色块会变成噪点汤）；
 			# gamma 提亮中间调，白围裙才会亮起来、深色头发才落到低档
 			var nv := 0.22 + 0.78 * clampf(pow(clampf(lums[idx], 0.0, 1.0), 1.15), 0.0, 1.0)   ## 抬暗部：剪影可见、亮部仍最密
-			line += RAMP[clampi(int(roundf(nv * float(RAMP.length() - 1))), 0, RAMP.length() - 1)]
+			# 边缘检测：轮廓用最密的字符描出来，内部才按明暗填 —— 字符画能不能看清，全看这步
+			var e := 0.0
+			var dirs: Array[Vector2i] = [Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1)]
+			for d: Vector2i in dirs:
+				var nr: int = r + d.y
+				var nc: int = c + d.x
+				if nr < 0 or nr >= rows or nc < 0 or nc >= cols:
+					continue
+				var nidx: int = nr * cols + nc
+				if covers[nidx] < 0.12:
+					e = maxf(e, covers[idx])              ## 挨着背景的格子必然算轮廓
+				else:
+					e = maxf(e, absf(lums[idx] - lums[nidx]))
+			var gi := int(roundf(nv * float(RAMP.length() - 1)))
+			if e > 0.26:
+				gi = RAMP.length() - 1                    ## 轮廓：最密字符
+			elif e > 0.15:
+				gi = maxi(gi, RAMP.length() - 3)
+			line += RAMP[clampi(gi, 0, RAMP.length() - 1)]
 		out.append(line.rstrip(" "))
 	return out
 
