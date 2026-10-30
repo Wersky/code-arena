@@ -131,24 +131,12 @@ func _ready() -> void:
 #  UI 构建
 # ─────────────────────────────────────────────────────────
 func _build_ui() -> void:
-	var bg := TextureRect.new()
-	bg.texture = Art.tex("bg-arena")
+	# 沿用初始化界面的设定：背景全黑（去掉蓝色背景图、暗化层与粒子层，主人要求简洁）
+	var bg := ColorRect.new()
+	bg.color = Color(0.015, 0.02, 0.04)
 	bg.set_anchors_preset(Control.PRESET_FULL_RECT)
-	bg.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
-	bg.stretch_mode = TextureRect.STRETCH_SCALE
 	bg.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	add_child(bg)
-
-	var veil := ColorRect.new()
-	veil.color = Color(0.043, 0.055, 0.086, 0.52)
-	veil.set_anchors_preset(Control.PRESET_FULL_RECT)
-	veil.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	add_child(veil)
-
-	var fx_bg := BgFx.new()
-	fx_bg.name = "BgFx"
-	fx_bg.set_anchors_preset(Control.PRESET_FULL_RECT)
-	add_child(fx_bg)
 
 	_build_rail()
 	_build_console_area()
@@ -171,7 +159,16 @@ func _build_ui() -> void:
 func _build_rail() -> void:
 	_rail = PanelContainer.new()
 	_rail.name = "HudLeft"
-	_rail.add_theme_stylebox_override("panel", UiKit.flat(UiKit.PANEL, UiKit.LINE, 2, UiKit.PANEL_PAD))
+	# 与初始化界面同一套面板样式：暗底 + 细蓝边（不做全高侧边栏，主人要求简洁）
+	var rail_sb := StyleBoxFlat.new()
+	rail_sb.bg_color = Color(0.045, 0.06, 0.10)
+	rail_sb.border_color = Color(0.20, 0.28, 0.45)
+	rail_sb.set_border_width_all(2)
+	rail_sb.content_margin_left = 12.0
+	rail_sb.content_margin_right = 12.0
+	rail_sb.content_margin_top = 10.0
+	rail_sb.content_margin_bottom = 10.0
+	_rail.add_theme_stylebox_override("panel", rail_sb)
 	_rail.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	add_child(_rail)
 
@@ -397,11 +394,11 @@ func _layout() -> void:
 	var W := size.x
 	var H := size.y
 
-	# 左侧边栏：拉满上下（与启动界面同一套架构）
+	# 状态簇：左上角紧凑一块（沿用初始化界面的面板样式，不做全高侧边栏）
 	var rail := get_node_or_null("HudLeft") as Control
 	if rail:
-		rail.position = Vector2(0, 0)
-		rail.size = Vector2(RAIL_W, H)
+		rail.position = Vector2(24.0, 20.0)
+		rail.size = Vector2(300.0, 236.0)
 
 	# 底部对话框：整体下移放大（Agent 对话软件的样子）
 	var area := get_node_or_null("PromptArea") as Control
@@ -936,7 +933,7 @@ func _refresh_hud() -> void:
 	var ratio := clampf(float(combat.hp) / float(maxi(1, combat.max_hp)), 0.0, 1.0)
 	var avail := _hp_host.size.x
 	if avail < 4.0:
-		avail = RAIL_W - UiKit.PANEL_PAD * 2.0
+		avail = 272.0
 	_hp_fill.size = Vector2(avail * ratio, 10.0)
 	_block_label.text = "格挡 %d" % combat.block
 	_energy_label.text = "能量 %d/%d" % [combat.energy, StsCombat.ENERGY_MAX]
@@ -1035,7 +1032,7 @@ func _play_card_fx(view: StsCardView, card: StsCard, ev: Dictionary) -> void:
 		_enemy_hit_fx(int(ev.get("value", 0)))
 		SfxNode.play("hand_big")
 	else:
-		_float_text(Vector2(PAD + RAIL_W * 0.5, size.y - CARD_H - 70.0),
+		_float_text(Vector2(size.x * 0.5, size.y - CARD_H - 90.0),
 				"+%d 格挡" % int(ev.get("value", 0)), Color(0.31, 0.64, 0.88), UiKit.FS_M)
 		SfxNode.play("hand_small")
 
