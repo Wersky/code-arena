@@ -286,13 +286,16 @@ func _compose(ai_name: String, code: PackedStringArray, art: PackedStringArray) 
 		+ "Write-Host '%s' -ForegroundColor DarkGray}catch{}}\n" % IntroScript.CAPTION
 	# 乱码 → 归一：逐帧回写同一块区域，越往后越亮。最后一帧是成品。
 	ps += "$frames=@(%s)\n" % ",".join(_frame_names(chaos.size()))
+	# 每行 PadRight 到 $wmax 再打：**回写必须整块覆盖**。
+	# 不补齐的话，上一帧撒在右侧的符号、下一帧对应位置是空的 -> 只覆盖有字的位置，
+	# 空出来的格子就残留在屏幕上（实测成品右侧挂着一串乱码）。
 	ps += "if($canfade){$ci=0; foreach($fr in $frames){" \
 		+ "[Console]::SetCursorPosition(0,$top);" \
 		+ "$col='DarkGray'; if($ci -ge 2){$col='Gray'};" \
-		+ "foreach($l in $fr){ Write-Host ($sp+$l) -ForegroundColor $col };" \
+		+ "foreach($l in $fr){ Write-Host ($sp+$l.PadRight($wmax)) -ForegroundColor $col };" \
 		+ "if(Fast){break}; Start-Sleep -Milliseconds %d; $ci++}}\n" % CHAOS_STEP_MS
 	ps += "if($canfade){[Console]::SetCursorPosition(0,$top)}\n"
-	ps += "foreach($l in $art){ Write-Host ($sp+$l) -ForegroundColor White }\n"
+	ps += "foreach($l in $art){ Write-Host ($sp+$l.PadRight($wmax)) -ForegroundColor White }\n"
 	# 落定后把字幕提亮
 	# 落定后把字幕提亮（注意：GDScript 里 % 的优先级高于 +，必须先拼好再用，否则只格式化最后一段）
 	var cap_white := "Write-Host '%s' -ForegroundColor White" % IntroScript.CAPTION
