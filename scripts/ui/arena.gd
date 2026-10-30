@@ -8,7 +8,7 @@ class_name ArenaScreen
 ##   中下舞台   敌人像素形象 + 意图 + HP 条（程序化画的小怪，按关卡换色）
 ##   右上       敌人信息（名字 / HP / 意图）
 ##   右侧       AI 娘吉祥物（deepdeek 睡觉 Q 版）
-##   下方       手牌横向一排（点击打出），右下「结束回合」
+##   下方       对话框内：手牌横排（点击打出）+ 操作键行（弃牌/结束回合/发送）
 ##
 ## 纪律：本文件**不含任何战斗规则**——数值结算全在 StsCombat，
 ## 这里只把返回的事件渲染成动画和日志。
@@ -26,15 +26,14 @@ const PAD := 24.0
 const RAIL_W := 230.0
 const DIALOG_X := 240.0     ## 对话框左缘
 const DIALOG_W := 1300.0    ## 对话框宽
-const DIALOG_Y := 600.0     ## 对话框顶（底边 880）
-const DIALOG_H := 280.0
+const DIALOG_Y := 552.0     ## 对话框顶（底边 872，下方留 28 安全边）
+const DIALOG_H := 320.0     ## 手牌 226 + 分隔线 + 按钮行 56 + 内边距
 const AI_X := 1190.0        ## AI 娘左缘：对话框右端里侧（手绘稿红框位置）
 const ENEMY_W := 440.0      ## 敌人 HUD 宽
 const DISCARD_LIMIT_PER_TURN := 3   ## 每回合主动弃牌上限（弃 1 抽 1，也算 1 次）
 const CONSOLE_H := 300.0
 
 # ── 手牌横排参数 ───────────────────────────────────────
-const HAND_BOTTOM := 30.0
 const HAND_GAP := 10.0
 const HAND_MIN_GAP := -34.0
 const HOVER_LIFT := 30.0
@@ -85,6 +84,7 @@ var _enemy_shadow: ColorRect = null
 # 底部
 var _status_label: Label = null
 var _end_turn_button: Button = null
+var _dialog: PanelContainer = null   ## 底部对话框底板（手牌 + 操作按钮都放它上面）
 
 # AI 娘
 var _companion: AiCompanion = null
@@ -264,7 +264,8 @@ func _build_stage() -> void:
 	sprite_box.add_child(_enemy_sprite)
 
 
-## 底部：状态行 + 结束回合（右下）
+## 底部：手牌 + 操作按钮，全部收进一块对话框里
+## （沿用初始化界面 AgentDialog 的样子：底板 + 一行操作键；主人 2026-10-30 要求右侧那排挪下来）
 func _build_bottom() -> void:
 	var tip := VBoxContainer.new()
 	tip.name = "BottomTip"
@@ -276,32 +277,51 @@ func _build_bottom() -> void:
 	_status_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	tip.add_child(_status_label)
 
-	var side := VBoxContainer.new()
+	# 对话框底板：只当背景，不拦鼠标（手牌浮在它上面，按钮压在它下缘）
+	# 配色直接沿用初始化界面 AgentDialog，两屏看起来是同一个东西
+	_dialog = UiKit.panel_box(Color(0.055, 0.075, 0.12), Color(0.22, 0.32, 0.5), 0)
+	_dialog.name = "ActionDialog"
+	_dialog.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	add_child(_dialog)
+
+	# 按钮横排：弃牌/牌堆 …… （撑开）…… 结束回合 / 发送
+	var side := HBoxContainer.new()
 	side.name = "BottomSide"
-	side.alignment = BoxContainer.ALIGNMENT_END
+	side.alignment = BoxContainer.ALIGNMENT_CENTER
+	side.add_theme_constant_override("separation", UiKit.SP_3)
 	side.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	add_child(side)
-
-	_end_turn_button = UiKit.accent_button("结束回合", UiKit.FS_S)
-	_end_turn_button.custom_minimum_size = Vector2(320, 48)
-	_end_turn_button.pressed.connect(_on_end_turn_pressed)
-	side.add_child(_end_turn_button)
 
 	# 弃牌模式：开的时点手牌 = 弃掉（每回合不限次），弃 1 张立刻从牌堆抽 1 张
 	_discard_btn = UiKit.accent_button("弃牌模式：关", UiKit.FS_XS)
 	_discard_btn.toggle_mode = true
-	_discard_btn.custom_minimum_size = Vector2(320, 40)
+	_discard_btn.custom_minimum_size = Vector2(180, 44)
+	_discard_btn.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	_discard_btn.toggled.connect(_on_discard_toggled)
 	side.add_child(_discard_btn)
 
 	var piles := UiKit.dim("", UiKit.FS_XS)
 	piles.name = "PileCounts"
+	piles.custom_minimum_size = Vector2(104, 0)
 	piles.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	piles.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	piles.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	side.add_child(piles)
+
+	var gap := Control.new()
+	gap.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	side.add_child(gap)
+
+	_end_turn_button = UiKit.accent_button("结束回合", UiKit.FS_S)
+	_end_turn_button.custom_minimum_size = Vector2(220, 48)
+	_end_turn_button.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	_end_turn_button.pressed.connect(_on_end_turn_pressed)
+	side.add_child(_end_turn_button)
 
 	# 发送：把整手牌按 左→右 顺序一次性打出（主人 2026-10-30 改成批量出牌）
 	_send_btn = UiKit.accent_button("发 送", UiKit.FS_M)
-	_send_btn.custom_minimum_size = Vector2(320, 56)
+	_send_btn.custom_minimum_size = Vector2(240, 56)
+	_send_btn.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	_send_btn.pressed.connect(_on_send_pressed)
 	side.add_child(_send_btn)
 
@@ -366,7 +386,12 @@ func _layout() -> void:
 		rail.position = Vector2(24.0, 0.0)
 		rail.size = Vector2(232.0, H)
 
-	# 底部对话框：整体下移放大（Agent 对话软件的样子）
+	# 底部对话框：手牌与操作键都收进来（Agent 对话软件的样子）
+	var dlg := get_node_or_null("ActionDialog") as Control
+	if dlg:
+		dlg.position = Vector2(DIALOG_X, DIALOG_Y)
+		dlg.size = Vector2(DIALOG_W, DIALOG_H)
+
 	var area := get_node_or_null("PromptArea") as Control
 	if area:
 		area.position = Vector2(DIALOG_X, DIALOG_Y)
@@ -384,16 +409,16 @@ func _layout() -> void:
 		tip.position = Vector2(280.0, PAD)      ## 避开左侧栏（24..256）
 		tip.size = Vector2(660, 40)
 
-	# 结束回合：右缘、AI 娘头顶上方
+	# 操作键行：压在对话框下缘，避开右侧 AI 娘
 	var side := get_node_or_null("BottomSide") as Control
 	if side:
-		side.position = Vector2(AI_X, DIALOG_Y - 230.0)
-		side.size = Vector2(W - AI_X - PAD, 200)
+		side.position = Vector2(DIALOG_X + UiKit.SP_3, DIALOG_Y + DIALOG_H - 14.0 - 56.0)
+		side.size = Vector2(AI_X - DIALOG_X - UiKit.SP_5, 56.0)
 
 	# AI 娘：对话框右端里侧（手绘稿红框位置）
 	if _companion:
-		_companion.position = Vector2(AI_X, DIALOG_Y - 24.0)
-		_companion.size = Vector2(W - AI_X - PAD, H - (DIALOG_Y - 24.0) - 20.0)
+		_companion.position = Vector2(AI_X, H - 324.0)
+		_companion.size = Vector2(W - AI_X - PAD, 304.0)
 
 	if _overlay:
 		_overlay.position = Vector2(W * 0.5 - 280.0, H * 0.5 - 170.0)
@@ -418,7 +443,7 @@ func _layout() -> void:
 	_layout_hand(false)
 
 
-## 手牌槽位：横向一排、底边对齐
+## 手牌槽位：横排、贴在对话框上沿内侧，底边与按钮行留出间距
 func _hand_slot(i: int, n: int) -> Dictionary:
 	var left := DIALOG_X + 10.0
 	var right := AI_X - 12.0
@@ -428,7 +453,7 @@ func _hand_slot(i: int, n: int) -> Dictionary:
 		gap = clampf((avail - CARD_W * n) / float(n - 1), HAND_MIN_GAP, HAND_GAP)
 	var total := CARD_W * n + gap * float(n - 1)
 	var x := (left + right) * 0.5 - total * 0.5 + i * (CARD_W + gap)
-	return {"pos": Vector2(x, size.y - HAND_BOTTOM - CARD_H)}
+	return {"pos": Vector2(x, DIALOG_Y + 12.0)}
 
 
 func _layout_hand(animate: bool = true) -> void:
@@ -443,6 +468,10 @@ func _layout_hand(animate: bool = true) -> void:
 		if animate:
 			var tw := _hand_tween(view)
 			tw.set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_OUT)
+			tw.set_parallel(true)
+			# **必须连 scale 一起归一**：补进来的新牌是从 0.7 起手的，
+			# 只补 position 的话 scale 永远停在 0.7 —— 表现就是「点了发送牌变小」
+			tw.tween_property(view, "scale", Vector2.ONE, 0.18)
 			tw.tween_property(view, "position", target, 0.18)
 		else:
 			view.position = target
@@ -477,7 +506,7 @@ func _start_battle() -> void:
 		var ht := head.get_node_or_null("Text") as Label
 		if ht != null:
 			ht.text = "%s · %s" % [level.id, level.title]
-	_status_label.text = "%s ｜ 整理手牌后点右下「发送」，整手按 左→右 依次打出" % level.brief
+	_status_label.text = "%s ｜ 整理手牌后点下方「发送」，整手按 左→右 依次打出" % level.brief
 	_enemy_name_label.text = level.enemy_name
 
 	_rebuild_hand()
@@ -952,8 +981,8 @@ func _on_card_clicked(view: StsCardView) -> void:
 			_refresh_playable()
 			_busy = false
 		return
-	# 点牌不再单张出牌：整理手牌（弃牌）后点右下角「发送」整手打出
-	_status_label.text = "点右下角「发送」把整手牌按 左→右 依次打出；想调整顺序用弃牌模式。"
+	# 点牌不再单张出牌：整理手牌（弃牌）后点下方「发送」整手打出
+	_status_label.text = "点下方「发送」把整手牌按 左→右 依次打出；想调整顺序用弃牌模式。"
 
 
 ## 发送：整手牌按 **从左到右** 的顺序一张张打出，每张往对话框左侧弹出
@@ -1329,6 +1358,11 @@ func debug_end_turn() -> void:
 
 func debug_hand_count() -> int:
 	return _hand_views.size()
+
+
+## 手牌首张的缩放（验收「发送后牌变小」用）
+func debug_hand_scale() -> float:
+	return _hand_views[0].scale.x if not _hand_views.is_empty() else -1.0
 
 
 

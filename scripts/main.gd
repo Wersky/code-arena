@@ -211,7 +211,7 @@ func _maybe_capture() -> void:
 		return
 	if screen in ["menu", "arena", "battle", "intro", "reward", "result",
 			"menuhover", "rig", "rigwalk", "loadrun", "card", "cardtext", "cardcost", "terminal", "termgif",
-			"termdump", "hero", "stairs", "launch", "launch2", "arenalayout"]:
+			"termdump", "hero", "stairs", "launch", "launch2", "arenalayout", "sendtest"]:
 		run.reset_run()
 		if screen == "launch" or screen == "launch2":
 			var sc := _current as LaunchScreen
@@ -248,6 +248,25 @@ func _maybe_capture() -> void:
 		if screen == "loadrun":
 			# 演示：进入游戏进度条 + Q 版角色跟着填充边缘跑 → .tmp/loadrun/ PNG 序列
 			await _capture_loadrun(out_path)
+			return
+		if screen == "sendtest":
+			# 验收「点发送后手牌尺寸」：打一整手 → 补牌 → 再截图，牌应与开局同样大
+			_show_ai_select()
+			if _current != null:
+				_current.queue_free()
+				_current = null
+			_show_level(_levels[0])
+			await get_tree().create_timer(1.2).timeout
+			var ar := _current as ArenaScreen
+			if ar != null:
+				ar._on_send_pressed()
+				await get_tree().create_timer(2.4).timeout
+				var sc0 := ar.debug_hand_scale()
+				print("[shot=sendtest] 补牌后首张 scale=%s 手牌=%d" % [
+					str(sc0), ar.debug_hand_count()])
+			_shot(out_path)
+			print("[shot=sendtest] 已存 → %s" % out_path)
+			get_tree().quit()
 			return
 		if screen == "aiselect" or screen == "arenalayout":
 			# arenalayout：验收战斗区新布局（侧边栏拉满 + 底部对话框 + AI 娘右端）
