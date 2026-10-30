@@ -109,7 +109,7 @@ func can_play(card: StsCard) -> bool:
 
 
 ## 打一张牌。返回事件字典（UI 拿去播动画 / 打日志）。
-func play_card(card: StsCard) -> Dictionary:
+func play_card(card: StsCard, auto_refill: bool = true) -> Dictionary:
 	var ev := {"ok": false, "card": card, "kind": "", "value": 0, "to_enemy": false}
 	if not can_play(card):
 		ev["reason"] = "按顺序出牌：先打最左边那张" if hand.has(card) else "不在手牌"
@@ -123,7 +123,8 @@ func play_card(card: StsCard) -> Dictionary:
 	else:
 		block += card.block
 		ev.merge({"ok": true, "kind": "defend", "value": card.block, "to_enemy": false}, true)
-	_refill()                   ## 手牌打空 → 立刻从弃牌堆随机补
+	if auto_refill:
+		_refill()               ## 单张出牌：打空立刻从弃牌堆随机补
 	if enemy_hp <= 0:
 		over = Result.WIN
 	return ev
@@ -149,6 +150,11 @@ func _refill() -> void:
 		var idx := rng.randi_range(0, discard_pile.size() - 1)
 		hand.append(discard_pile[idx])
 		discard_pile.remove_at(idx)
+
+
+## 整手打出后由 UI 调一次补牌（批量出牌时中途不补，避免永远打不完）
+func refill_hand() -> void:
+	_refill()
 
 
 ## 该角色每轮回补几张（因角色而异，主人钦定 DeepSeek 3 张）

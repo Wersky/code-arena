@@ -90,6 +90,7 @@ var _end_turn_button: Button = null
 var _companion: AiCompanion = null
 var _discard_mode := false
 var _discard_btn: Button = null
+var _send_btn: Button = null
 var _discards_left := DISCARD_LIMIT_PER_TURN
 
 # 特效层
@@ -298,6 +299,12 @@ func _build_bottom() -> void:
 	piles.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	side.add_child(piles)
 
+	# 发送：把整手牌按 左→右 顺序一次性打出（主人 2026-10-30 改成批量出牌）
+	_send_btn = UiKit.accent_button("发 送", UiKit.FS_M)
+	_send_btn.custom_minimum_size = Vector2(320, 56)
+	_send_btn.pressed.connect(_on_send_pressed)
+	side.add_child(_send_btn)
+
 
 func _build_companion() -> void:
 	_companion = AiCompanion.new()
@@ -374,14 +381,14 @@ func _layout() -> void:
 	# 状态提示：战斗画面左上
 	var tip := get_node_or_null("BottomTip") as Control
 	if tip:
-		tip.position = Vector2(DIALOG_X, PAD)
-		tip.size = Vector2(620, 40)
+		tip.position = Vector2(280.0, PAD)      ## 避开左侧栏（24..256）
+		tip.size = Vector2(660, 40)
 
 	# 结束回合：右缘、AI 娘头顶上方
 	var side := get_node_or_null("BottomSide") as Control
 	if side:
-		side.position = Vector2(AI_X, DIALOG_Y - 130.0)
-		side.size = Vector2(W - AI_X - PAD, 90)
+		side.position = Vector2(AI_X, DIALOG_Y - 230.0)
+		side.size = Vector2(W - AI_X - PAD, 200)
 
 	# AI 娘：对话框右端里侧（手绘稿红框位置）
 	if _companion:
@@ -470,7 +477,7 @@ func _start_battle() -> void:
 		var ht := head.get_node_or_null("Text") as Label
 		if ht != null:
 			ht.text = "%s · %s" % [level.id, level.title]
-	_status_label.text = level.brief
+	_status_label.text = "%s ｜ 整理手牌后点右下「发送」，整手按 左→右 依次打出" % level.brief
 	_enemy_name_label.text = level.enemy_name
 
 	_rebuild_hand()
@@ -945,34 +952,82 @@ func _on_card_clicked(view: StsCardView) -> void:
 			_refresh_playable()
 			_busy = false
 		return
-	if not combat.can_play(card):
-		if combat.hand.has(card):
-			_status_label.text = "按顺序出牌：先打最左边那张。"
+	# 点牌不再单张出牌：整理手牌（弃牌）后点右下角「发送」整手打出
+	_status_label.text = "点右下角「发送」把整手牌按 左→右 依次打出；想调整顺序用弃牌模式。"
+
+
+## 发送：整手牌按 **从左到右** 的顺序一张张打出，每张往对话框左侧弹出
+func _on_send_pressed() -> void:
+	if _busy or _overlay.visible or combat == null:
+		return
+	if _discard_mode:
+		_status_label.text = "先关掉弃牌模式再发送。"
+		return
+	if combat.hand.is_empty():
+		_status_label.text = "手牌是空的，等补牌或结束回合。"
 		return
 	_busy = true
-	view.flash()
-	SfxNode.play("card_select")
-	var ev := combat.play_card(card)
-	# 从视图层移除这张牌
-	for i in range(_hand_views.size() - 1, -1, -1):
-		if _hand_views[i] == view:
-			_hand_views.remove_at(i)
+	_send_btn.disabled = true
+	_end_turn_button.disabled = true
+	var order := 0
+	# hand[0] 就是最左那张：一张张打出，打完才补（play_card 传 auto_refill=false，
+	# 否则中途一打空就补，永远打不完）
+	while not combat.hand.is_empty() and combat.over == StsCombat.Result.RUNNING:
+		var card := combat.hand[0]
+		var view := _view_of(card)
+		if view != null:
+			_hand_views.erase(view)     ## 先移出队列，剩下的牌才能补位
+		var ev := combat.play_card(card, false)
+		if not bool(ev.get("ok", false)):
 			break
+		order += 1
+		_layout_hand(true)
+		# 数值反馈：攻击 → 敌人闪红飘伤害；防御 → 格挡飘字
+		if String(ev.get("kind", "")) == "attack":
+			_enemy_hit_fx(int(ev.get("value", 0)))
+			SfxNode.play("hand_big")
+		else:
+			_float_text(Vector2(size.x * 0.5, size.y - CARD_H - 90.0),
+					"+%d 格挡" % int(ev.get("value", 0)), Color(0.31, 0.64, 0.88), UiKit.FS_M)
+			SfxNode.play("hand_small")
+		if view != null:
+			if _fx_enabled:
+				await _send_card_fx(view)
+			view.queue_free()
+		_refresh_playable()
 
-	if _fx_enabled:
-		await _play_card_fx(view, card, ev)
-	view.queue_free()
-
+	combat.refill_hand()        ## 整手打完，才从弃牌堆随机补 N 张
 	_refresh_hud()
-	_sync_hand_views()      ## 补进来的新牌建视图 + 从对话框左侧滑入
+	_sync_hand_views()
 	_refresh_playable()
-
+	_send_btn.disabled = false
+	_end_turn_button.disabled = false
 
 	if combat.over == StsCombat.Result.WIN:
 		await get_tree().create_timer(0.5).timeout
 		_finish_battle(true)
 		return
 	_busy = false
+
+
+## 发送动画：这张牌往**对话框左侧**弹出去并淡出
+func _send_card_fx(view: StsCardView) -> void:
+	var tw := view.create_tween()
+	tw.set_parallel(true)
+	tw.tween_property(view, "position",
+			Vector2(DIALOG_X - CARD_W * 0.9, view.position.y - 18.0), 0.24) \
+			.set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_IN)
+	tw.tween_property(view, "rotation", -0.24, 0.24)
+	tw.tween_property(view, "scale", Vector2(0.8, 0.8), 0.24)
+	tw.tween_property(view, "modulate:a", 0.0, 0.22)
+	await tw.finished
+
+
+func _view_of(card: StsCard) -> StsCardView:
+	for v in _hand_views:
+		if v != null and v.card == card:
+			return v
+	return null
 
 
 ## 手牌视图与 combat.hand 对齐：
@@ -1022,31 +1077,6 @@ func _on_discard_toggled(on: bool) -> void:
 	_update_discard_btn()
 	_status_label.text = ("弃牌模式开启：点手牌弃掉，弃 1 张从牌堆抽 1 张（本回合剩 %d 次）。"
 			% _discards_left) if on else "弃牌模式关闭。"
-
-
-## 出牌动画：攻击 → 牌飞向敌人 + 敌人闪红震屏 + 伤害飘字；防御 → 牌飞向左下 + 格挡飘字
-func _play_card_fx(view: StsCardView, card: StsCard, ev: Dictionary) -> void:
-	var is_attack := String(ev.get("kind", "")) == "attack"
-	var dest: Vector2
-	if is_attack:
-		dest = _enemy_root.position + _enemy_root.size * 0.5 - Vector2(CARD_W, CARD_H) * 0.35
-	else:
-		dest = Vector2(DIALOG_X + 60.0, size.y - 140.0)
-	var tw := view.create_tween()
-	tw.set_parallel(true)
-	tw.tween_property(view, "position", dest, 0.22) \
-		.set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_IN)
-	tw.tween_property(view, "scale", Vector2(0.6, 0.6), 0.22)
-	tw.tween_property(view, "modulate:a", 0.0, 0.20).set_delay(0.08)
-	await tw.finished
-
-	if is_attack:
-		_enemy_hit_fx(int(ev.get("value", 0)))
-		SfxNode.play("hand_big")
-	else:
-		_float_text(Vector2(size.x * 0.5, size.y - CARD_H - 90.0),
-				"+%d 格挡" % int(ev.get("value", 0)), Color(0.31, 0.64, 0.88), UiKit.FS_M)
-		SfxNode.play("hand_small")
 
 
 ## 敌人受击：闪红 + 抖动 + 头顶飘伤害数字
@@ -1279,12 +1309,11 @@ func _rect(img: Image, x: int, y: int, w: int, h: int, col: Color,
 #  测试钩子
 # ─────────────────────────────────────────────────────────
 func debug_play_card(index: int) -> bool:
-	if index < 0 or index >= _hand_views.size():
+	## 出牌方式改成「整手发送」后，这个钩子直接触发一次发送
+	if combat == null or combat.hand.is_empty():
 		return false
-	var v := _hand_views[index]
-	var before := combat.hand.size()
-	_on_card_clicked(v)
-	return combat.hand.size() < before
+	_on_send_pressed()
+	return true
 
 
 func debug_play_card_id(card_id: String) -> bool:

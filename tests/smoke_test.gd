@@ -234,7 +234,7 @@ func _test_battle_flow(win_expected: bool) -> void:
 		if int(st.get("over", 0)) != 0:
 			continue
 		# 新规则：无能量、按顺序出牌、无张数限制 —— 手牌有牌就一直打最左那张
-		if win_expected and arena.debug_hand_count() > 0:
+		if win_expected and int(st.get("hand", 0)) > 0:
 			arena.debug_play_card(0)
 		elif not win_expected:
 			# 挨打局：直接结束回合
