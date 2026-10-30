@@ -113,6 +113,8 @@ func setup(run_state: RunState, lv: LevelData) -> void:
 
 
 func _ready() -> void:
+	# 战斗曲（68.6s 循环，SfxNode 内部已强制 loop）
+	SfxNode.music("bgm_main")
 	_build_ui()
 	resized.connect(_layout)
 	await get_tree().process_frame

@@ -56,6 +56,11 @@ static func stop_music() -> void:
 		I._music_stop()
 
 
+## 当前 BGM 名（自检用：确认哪一段在放哪首）
+static func current_music() -> String:
+	return I._music_name if I != null else ""
+
+
 static func set_music_volume_db(db: float) -> void:
 	if I != null:
 		I._music_volume_db = db

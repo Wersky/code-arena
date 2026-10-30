@@ -33,6 +33,8 @@ var _expanded := false
 
 
 func _ready() -> void:
+	# BGM：旧主菜单是唯一的播放入口，换成启动界面后这里必须接上，否则全局静音
+	SfxNode.music("bgm_gemini2")
 	var bg := ColorRect.new()
 	bg.color = Color(0.015, 0.02, 0.04)
 	bg.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)

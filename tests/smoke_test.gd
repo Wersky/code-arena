@@ -156,6 +156,13 @@ func _test_ui() -> void:
 	run.set_ai(AiPool.get_ai("deepdeek"))
 	_eq(run.deck.size(), 5, "开局卡组 5 张")
 
+	# 启动界面接手了旧主菜单的 BGM 播放入口，先确认它真的在放
+	var launch := LaunchScreen.new()
+	_host.add_child(launch)
+	await process_frame
+	_eq(SfxNode.current_music(), "bgm_gemini2", "启动界面 BGM 已开")
+	launch.queue_free()
+
 	var arena := ArenaScreen.new()
 	arena.setup(run, LevelPool.get_level("L1"))
 	_host.add_child(arena)
@@ -163,6 +170,7 @@ func _test_ui() -> void:
 	await process_frame
 
 	_check(arena.get_node_or_null("HudLeft") != null, "左侧玩家栏已构建")
+	_eq(SfxNode.current_music(), "bgm_main", "战斗 BGM 已切到 bgm_main")
 	_check(arena.get_node_or_null("HudRight") != null, "右上敌人栏已构建")
 	_check(arena.get_node_or_null("EnemyStage") != null, "敌人舞台已构建")
 	_check(arena.get_node_or_null("Overlay") != null, "结算弹窗已构建")
