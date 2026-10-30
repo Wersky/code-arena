@@ -59,7 +59,6 @@ var run: RunState = null
 var level: LevelData = null
 var combat: StsCombat = null
 
-var _console: PromptConsole = null
 var _card_layer: Control = null
 var _hand_views: Array[StsCardView] = []
 var _busy: bool = false
@@ -68,14 +67,6 @@ var _hovered: StsCardView = null
 # 左侧竖栏（玩家状态）
 var _rail: PanelContainer = null
 var _rail_box: VBoxContainer = null
-var _brief_label: Label = null
-var _hp_label: Label = null
-var _hp_fill: ColorRect = null
-var _hp_host: Control = null
-var _block_label: Label = null
-var _energy_label: Label = null
-var _piles_label: Label = null
-var _turn_label: Label = null
 
 # 右上敌人 HUD
 var _enemy_name_label: Label = null
@@ -96,6 +87,8 @@ var _end_turn_button: Button = null
 
 # AI 娘
 var _companion: AiCompanion = null
+var _discard_mode := false
+var _discard_btn: Button = null
 
 # 特效层
 var _fx_enabled := true
@@ -110,8 +103,6 @@ var _overlay_body: Label = null
 
 func _init() -> void:
 	set_anchors_preset(Control.PRESET_FULL_RECT)
-	_console = PromptConsole.new()
-	_console.name = "PromptConsole"
 
 
 func setup(run_state: RunState, lv: LevelData) -> void:
@@ -139,7 +130,6 @@ func _build_ui() -> void:
 	add_child(bg)
 
 	_build_rail()
-	_build_console_area()
 	_build_right_hud()
 	_build_stage()
 	_build_bottom()
@@ -159,80 +149,38 @@ func _build_ui() -> void:
 func _build_rail() -> void:
 	_rail = PanelContainer.new()
 	_rail.name = "HudLeft"
-	# 与初始化界面同一套面板样式：暗底 + 细蓝边（不做全高侧边栏，主人要求简洁）
+	# 沿用初始化界面的侧边栏：暗底 + 细蓝边，内容是当前模型的技能与 MCP
 	var rail_sb := StyleBoxFlat.new()
 	rail_sb.bg_color = Color(0.045, 0.06, 0.10)
 	rail_sb.border_color = Color(0.20, 0.28, 0.45)
 	rail_sb.set_border_width_all(2)
-	rail_sb.content_margin_left = 12.0
-	rail_sb.content_margin_right = 12.0
-	rail_sb.content_margin_top = 10.0
-	rail_sb.content_margin_bottom = 10.0
+	rail_sb.content_margin_left = 14.0
+	rail_sb.content_margin_right = 14.0
+	rail_sb.content_margin_top = 14.0
+	rail_sb.content_margin_bottom = 14.0
 	_rail.add_theme_stylebox_override("panel", rail_sb)
 	_rail.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	add_child(_rail)
 
 	_rail_box = VBoxContainer.new()
 	_rail_box.name = "RailBox"
-	_rail_box.add_theme_constant_override("separation", UiKit.SP_2)
+	_rail_box.add_theme_constant_override("separation", 8)
 	_rail_box.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_rail.add_child(_rail_box)
 
-	var head := UiKit.title_bar("L1 · 战斗", 0.0, HORIZONTAL_ALIGNMENT_LEFT, UiKit.TEXT)
-	head.name = "RailTitle"
-	_rail_box.add_child(head)
-
-	_brief_label = UiKit.dim("", UiKit.FS_XS)
-	_brief_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	_rail_box.add_child(_brief_label)
-
+	var ai_name := run.ai.display_name if run.ai != null else "AI"
+	_rail_box.add_child(UiKit.title_bar(ai_name, 0.0, HORIZONTAL_ALIGNMENT_LEFT, UiKit.TEXT))
 	_rail_box.add_child(UiKit.rule())
 
-	_hp_label = UiKit.label("HP 80/80", UiKit.FS_S, Color(0.95, 0.35, 0.4))
-	_rail_box.add_child(_hp_label)
-
-	_hp_host = Control.new()
-	_hp_host.custom_minimum_size = Vector2(0, 10)
-	_hp_host.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	_rail_box.add_child(_hp_host)
-	var hp_bg := ColorRect.new()
-	hp_bg.color = UiKit.LINE.darkened(0.45)
-	hp_bg.set_anchors_preset(Control.PRESET_FULL_RECT)
-	hp_bg.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	_hp_host.add_child(hp_bg)
-	_hp_fill = ColorRect.new()
-	_hp_fill.color = Color(0.86, 0.28, 0.34)
-	_hp_fill.size = Vector2(0, 10)
-	_hp_fill.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	_hp_host.add_child(_hp_fill)
-
-	_block_label = UiKit.label("格挡 0", UiKit.FS_XS, Color(0.31, 0.64, 0.88))
-	_rail_box.add_child(_block_label)
-
-	_energy_label = UiKit.label("能量 3/3", UiKit.FS_M, Color(0.31, 0.76, 0.97))
-	_rail_box.add_child(_energy_label)
+	_rail_box.add_child(UiKit.label("▸ 技能", UiKit.FS_S, Color(0.6, 0.85, 1.0)))
+	if run.ai != null:
+		for sk in run.ai.taste_rules:
+			_rail_box.add_child(UiKit.dim("  · " + sk, UiKit.FS_XS))
 
 	_rail_box.add_child(UiKit.rule())
-
-	_piles_label = UiKit.dim("抽牌堆 0 ｜ 弃牌堆 0", UiKit.FS_XS)
-	_rail_box.add_child(_piles_label)
-	_turn_label = UiKit.dim("回合 1", UiKit.FS_XS)
-	_rail_box.add_child(_turn_label)
-
-	_rail_box.add_child(UiKit.rule())
-	var tip := UiKit.dim("点手牌打出 ｜ 右下结束回合\n能量每回合回满，格挡开回合清零。", UiKit.FS_XS)
-	tip.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	_rail_box.add_child(tip)
-
-
-## 中上方：BAT 控制台（战斗日志）
-func _build_console_area() -> void:
-	var area := Control.new()
-	area.name = "PromptArea"
-	area.mouse_filter = Control.MOUSE_FILTER_PASS
-	add_child(area)
-	_console.set_anchors_preset(Control.PRESET_FULL_RECT)
-	area.add_child(_console)
+	_rail_box.add_child(UiKit.label("▸ MCP", UiKit.FS_S, Color(0.6, 0.85, 1.0)))
+	for item in LaunchScreen.MCP_ITEMS:
+		_rail_box.add_child(UiKit.dim("  · " + item, UiKit.FS_XS))
 
 
 ## 右上敌人 HUD
@@ -334,6 +282,13 @@ func _build_bottom() -> void:
 	_end_turn_button.pressed.connect(_on_end_turn_pressed)
 	side.add_child(_end_turn_button)
 
+	# 弃牌模式：开的时点手牌 = 弃掉（每回合不限次），弃 1 张立刻从牌堆抽 1 张
+	_discard_btn = UiKit.accent_button("弃牌模式：关", UiKit.FS_XS)
+	_discard_btn.toggle_mode = true
+	_discard_btn.custom_minimum_size = Vector2(320, 40)
+	_discard_btn.toggled.connect(_on_discard_toggled)
+	side.add_child(_discard_btn)
+
 	var piles := UiKit.dim("", UiKit.FS_XS)
 	piles.name = "PileCounts"
 	piles.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
@@ -394,11 +349,11 @@ func _layout() -> void:
 	var W := size.x
 	var H := size.y
 
-	# 状态簇：左上角紧凑一块（沿用初始化界面的面板样式，不做全高侧边栏）
+	# 侧边栏：沿用初始化设定，拉满上下
 	var rail := get_node_or_null("HudLeft") as Control
 	if rail:
-		rail.position = Vector2(24.0, 20.0)
-		rail.size = Vector2(300.0, 236.0)
+		rail.position = Vector2(24.0, 0.0)
+		rail.size = Vector2(232.0, H)
 
 	# 底部对话框：整体下移放大（Agent 对话软件的样子）
 	var area := get_node_or_null("PromptArea") as Control
@@ -498,12 +453,7 @@ func _hand_tween(view: StsCardView) -> Tween:
 # ─────────────────────────────────────────────────────────
 func _start_battle() -> void:
 	combat = run.start_battle(level)
-	_console.set_prefix(_prefix())
-	_console.clear()
-	_console.append_line("%s · %s · %s" % [_prefix(), level.id, level.title], PromptConsole.DOS_GRAY)
-	_console.append_line("遭遇【%s】！HP %d ｜ 攻 %d 防 %d" % [
-		level.enemy_name, level.enemy_hp, level.enemy_atk, level.enemy_def], PromptConsole.DOS_GRAY)
-	_console.append_line("点手牌出招（能量每回合回满）。", PromptConsole.DOS_GRAY)
+	combat.set_refill(StsCombat.refill_for(run.ai.id))
 
 	if _enemy_sprite:
 		_enemy_sprite.texture = _enemy_texture(level.enemy_tint, level.is_boss)
@@ -516,7 +466,7 @@ func _start_battle() -> void:
 		var ht := head.get_node_or_null("Text") as Label
 		if ht != null:
 			ht.text = "%s · %s" % [level.id, level.title]
-	_brief_label.text = level.brief
+	_status_label.text = level.brief
 	_enemy_name_label.text = level.enemy_name
 
 	_rebuild_hand()
@@ -929,17 +879,6 @@ func _refresh_playable() -> void:
 func _refresh_hud() -> void:
 	if combat == null:
 		return
-	_hp_label.text = "HP %d/%d" % [combat.hp, combat.max_hp]
-	var ratio := clampf(float(combat.hp) / float(maxi(1, combat.max_hp)), 0.0, 1.0)
-	var avail := _hp_host.size.x
-	if avail < 4.0:
-		avail = 272.0
-	_hp_fill.size = Vector2(avail * ratio, 10.0)
-	_block_label.text = "格挡 %d" % combat.block
-	_energy_label.text = "能量 %d/%d" % [combat.energy, StsCombat.ENERGY_MAX]
-	_piles_label.text = "抽牌堆 %d ｜ 弃牌堆 %d" % [combat.draw_pile.size(), combat.discard_pile.size()]
-	_turn_label.text = "回合 %d" % combat.turn
-
 	_enemy_hp_label.text = "HP %d/%d" % [combat.enemy_hp, combat.enemy_max_hp]
 	var er := clampf(float(combat.enemy_hp) / float(maxi(1, combat.enemy_max_hp)), 0.0, 1.0)
 	_enemy_fill.size = Vector2(ENEMY_W * er, 10.0)
@@ -971,16 +910,23 @@ func _on_card_clicked(view: StsCardView) -> void:
 	if _busy or _overlay.visible or combat == null:
 		return
 	var card := view.card
-	if card == null or not combat.can_play(card):
-		if card != null and combat.hand.has(card):
-			_status_label.text = "能量不够啦，先结束回合吧。"
+	if card == null:
+		return
+	# 弃牌模式：点谁弃谁，弃 1 抽 1（从牌堆）
+	if _discard_mode:
+		if combat.discard_card(card):
+			_float_text(view.position + Vector2(CARD_W * 0.5, 0.0),
+					"弃", Color(1.0, 0.75, 0.4), UiKit.FS_M)
+			_rebuild_hand()
+			_refresh_playable()
+		return
+	if not combat.can_play(card):
+		if combat.hand.has(card):
+			_status_label.text = "按顺序出牌：先打最左边那张。"
 		return
 	_busy = true
 	view.flash()
 	SfxNode.play("card_select")
-	_console.finish_all()
-	_console.type_in(StsCardPool.card_name(card.id))
-
 	var ev := combat.play_card(card)
 	# 从视图层移除这张牌
 	for i in range(_hand_views.size() - 1, -1, -1):
@@ -996,20 +942,20 @@ func _on_card_clicked(view: StsCardView) -> void:
 	_layout_hand(true)
 	_refresh_playable()
 
-	if bool(ev.get("ok", false)):
-		if String(ev.get("kind", "")) == "attack":
-			_console.append_line("→ %s！%s 受到 %d 点伤害（剩余 %d）" % [
-				StsCardPool.card_name(card.id), level.enemy_name,
-				int(ev.get("value", 0)), combat.enemy_hp], PromptConsole.DOS_AMBER)
-		else:
-			_console.append_line("→ %s！获得 %d 点格挡" % [
-				StsCardPool.card_name(card.id), int(ev.get("value", 0))], PromptConsole.DOS_CYAN)
 
 	if combat.over == StsCombat.Result.WIN:
 		await get_tree().create_timer(0.5).timeout
 		_finish_battle(true)
 		return
 	_busy = false
+
+
+## 弃牌模式开关
+func _on_discard_toggled(on: bool) -> void:
+	_discard_mode = on
+	_discard_btn.text = "弃牌模式：开（点手牌弃掉，抽 1 补 1）" if on else "弃牌模式：关"
+	_status_label.text = "弃牌模式开启：点手牌弃掉，每弃 1 张从牌堆抽 1 张。" if on \
+			else "弃牌模式关闭。"
 
 
 ## 出牌动画：攻击 → 牌飞向敌人 + 敌人闪红震屏 + 伤害飘字；防御 → 牌飞向左下 + 格挡飘字
@@ -1067,9 +1013,6 @@ func _on_end_turn_pressed() -> void:
 		return
 	_busy = true
 	_end_turn_button.disabled = true
-	_console.finish_all()
-	_console.append_line("— 结束回合 —", PromptConsole.DOS_GRAY)
-
 	if _fx_enabled:
 		await get_tree().create_timer(0.25).timeout
 
@@ -1080,13 +1023,7 @@ func _on_end_turn_pressed() -> void:
 			if _fx_enabled:
 				await _enemy_attack_fx(int(e.get("value", 0)), int(e.get("dealt", 0)),
 						int(e.get("blocked", 0)))
-			_console.append_line("← %s 攻击 %d！%s" % [
-				level.enemy_name, int(e.get("value", 0)),
-				"被格挡吸收" if int(e.get("dealt", 0)) <= 0 else "掉血 %d（HP %d）" % [
-					int(e.get("dealt", 0)), combat.hp]], PromptConsole.DOS_RED)
 		elif kind == "enemy_defend":
-			_console.append_line("← %s 蓄力防御，格挡 +%d" % [
-				level.enemy_name, int(e.get("value", 0))], PromptConsole.DOS_CYAN)
 			if _fx_enabled:
 				_float_text(_enemy_root.position + Vector2(_enemy_root.size.x * 0.5, 44.0),
 						"+%d 防" % int(e.get("value", 0)), Color(0.31, 0.64, 0.88), UiKit.FS_M)
@@ -1297,8 +1234,6 @@ func debug_hand_count() -> int:
 	return _hand_views.size()
 
 
-func debug_energy() -> int:
-	return combat.energy if combat != null else -1
 
 
 func debug_combat_state() -> Dictionary:
@@ -1307,7 +1242,7 @@ func debug_combat_state() -> Dictionary:
 	return {
 		"hp": combat.hp, "block": combat.block,
 		"enemy_hp": combat.enemy_hp, "enemy_block": combat.enemy_block,
-		"energy": combat.energy, "turn": combat.turn,
+		"turn": combat.turn,
 		"over": combat.over, "hand": combat.hand.size(),
 		"draw": combat.draw_pile.size(), "discard": combat.discard_pile.size(),
 	}
@@ -1326,4 +1261,4 @@ func debug_status_text() -> String:
 
 
 func debug_console_log() -> String:
-	return _console.get_log() if _console != null else ""
+	return ""

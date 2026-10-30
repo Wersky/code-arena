@@ -88,66 +88,54 @@ func _test_sts_combat() -> void:
 	cb.setup(StsCardPool.starter_deck(), "幻觉幼虫", 40,
 			[{"kind": "attack", "value": 7}, {"kind": "defend", "value": 4},
 			 {"kind": "attack", "value": 7}], 80, 424242)
-	_eq(cb.hand.size(), 5, "开局抽 5 张")
-	_eq(cb.energy, 3, "开局能量 3")
+	_eq(cb.hand.size(), 3, "开局抽 3 张（DeepSeek 补牌数）")
 	_eq(cb.turn, 1, "开局回合 1")
 
-	# 数一张攻击一张防御在手（3+2 起手必有）
-	var ram: StsCard = null
-	var taunt: StsCard = null
-	for c in cb.hand:
-		if ram == null and c.kind == StsCard.Kind.ATTACK:
-			ram = c
-		elif taunt == null and c.kind == StsCard.Kind.SKILL:
-			taunt = c
-	_check(ram != null and taunt != null, "起手同时有攻击与防御")
+	# 按顺序出牌：只有最左一张能打
+	_check(cb.can_play(cb.hand[0]), "最左一张可打")
+	if cb.hand.size() > 1:
+		_check(not cb.can_play(cb.hand[1]), "第二张不能跳着打")
 
-	var ev := cb.play_card(ram)
-	_check(bool(ev["ok"]) and int(ev["value"]) == 6, "肥鱼铁头撞造成 6 伤")
-	_eq(cb.enemy_hp, 34, "敌人 40 → 34")
-	_eq(cb.energy, 2, "能量 3 → 2")
-	_eq(cb.discard_pile.size(), 1, "出过的牌进弃牌堆")
-
-	ev = cb.play_card(taunt)
-	_check(bool(ev["ok"]) and int(ev["value"]) == 5, "来打我呀！获得 5 格挡")
-	_eq(cb.block, 5, "格挡 = 5")
-
-	# 能量耗尽 → 打不了
-	var any_playable := false
-	for c in cb.hand:
-		if cb.can_play(c):
-			any_playable = true
-	_check(cb.energy == 1, "能量还剩 1")
-	# 确定性地用一张攻击牌把能量打空（别用 hand[0]——可能是防御牌，会抬高格挡）
-	for c in cb.hand:
-		if c.kind == StsCard.Kind.ATTACK:
-			cb.play_card(c)
-			break
-	_eq(cb.energy, 0, "能量打空")
-	_check(not cb.can_play(cb.hand[0]), "能量 0 时不能出牌")
-
-	# 结束回合：敌人攻击 7，被格挡 5 吸收 → 掉血 2
-	var events := cb.end_turn()
-	_eq(cb.hp, 78, "敌人攻 7 - 格挡 5 = 掉血 2（HP 78）")
-	_eq(cb.block, 0, "新回合格挡清零")
-	_eq(cb.energy, 3, "新回合能量回满")
-	_eq(cb.hand.size(), 5, "新回合抽满 5 张")
-	_check(events.size() >= 2, "结束回合返回敌人行动 + 新回合事件")
-	_eq(cb.turn, 2, "回合推进到 2")
-
-	# 牌堆守恒（5 张卡组的循环）
+	# 按顺序把 3 张全打出去（无出牌数量限制）：打空后自动从弃牌堆随机补 3
+	for i in 3:
+		_check(cb.can_play(cb.hand[0]), "第 %d 张：最左可打" % (i + 1))
+		var e1 := cb.play_card(cb.hand[0])
+		_check(bool(e1.get("ok", false)), "第 %d 张按顺序打出" % (i + 1))
+	_eq(cb.hand.size(), 3, "手牌打空后自动从弃牌堆随机补 3 张")
+	_eq(cb.discard_pile.size(), 0, "补牌从弃牌堆抽走")
 	_eq(cb.draw_pile.size() + cb.discard_pile.size() + cb.hand.size(), 5,
 			"牌堆守恒：抽 + 弃 + 手 = 5")
+	_check(cb.can_play(cb.hand[0]), "补牌后最左一张可打")
 
-	# 打死敌人 → WIN
+	# 弃牌：弃 1 张立刻从牌堆抽 1 张，手牌数不变
+	var before := cb.hand.size()
+	_check(cb.discard_card(cb.hand[0]), "弃牌成功")
+	_eq(cb.hand.size(), before, "弃 1 抽 1，手牌数不变")
+	_eq(cb.draw_pile.size() + cb.discard_pile.size() + cb.hand.size(), 5, "弃牌后守恒")
+
+	# 结束回合：敌人行动 + 回合推进
+	var events := cb.end_turn()
+	_eq(cb.block, 0, "新回合格挡清零")
+	_check(cb.hand.size() >= 1, "新回合手牌有牌（弃牌堆随机补）")
+	_check(events.size() >= 1, "结束回合返回敌人行动事件")
+	_eq(cb.turn, 2, "回合推进到 2")
+	_eq(cb.draw_pile.size() + cb.discard_pile.size() + cb.hand.size(), 5, "新回合守恒")
+
+	# 连打：攻击/防御两种牌都会轮到，打死敌人
+	var saw_attack := false
+	var saw_skill := false
 	var guard := 0
 	while cb.over == StsCombat.Result.RUNNING and guard < 60:
 		guard += 1
-		if cb.energy > 0 and not cb.hand.is_empty():
-			cb.play_card(cb.hand[0])
-		else:
-			cb.end_turn()
+		var e2 := cb.play_card(cb.hand[0])
+		if bool(e2.get("ok", false)):
+			if String(e2.get("kind", "")) == "attack":
+				saw_attack = true
+			else:
+				saw_skill = true
 	_eq(cb.over, StsCombat.Result.WIN, "反复出牌后击败敌人")
+	_check(saw_attack, "攻击牌结算过")
+	_check(saw_skill, "防御牌结算过")
 
 	# 站着挨打 → LOSE
 	var cb2 := StsCombat.new()
@@ -176,16 +164,14 @@ func _test_ui() -> void:
 
 	_check(arena.get_node_or_null("HudLeft") != null, "左侧玩家栏已构建")
 	_check(arena.get_node_or_null("HudRight") != null, "右上敌人栏已构建")
-	_check(arena.get_node_or_null("PromptArea") != null, "控制台已构建")
 	_check(arena.get_node_or_null("EnemyStage") != null, "敌人舞台已构建")
 	_check(arena.get_node_or_null("Overlay") != null, "结算弹窗已构建")
 	_check(arena.get_node_or_null("AiCompanion") != null, "右侧 AI 娘已挂载")
 
 	var st := arena.debug_combat_state()
-	_eq(st.get("hand", 0), 5, "界面手牌 5 张")
-	_eq(st.get("energy", -1), 3, "界面能量 3")
+	_eq(st.get("hand", 0), 3, "界面手牌 3 张（按角色补牌数）")
 	_eq(st.get("enemy_hp", -1), 40, "L1 敌人 HP 40")
-	_eq(arena.debug_hand_count(), 5, "手牌视图 5 张")
+	_eq(arena.debug_hand_count(), 3, "手牌视图 3 张")
 
 	# 卡视图尺寸与小 GUI
 	var layer := arena.get_node_or_null("CardLayer")
@@ -239,7 +225,8 @@ func _test_battle_flow(win_expected: bool) -> void:
 		var st := arena.debug_combat_state()
 		if int(st.get("over", 0)) != 0:
 			continue
-		if win_expected and int(st.get("energy", 0)) > 0 and arena.debug_hand_count() > 0:
+		# 新规则：无能量、按顺序出牌、无张数限制 —— 手牌有牌就一直打最左那张
+		if win_expected and arena.debug_hand_count() > 0:
 			arena.debug_play_card(0)
 		elif not win_expected:
 			# 挨打局：直接结束回合
