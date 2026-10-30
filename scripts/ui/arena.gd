@@ -30,6 +30,7 @@ const DIALOG_Y := 600.0     ## 对话框顶（底边 880）
 const DIALOG_H := 280.0
 const AI_X := 1190.0        ## AI 娘左缘：对话框右端里侧（手绘稿红框位置）
 const ENEMY_W := 440.0      ## 敌人 HUD 宽
+const DISCARD_LIMIT_PER_TURN := 3   ## 每回合主动弃牌上限（弃 1 抽 1，也算 1 次）
 const CONSOLE_H := 300.0
 
 # ── 手牌横排参数 ───────────────────────────────────────
@@ -89,6 +90,7 @@ var _end_turn_button: Button = null
 var _companion: AiCompanion = null
 var _discard_mode := false
 var _discard_btn: Button = null
+var _discards_left := DISCARD_LIMIT_PER_TURN
 
 # 特效层
 var _fx_enabled := true
@@ -912,13 +914,34 @@ func _on_card_clicked(view: StsCardView) -> void:
 	var card := view.card
 	if card == null:
 		return
-	# 弃牌模式：点谁弃谁，弃 1 抽 1（从牌堆）
+	# 弃牌模式：点谁弃谁，弃 1 抽 1（从牌堆）；每回合有次数上限
 	if _discard_mode:
+		if _discards_left <= 0:
+			_status_label.text = "本回合弃牌次数用完（上限 %d 张），先结束回合。" \
+					% DISCARD_LIMIT_PER_TURN
+			return
 		if combat.discard_card(card):
+			_discards_left -= 1
+			_update_discard_btn()
+			_busy = true
 			_float_text(view.position + Vector2(CARD_W * 0.5, 0.0),
 					"弃", Color(1.0, 0.75, 0.4), UiKit.FS_M)
-			_rebuild_hand()
+			SfxNode.play("card_select")
+			# 弃牌动画：斜着飞向右下角（弃牌堆方向）并缩小淡出
+			if _fx_enabled:
+				var tw := view.create_tween()
+				tw.set_parallel(true)
+				tw.tween_property(view, "position",
+						Vector2(size.x - CARD_W * 0.7, size.y - CARD_H * 0.55), 0.26) \
+						.set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_IN)
+				tw.tween_property(view, "rotation", 0.42, 0.26)
+				tw.tween_property(view, "scale", Vector2(0.5, 0.5), 0.26)
+				tw.tween_property(view, "modulate:a", 0.0, 0.24)
+				await tw.finished
+			view.queue_free()
+			_sync_hand_views()  ## 补抽的 1 张从对话框左侧滑入
 			_refresh_playable()
+			_busy = false
 		return
 	if not combat.can_play(card):
 		if combat.hand.has(card):
@@ -939,7 +962,7 @@ func _on_card_clicked(view: StsCardView) -> void:
 	view.queue_free()
 
 	_refresh_hud()
-	_layout_hand(true)
+	_sync_hand_views()      ## 补进来的新牌建视图 + 从对话框左侧滑入
 	_refresh_playable()
 
 
@@ -950,12 +973,53 @@ func _on_card_clicked(view: StsCardView) -> void:
 	_busy = false
 
 
+## 手牌视图与 combat.hand 对齐：
+##   · 不在手牌里的视图移除（出牌/弃牌的已在调用方播完退场动画）
+##   · 新补的牌建视图，从对话框左侧滑入（补牌的入场动画）
+func _sync_hand_views() -> void:
+	if combat == null:
+		return
+	for i in range(_hand_views.size() - 1, -1, -1):
+		if not combat.hand.has(_hand_views[i].card):
+			_hand_views[i].queue_free()
+			_hand_views.remove_at(i)
+	for c in combat.hand:
+		var have := false
+		for v in _hand_views:
+			if v.card == c:
+				have = true
+				break
+		if not have:
+			var v := StsCardView.new()
+			v.setup(c)
+			v.clicked.connect(_on_card_clicked)
+			v.mouse_entered.connect(_on_hand_hover.bind(v, true))
+			v.mouse_exited.connect(_on_hand_hover.bind(v, false))
+			_card_layer.add_child(v)
+			var slot := _hand_slot(_hand_views.size(), combat.hand.size())
+			v.position = Vector2(DIALOG_X - CARD_W - 24.0, slot["pos"].y + 14.0)
+			v.scale = Vector2(0.7, 0.7)
+			_hand_views.append(v)
+	_layout_hand(true)
+	_refresh_playable()
+
+
+func _update_discard_btn() -> void:
+	if _discard_btn == null:
+		return
+	if _discard_mode:
+		_discard_btn.text = "弃牌模式：开（本回合剩 %d 次）" % _discards_left
+	else:
+		_discard_btn.text = "弃牌模式：关"
+
+
 ## 弃牌模式开关
 func _on_discard_toggled(on: bool) -> void:
 	_discard_mode = on
-	_discard_btn.text = "弃牌模式：开（点手牌弃掉，抽 1 补 1）" if on else "弃牌模式：关"
-	_status_label.text = "弃牌模式开启：点手牌弃掉，每弃 1 张从牌堆抽 1 张。" if on \
-			else "弃牌模式关闭。"
+	## 次数**不**在这里回满——只在新回合开始时回满，否则反复开关就能绕过上限
+	_update_discard_btn()
+	_status_label.text = ("弃牌模式开启：点手牌弃掉，弃 1 张从牌堆抽 1 张（本回合剩 %d 次）。"
+			% _discards_left) if on else "弃牌模式关闭。"
 
 
 ## 出牌动画：攻击 → 牌飞向敌人 + 敌人闪红震屏 + 伤害飘字；防御 → 牌飞向左下 + 格挡飘字
@@ -1013,6 +1077,8 @@ func _on_end_turn_pressed() -> void:
 		return
 	_busy = true
 	_end_turn_button.disabled = true
+	_discards_left = DISCARD_LIMIT_PER_TURN   ## 新回合弃牌次数回满
+	_update_discard_btn()
 	if _fx_enabled:
 		await get_tree().create_timer(0.25).timeout
 
