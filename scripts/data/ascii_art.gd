@@ -184,3 +184,46 @@ static func _alpha_bbox(img: Image) -> Rect2i:
 	if x1 < 0:
 		return Rect2i()
 	return Rect2i(x0, y0, x1 - x0 + 1, y1 - y0 + 1)
+
+
+## 把字符画「打散」：每个非空格子有 (1 - keep_ratio) 的概率被挪到随机位置。
+##
+## 用途：终端里「乱码 → 归一」的收敛动画。符号的**数量**不变、位置先乱后齐，
+## 所以看上去是同一堆碎片慢慢拼回一个人，而不是淡入一张图。
+## [param seed_v] 固定种子 → 同样的参数每次生成同一份，便于复现问题。
+static func scramble(art: PackedStringArray, keep_ratio: float, seed_v: int) -> PackedStringArray:
+	var out := PackedStringArray()
+	var rows := art.size()
+	if rows <= 0:
+		return out
+	var cols := 0
+	for l in art:
+		cols = maxi(cols, l.length())
+	cols = maxi(cols, 1)
+	var rng := RandomNumberGenerator.new()
+	rng.seed = seed_v
+
+	var buf := PackedStringArray()
+	buf.resize(rows * cols)
+	for i in rows * cols:
+		buf[i] = " "
+	var loose := PackedStringArray()
+	for r in rows:
+		var line := art[r]
+		for c in line.length():
+			var ch := line[c]
+			if ch == " ":
+				continue
+			if rng.randf() < keep_ratio:
+				buf[r * cols + c] = ch
+			else:
+				loose.append(ch)
+	for ch in loose:
+		buf[rng.randi_range(0, rows * cols - 1)] = ch
+
+	for r in rows:
+		var s := ""
+		for c in cols:
+			s += buf[r * cols + c]
+		out.append(s.rstrip(" "))
+	return out

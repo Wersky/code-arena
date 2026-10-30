@@ -48,7 +48,6 @@ const COLOR_IN := 2.2           ## 彩色盖住符号的时长（主人要求「
 
 var _mosaic_warm: TextureRect = null   ## 预热用的隐藏立绘（见 _prewarm_mosaic_shader）
 var _hero_tween: Tween = null          ## 衔接动画的句柄（--shot=hero 自检要 pause 它拍首帧）
-var _hero_bar_tween: Tween = null      ## 进度条单独的 tween（它要跨两段，塞不进主链）
 
 var run: RunState = null
 var level: LevelData = null
@@ -696,47 +695,23 @@ func _show_hero_portrait(tex: Texture2D, on_end: Callable) -> void:
 	mat.set_shader_parameter("alpha", 0.0)
 	img.material = mat
 
-	# 进度条：从符号帧这一瞬间开始加载，走到 100% 正好是画面完全清晰，
-	# 然后停一拍就进游戏（主人 2026-10-30 要求）。
-	# 条/文字都挂在 plate 下，最后只要淡 plate 的 modulate 就整组一起下去。
-	var base := get_viewport_rect().size
-	var plate := ColorRect.new()
-	plate.name = "HeroLoadPlate"
-	plate.color = Color(0.0, 0.0, 0.0, 0.80)     ## 压暗一点：不然压在裙摆上看不清
-	plate.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	var plate_w := minf(900.0, base.x * 0.62)
-	plate.size = Vector2(plate_w, 92.0)
-	# 贴画布底边（画布 900 高，立绘底在 896.6 —— 下面没空间，只能压上去做成底部 HUD 带）
-	plate.position = Vector2((base.x - plate_w) * 0.5, base.y - 104.0)
-	add_child(plate)
-
-	# 顶部一条亮线：把"HUD 带"和后面的立绘分开，不然边界糊在一起
-	var rule := ColorRect.new()
-	rule.color = Color(0.32, 0.62, 0.95, 0.85)
-	rule.size = Vector2(plate_w, 2.0)
-	rule.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	plate.add_child(rule)
-
-	var bar := PixelBar.new()
-	bar.name = "HeroLoadBar"
-	bar.bar_h = 16
-	bar.segment_w = 10
-	bar.gap = 3
-	bar.position = Vector2(34.0, 50.0)
-	bar.size = Vector2(plate_w - 68.0, 18.0)
-	bar.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	bar.set_value(0.0)
-	plate.add_child(bar)
-
-	var tip := Label.new()
-	tip.name = "HeroLoadTip"
-	tip.text = "正在生成 AI 娘 ……  0%"
-	tip.position = Vector2(34.0, 16.0)
-	tip.size = Vector2(plate_w - 68.0, 28.0)
-	tip.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	tip.add_theme_font_size_override("font_size", 18)
-	tip.add_theme_color_override("font_color", Color(0.82, 0.92, 1.0))
-	plate.add_child(tip)
+	# 字幕「正在生成 AI 娘中」：和终端那一行 1:1 —— 同一套字符格、同一位置、同一字号。
+	# 位置由终端写回的 capx/capy 反推（相对字符画原点），所以两边逐字对齐。
+	var cap_cols := IntroScript.caption_cells()
+	var capx_rel := int(floor((artw - cap_cols) * 0.5))
+	var capy_rel := arth + 1
+	if not geom.is_empty():
+		capx_rel = int(geom.get("capx", 0)) - int(geom.get("padx", 0))
+		capy_rel = int(geom.get("capy", 0)) - int(geom.get("pady", 0))
+	var cap := SymbolFrame.new()
+	cap.name = "HeroCaption"
+	cap.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	cap.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	add_child(cap)
+	# 保险：终端网格铺满整块屏幕（比 16:9 画布高），字幕有可能算到画布外被裁掉 → 夹回来
+	var cap_pos := box.position + Vector2(float(capx_rel) * cell.x, float(capy_rel) * cell.y)
+	cap_pos.y = minf(cap_pos.y, get_viewport_rect().size.y - cell.y * 1.2)
+	cap.setup(PackedStringArray([IntroScript.CAPTION]), cell, cap_pos)
 
 	var tw := create_tween()
 	_hero_tween = tw        ## 存句柄：自检时 pause 它才能拍到「第一帧」
@@ -753,21 +728,13 @@ func _show_hero_portrait(tex: Texture2D, on_end: Callable) -> void:
 	tw.tween_method(func(v: float) -> void: mat.set_shader_parameter("alpha", v),
 			1.0, 0.0, HERO_FADE_OUT).set_trans(Tween.TRANS_SINE)
 	tw.parallel().tween_property(bg, "color:a", 0.0, HERO_FADE_OUT)
-	tw.parallel().tween_property(plate, "modulate:a", 0.0, HERO_FADE_OUT)
+	tw.parallel().tween_property(cap, "modulate:a", 0.0, HERO_FADE_OUT)
 	tw.tween_callback(func() -> void:
 		bg.queue_free()
 		sym.queue_free()
+		cap.queue_free()
 		img.queue_free()
-		plate.queue_free()
 		on_end.call())
-
-	# 进度条用**独立** tween：它要横跨「上色 + 收细」两段，
-	# 塞进主 tween 的串行链会把后面的块动画整体推迟到它结束。
-	var on_bar := func(v: float) -> void:
-		bar.set_value(v)
-		tip.text = "正在生成 AI 娘 ……  %d%%" % int(round(v * 100.0))
-	_hero_bar_tween = create_tween()
-	_hero_bar_tween.tween_method(on_bar, 0.0, 1.0, COLOR_IN + MOSAIC_TIME)
 
 
 ## 要复刻的字符画：优先用终端真正画过的那一份（ExtTerminal 缓存）。

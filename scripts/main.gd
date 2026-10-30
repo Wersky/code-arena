@@ -299,7 +299,7 @@ const LEG_RECT4 := Rect2i(52, 216, 84, 52)
 ## 然后抓 4 帧看马赛克是否收敛、矩形是否落在预期位置。配套 --nointro。
 ##   godot --path <项目> -w --resolution 1600x1000 -- --shot=hero --nointro --shotout=<绝对路径>.png
 func _capture_hero_mosaic(out_path: String) -> void:
-	var geom := "cols=179,rows=56,padx=44,pady=3,artw=90,arth=50"
+	var geom := "cols=179,rows=56,padx=49,pady=6,artw=80,arth=44,capx=81,capy=51"
 	var gf := FileAccess.open(OS.get_temp_dir().path_join("arena_term_geom.txt"), FileAccess.WRITE)
 	if gf == null:
 		print("[shot=hero] 几何文件写不进去")
@@ -322,11 +322,9 @@ func _capture_hero_mosaic(out_path: String) -> void:
 		get_tree().quit(1)
 		return
 	arena._show_hero_portrait(tex, func() -> void: pass)
-	# 立刻停住：不然后续每一帧都会推进，拍不到首帧。进度条是独立 tween，要一起停
+	# 立刻停住：不然后续每一帧都会推进，拍不到首帧
 	if arena._hero_tween != null:
 		arena._hero_tween.pause()
-	if arena._hero_bar_tween != null:
-		arena._hero_bar_tween.pause()
 	await get_tree().process_frame      ## 这一帧把着色器编译掉（tween 已停，画面不变）
 	var dbg := arena.get_node_or_null("HeroPortrait") as TextureRect
 	var sym := arena.get_node_or_null("HeroSymbol") as SymbolFrame
@@ -339,19 +337,15 @@ func _capture_hero_mosaic(out_path: String) -> void:
 	get_viewport().get_texture().get_image().save_png(_outname(out_path, "hero", "f0"))
 	# 解冻，每 0.45s 一张：0~2.2 上色、2.2~3.6 收细
 	arena._hero_tween.play()
-	if arena._hero_bar_tween != null:
-		arena._hero_bar_tween.play()
 	for i in range(1, 9):
 		await get_tree().create_timer(0.45, true, false, true).timeout
 		get_viewport().get_texture().get_image().save_png(
 				_outname(out_path, "hero", "f%d" % i))
 		if dbg != null:
 			var m2 := dbg.material as ShaderMaterial
-			var bar := arena.get_node_or_null("HeroLoadPlate/HeroLoadBar") as PixelBar
-			print("  f%d t=%.2fs block=%.2f alpha=%.2f 进度=%.2f" % [i, i * 0.45,
+			print("  f%d t=%.2fs block=%.2f alpha=%.2f" % [i, i * 0.45,
 				float(m2.get_shader_parameter("block")),
-				float(m2.get_shader_parameter("alpha")),
-				bar.value if bar != null else -1.0])
+				float(m2.get_shader_parameter("alpha"))])
 	print("[shot=hero] 9 帧已存（首帧为纯符号帧）几何=%s" % geom)
 	get_tree().quit()
 

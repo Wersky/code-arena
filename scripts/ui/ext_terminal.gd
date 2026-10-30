@@ -20,12 +20,18 @@ const SENTINEL_NAME := "arena_term_intro.done"
 ## 终端把自己「把字符画摆在哪」写回这个文件，Godot 侧据此把立绘放进同一个矩形。
 ## 这是位置严格对齐的唯一依据——两边各算各的必然有偏差（画布 16:9 vs 屏幕 16:10）。
 const GEOM_NAME := "arena_term_geom.txt"
-const ART_ROWS := 50            ## 字符画行数（终端约 54 行 → 占屏高约 93%，上下仍各留 2 行余量）
+## 字符画行数。为什么不是 50：终端网格铺满**整块屏幕**（约 56 行），而 Godot 画布是 16:9，
+## 在 16:10 屏上上下各 80px 信箱黑边，画布只装得下约 50 行。50 行时字符画正好占满画布，
+## 下面那行字幕会掉进黑边里被裁掉。44 行留出余量，两边都放得下。
+const ART_ROWS := 44
 const ART_MAX_COLS := 120       ## 宽度上限（终端约 179 列，留足留白）
 ## 终端字符格「高:宽」——实测 14.3 x 28.1 px。横向比例必须按它算，否则人物被拉成鸡蛋。
 const CELL_ASPECT := 1.965
 const HOLD_MS := 1000           ## 代码打完停留（主人指定 1 秒）
-const ART_HOLD_MS := 2000       ## 字符画停留 2 秒后融回游戏（主人指定）
+## 乱码 → 归一：各帧的「归位比例」，1.0 那一帧由成品自己承担（见 _compose）
+const CHAOS_KEEP := [0.0, 0.20, 0.42, 0.65, 0.85]
+const CHAOS_STEP_MS := 170      ## 每帧停留（宿主逐行回写，比这更快也看不出来）
+const ART_HOLD_MS := 1600       ## 归一完成后停留，然后窗口自关、交给 Godot
 const TIMEOUT := 45.0
 
 var _on_done := Callable()
@@ -171,6 +177,10 @@ func _finish() -> void:
 # ── 拼脚本正文 ───────────────────────────────
 ## [param code] 的节奏全在脚本里自校准（见下方打字段），这里只传文案与字符画。
 func _compose(ai_name: String, code: PackedStringArray, art: PackedStringArray) -> String:
+	# 乱码帧：同一批符号、位置先乱后齐。最后一帧不在这里，用成品 $art 本身收尾。
+	var chaos: Array = []
+	for k in CHAOS_KEEP.size():
+		chaos.append(AsciiArt.scramble(art, float(CHAOS_KEEP[k]), 9001 + k * 131))
 	var ps := ""
 	ps += "param([string]$Sentinel)\n"
 	ps += "$ErrorActionPreference='SilentlyContinue'\n"
@@ -236,46 +246,71 @@ func _compose(ai_name: String, code: PackedStringArray, art: PackedStringArray) 
 	# TrimEnd("`r")：宿主偶尔按 CRLF 读回 here-string，每行尾部会多一个 \r，
 	# 既让宽度多算 1 列，也会把光标顶回行首导致错位
 	ps += "$art = @'\n%s\n'@ -split \"`n\" | ForEach-Object { $_.TrimEnd(\"`r\") }\n" % "\n".join(art)
+	# 乱码帧：同一批符号、位置先乱后齐（见 AsciiArt.scramble）。最后一帧就是 $art 本身。
+	for i in chaos.size():
+		ps += "$c%d = @'\n%s\n'@ -split \"`n\" | ForEach-Object { $_.TrimEnd(\"`r\") }\n" \
+			% [i, "\n".join(chaos[i])]
 	ps += "$wmax=0; foreach($l in $art){ if($l.Length -gt $wmax){$wmax=$l.Length} }\n"
 	ps += "$padx=[Math]::Max(0,[int](($cwv - $wmax)/2))\n"
 	ps += "$pady=[Math]::Max(0,[int](($chv - $art.Count)/2))\n"
 	# 铁律①②：横向绝不越界（越界会折行→多占一行→滚动→整幅错位）
 	ps += "if($padx -gt 0 -and ($padx + $wmax) -ge $cwv){ $padx=0 }\n"
-	ps += "$maxpady=$chv - $art.Count - 2; if($maxpady -lt 0){$maxpady=0}\n"
+	# 比原来多留 2 行：字符画下面还要放一行字幕
+	ps += "$maxpady=$chv - $art.Count - 3; if($maxpady -lt 0){$maxpady=0}\n"
 	ps += "if($pady -gt $maxpady){ $pady=$maxpady }\n"
-	# 把排版写回给 Godot：立绘要落在**和字符画完全同一个矩形**里。
+	# 字幕行：紧跟字符画下方空一行，水平居中于字符画
+	ps += "$capx=$padx+[Math]::Max(0,[int](($wmax-%d)/2));$capy=$pady+$art.Count+1\n" \
+		% IntroScript.caption_cells()
+	# 把排版写回给 Godot：立绘/字幕要落在**和字符画完全同一套格子里**。
 	# 三处刻意选择，都是踩出来的：
-	#   · 单条插值字符串，**不要**写 @('k='+$a,'k2='+$b) —— PowerShell 会解析成
+	#   · 单条插值字符串，**不要**写 @('k='+$a,'k2='+$b) —— 宿主会解析成
 	#     'k=' + ($a,'k2=') + $b，数组被 $OFS（空格）拼成一个串，分隔符全丢
 	#   · 逗号分隔、单行写出 —— 不依赖换行（宿主对换行的处理不保证）
-	#   · Ascii 编码 —— PS 5.1 的 UTF8 会加 BOM，第一行的键会变成 "\ufeffcols"
+	#   · Ascii 编码 —— 宿主 PS 5.1 的 UTF8 会加 BOM，第一行的键会变成 "\ufeffcols"
 	ps += "$geo=\"cols=$cwv,rows=$chv,padx=$padx,pady=$pady," \
-		+ "artw=$wmax,arth=$($art.Count)\"\n"
+		+ "artw=$wmax,arth=$($art.Count),capx=$capx,capy=$capy\"\n"
 	ps += "try{ $geo | Set-Content -NoNewline " \
 		+ "-Path (Join-Path $env:TEMP 'arena_term_geom.txt') -Encoding Ascii }catch{}\n"
 	ps += "$sp=' ' * $padx\n"
 	ps += "for($i=0;$i -lt $pady;$i++){ Write-Host '' }\n"
 	ps += "$top=-1; try{$top=[Console]::CursorTop}catch{}\n"
-	# 铁律③：叠印靠 SetCursorPosition 回写同一块区域，回不去就会「打三份并滚动」。
+	# 铁律③：叠印靠 SetCursorPosition 回写同一块区域，回不去就会「打多份并滚动」。
 	# 探测方法：**先移到 $top+1，再移回 $top**——否则「光标本来就在 $top」会让探测假通过。
 	ps += "$canfade=$false\n"
-	ps += "if($top -ge 0 -and $wmax -lt $cwv -and ($top + $art.Count) -le ($chv - 1)){try{" \
+	ps += "if($top -ge 0 -and $wmax -lt $cwv -and ($capy) -le ($chv - 1)){try{" \
 		+ "[Console]::SetCursorPosition(0,$top+1);$a=([Console]::CursorTop -eq ($top+1));" \
 		+ "[Console]::SetCursorPosition(0,$top);$b=([Console]::CursorTop -eq $top);" \
 		+ "$canfade=($a -and $b)}catch{$canfade=$false}}\n"
-	ps += "if($canfade){" \
-		+ "foreach($lv in @('DarkGray','Gray','White')){" \
+	# 字幕先落一次：它不在字符画的回写区域里（在下面一行），之后重绘碰不到它
+	ps += "if($canfade){try{[Console]::SetCursorPosition($capx,$capy);" \
+		+ "Write-Host '%s' -ForegroundColor DarkGray}catch{}}\n" % IntroScript.CAPTION
+	# 乱码 → 归一：逐帧回写同一块区域，越往后越亮。最后一帧是成品。
+	ps += "$frames=@(%s)\n" % ",".join(_frame_names(chaos.size()))
+	ps += "if($canfade){$ci=0; foreach($fr in $frames){" \
 		+ "[Console]::SetCursorPosition(0,$top);" \
-		+ "foreach($l in $art){ Write-Host ($sp+$l) -ForegroundColor $lv };" \
-		+ "if(Fast){break}; Start-Sleep -Milliseconds 220}" \
-		+ "} else {" \
-		+ "foreach($l in $art){ Write-Host ($sp+$l) -ForegroundColor White }\n" \
-		+ "}\n"
+		+ "$col='DarkGray'; if($ci -ge 2){$col='Gray'};" \
+		+ "foreach($l in $fr){ Write-Host ($sp+$l) -ForegroundColor $col };" \
+		+ "if(Fast){break}; Start-Sleep -Milliseconds %d; $ci++}}\n" % CHAOS_STEP_MS
+	ps += "if($canfade){[Console]::SetCursorPosition(0,$top)}\n"
+	ps += "foreach($l in $art){ Write-Host ($sp+$l) -ForegroundColor White }\n"
+	# 落定后把字幕提亮
+	# 落定后把字幕提亮（注意：GDScript 里 % 的优先级高于 +，必须先拼好再用，否则只格式化最后一段）
+	var cap_white := "Write-Host '%s' -ForegroundColor White" % IntroScript.CAPTION
+	ps += ("if($canfade){try{[Console]::SetCursorPosition($capx,$capy);%s}catch{}} else {" % cap_white) \
+		+ ("Write-Host ''; %s }\n" % cap_white)
 	ps += "Wait %d\n" % ART_HOLD_MS
 	ps += "New-Item -ItemType File -Path $Sentinel -Force | Out-Null\n"
 	ps += "Start-Sleep -Milliseconds 100\n"
 	ps += "exit\n"
 	return ps
+
+
+## 乱码帧的变量名序列（$c0,$c1,…），拼进宿主脚本的 $frames 数组
+func _frame_names(n: int) -> PackedStringArray:
+	var out := PackedStringArray()
+	for i in n:
+		out.append("$c%d" % i)
+	return out
 
 
 ## 单引号字符串转义（宿主里 '' 表示一个单引号）

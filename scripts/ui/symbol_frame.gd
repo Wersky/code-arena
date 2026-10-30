@@ -9,7 +9,10 @@ extends Control
 ## 字号怎么定：终端里一个字符正好占一个格子宽，所以**按格宽反推字号**（em = 格宽 / 步进比）。
 ## 这才是终端的真实比例。之前用「字号 = 格高 × 系数」再按格宽夹，结果把字夹小了 13%，
 ## 画出来比终端细一圈。格高只用来兜一个上限，防止字太高串到上一行。
-const FONT_NAMES := ["Cascadia Mono", "Consolas", "Courier New"]
+## 前三个是终端的等宽字体；后面两个是**带中文字形**的系统字体。
+## 字幕「正在生成 AI 娘中」里有中文，而 draw_char 不做缺字回退——列表里没有中文字体时
+## 中文整行画不出来（实测只画出了 "AI"）。等宽在前保证 ASCII 走终端同款。
+const FONT_NAMES := ["Cascadia Mono", "Consolas", "Courier New", "Microsoft YaHei", "SimSun"]
 const HEIGHT_LIMIT := 1.08      ## 行高最多允许超出格高的比例（超一点没关系，字墨在行内）
 
 var _lines: PackedStringArray = PackedStringArray()
@@ -61,9 +64,27 @@ func _draw() -> void:
 	for r in _lines.size():
 		var line := _lines[r]
 		var y := _origin.y + float(r) * _cell.y + dy
+		# 用「笔」推进而不是「列号」：中文占两格，按列号算整行会越走越偏
+		var pen := 0
 		for c in line.length():
 			var ch := line[c]
 			if ch == " ":
+				pen += 1
 				continue
-			draw_char(_font, Vector2(_origin.x + float(c) * _cell.x + dx, y),
-					ch, _size_px, Color.WHITE)
+			# 必须用 draw_string：draw_char 不做缺字回退，中文字形不在等宽字体里就整行画不出来
+			# （实测字幕只画出了 "AI"）。单字调用仍然保持逐格定位。
+			draw_string(_font, Vector2(_origin.x + float(pen) * _cell.x + dx, y),
+					ch, HORIZONTAL_ALIGNMENT_LEFT, -1, _size_px, Color.WHITE)
+			# 中文在终端里占两格，这里必须同样按两格推进，否则整行会越来越偏
+			pen += 2 if _is_wide(ch) else 1
+
+
+## 全角判定（与 IntroScript._is_wide 同一套区间，两处必须一致）
+static func _is_wide(ch: String) -> bool:
+	var cp := ch.unicode_at(0)
+	return (cp >= 0x2E80 and cp <= 0xA4CF) \
+		or (cp >= 0xAC00 and cp <= 0xD7A3) \
+		or (cp >= 0xF900 and cp <= 0xFAFF) \
+		or (cp >= 0xFE30 and cp <= 0xFE6F) \
+		or (cp >= 0xFF00 and cp <= 0xFF60) \
+		or (cp >= 0xFFE0 and cp <= 0xFFE6)
