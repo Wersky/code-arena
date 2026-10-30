@@ -46,6 +46,10 @@ func _swap(screen: Control) -> void:
 
 # ── 界面 ─────────────────────────────────────────────
 func _show_menu() -> void:
+	# 主人 2026-10-30：启动界面重做为「初始化 → Agent 对话框」流程（旧菜单 --oldmenu 保留）
+	if not OS.get_cmdline_user_args().has("--oldmenu"):
+		_show_launch()
+		return
 	var menu := MenuScene.new()
 	menu.start_run.connect(_on_start_run)
 	menu.quit_game.connect(func() -> void: get_tree().quit())
@@ -103,11 +107,43 @@ func _on_start_run() -> void:
 
 ## 选 AI 娘：她会被画在**每一张牌的中间**，并给一套被动
 func _show_ai_select() -> void:
+	# 主人要求的新版选角：楼梯秀场（demo）。默认走旧界面，--stairs 切新版
+	if OS.get_cmdline_user_args().has("--stairs"):
+		_show_stairs()
+		return
 	var sel := AiSelectScene.new()
 	sel.setup(AiPool.ai_list_for_select(run.level_index))
 	sel.ai_chosen.connect(_on_ai_chosen)
 	sel.cancelled.connect(_show_menu)
 	_swap(sel)
+
+
+## 新启动流程：黑屏「初始化」按钮 → Agent 对话框选模型 → 发送进游戏。
+## launched 带回模型 id，照旧走 reset_run + 进第一关（终端进场照旧触发）。
+func _show_launch() -> void:
+	var sc := LaunchScreen.new()
+	sc.launched.connect(func(ai_id: String) -> void:
+		sc.queue_free()
+		run.reset_run()
+		var ai := AiPool.get_ai(ai_id)
+		if ai == null:
+			ai = AiPool.get_ai("deepdeek")
+		run.set_ai(ai)
+		_show_level(_levels[0]))
+	_swap(sc)
+
+
+## 楼梯选角 demo：3D 楼梯 + 仰视相机，四位 AI 娘分立两侧待选。
+## 确认后仍然走原来的 _on_ai_chosen 流程，不影响后续进场/战斗。
+func _show_stairs() -> void:
+	if _current != null:
+		_current.queue_free()
+		_current = null
+	var sc := SelectStairs.new()
+	sc.selected.connect(func(ai_id: String) -> void:
+		sc.queue_free()
+		_on_ai_chosen(AiPool.get_ai(ai_id)))
+	add_child(sc)
 
 
 func _on_ai_chosen(ai: AiData) -> void:
@@ -175,8 +211,23 @@ func _maybe_capture() -> void:
 		return
 	if screen in ["menu", "arena", "battle", "intro", "reward", "result",
 			"menuhover", "rig", "rigwalk", "loadrun", "card", "cardtext", "cardcost", "terminal", "termgif",
-			"termdump", "hero"]:
+			"termdump", "hero", "stairs", "launch", "launch2"]:
 		run.reset_run()
+		if screen == "launch" or screen == "launch2":
+			var sc := _current as LaunchScreen
+			if sc == null:
+				sc = LaunchScreen.new()
+				_swap(sc)
+			if screen == "launch2":
+				sc.expand()
+			await get_tree().create_timer(1.0).timeout
+			get_viewport().get_texture().get_image().save_png(out_path)
+			print("[shot=%s] 已存 → %s" % [screen, out_path])
+			get_tree().quit()
+			return
+		if screen == "stairs":
+			await _capture_stairs(out_path)
+			return
 		if screen == "hero":
 			# 只验「终端 → Godot 立绘」这一段：假造终端排版，抓 4 帧看马赛克收敛与对齐。
 			# 配套参数：--nointro（跳过真实进场）
@@ -293,6 +344,20 @@ const RIG_SPLIT := Color("#2e3648")
 ## 腿部专图的裁剪窗口（画布坐标）：x 62..124、y 206..257 = 审核给的 strip（68..130, 232..283）减去格内偏移
 const LEG_RECT := Rect2i(62, 206, 62, 51)
 const LEG_RECT4 := Rect2i(52, 216, 84, 52)
+
+
+## 楼梯选角 demo 截图验收：
+##   godot --path <项目> -- --shot=stairs --shotout=<绝对路径>.png
+func _capture_stairs(out_path: String) -> void:
+	if _current != null:
+		_current.queue_free()
+		_current = null
+	var sc := SelectStairs.new()
+	add_child(sc)
+	await get_tree().create_timer(0.9).timeout
+	get_viewport().get_texture().get_image().save_png(out_path)
+	print("[shot=stairs] 已存 → %s" % out_path)
+	get_tree().quit()
 
 
 ## 定点验收「终端 → Godot 立绘」：假造一份终端排版（全屏 179x56 格、50 行字符画、居中），
