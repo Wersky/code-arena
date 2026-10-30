@@ -170,7 +170,7 @@ func _test_ui() -> void:
 	await process_frame
 
 	_check(arena.get_node_or_null("HudLeft") != null, "左侧玩家栏已构建")
-	_eq(SfxNode.current_music(), "bgm_main", "战斗 BGM 已切到 bgm_main")
+	_eq(SfxNode.current_music(), "bgm_gemini2", "战斗 BGM = bgm_gemini2（全程同一首）")
 	_check(arena.get_node_or_null("HudRight") != null, "右上敌人栏已构建")
 	_check(arena.get_node_or_null("EnemyStage") != null, "敌人舞台已构建")
 	_check(arena.get_node_or_null("Overlay") != null, "结算弹窗已构建")

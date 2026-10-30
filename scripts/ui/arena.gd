@@ -113,8 +113,8 @@ func setup(run_state: RunState, lv: LevelData) -> void:
 
 
 func _ready() -> void:
-	# 战斗曲（68.6s 循环，SfxNode 内部已强制 loop）
-	SfxNode.music("bgm_main")
+	# 全程同一首（主人 2026-10-30：进战斗也用 bgm_gemini2，不切曲）
+	SfxNode.music("bgm_gemini2")
 	_build_ui()
 	resized.connect(_layout)
 	await get_tree().process_frame
