@@ -335,18 +335,19 @@ func _capture_hero_mosaic(out_path: String) -> void:
 			float(dm.get_shader_parameter("block")), float(dm.get_shader_parameter("alpha")),
 			str(dbg.size)])
 	get_viewport().get_texture().get_image().save_png(_outname(out_path, "hero", "f0"))
-	# 解冻，每 0.45s 一张：0~2.2 上色、2.2~3.6 收细
+	# 解冻，每 0.45s 一张：0.35 保留 → 0.35~1.25 解码 → 1.25~3.45 上色 → 3.45~4.85 收细
 	arena._hero_tween.play()
-	for i in range(1, 9):
+	for i in range(1, 12):
 		await get_tree().create_timer(0.45, true, false, true).timeout
 		get_viewport().get_texture().get_image().save_png(
 				_outname(out_path, "hero", "f%d" % i))
 		if dbg != null:
 			var m2 := dbg.material as ShaderMaterial
-			print("  f%d t=%.2fs block=%.2f alpha=%.2f" % [i, i * 0.45,
+			print("  f%d t=%.2fs block=%.2f alpha=%.2f 解码=%.2f" % [i, i * 0.45,
 				float(m2.get_shader_parameter("block")),
-				float(m2.get_shader_parameter("alpha"))])
-	print("[shot=hero] 9 帧已存（首帧为纯符号帧）几何=%s" % geom)
+				float(m2.get_shader_parameter("alpha")),
+				sym._shuffle if sym != null else -1.0])
+	print("[shot=hero] 12 帧已存（首帧为纯符号帧）几何=%s" % geom)
 	get_tree().quit()
 
 

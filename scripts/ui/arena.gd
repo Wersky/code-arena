@@ -45,6 +45,8 @@ const MOSAIC_SHADER := preload("res://shaders/mosaic.gdshader")
 const MOSAIC_CELLS := 1.0       ## 起始马赛克块 = 终端一个字符格 × 这个倍数（1.0 = 与符号格严丝合缝）
 const MOSAIC_TIME := 1.4        ## 马赛克 → 清晰的时长
 const COLOR_IN := 2.2           ## 彩色盖住符号的时长（主人要求「尽量拉长」，原来 0.55 太快看不见上色）
+const SYMBOL_HOLD := 0.35       ## 第一帧保留终端画面的时长（主人：第一帧就是终端那张）
+const SYMBOL_DECODE := 0.9      ## 符号随机解码时长：每个符号闪成别的符号，再逐格定稿
 
 var _mosaic_warm: TextureRect = null   ## 预热用的隐藏立绘（见 _prewarm_mosaic_shader）
 var _hero_tween: Tween = null          ## 衔接动画的句柄（--shot=hero 自检要 pause 它拍首帧）
@@ -634,10 +636,11 @@ func _prewarm_mosaic_shader(tex: Texture2D) -> void:
 	_mosaic_warm = warm
 
 
-## 终端切回 Godot 的立绘，三段走：
+## 终端切回 Godot 的立绘，四段走：
 ##   ① **符号帧**：把终端那一屏字符画 1:1 重画一遍（同字、同格、同矩形）→ 第一帧就是终端画面
-##   ② **符号 → 马赛克**：符号淡出，同格的彩色马赛克淡入（一块马赛克 = 一个字符格）
-##   ③ **马赛克 → 清晰**：块大小逐帧收到 1
+##   ② **符号解码**：每个符号随机闪成别的符号，再逐格定稿回真符号
+##   ③ **符号 → 马赛克**：同格的彩色马赛克淡入（一块马赛克 = 一个字符格）
+##   ④ **马赛克 → 清晰**：块大小逐帧收到 1
 ## 然后停留、淡出、回调。
 ##
 ## 为什么第一步必须是「重画」而不是「淡入图片」：终端一关，屏幕上原本是符号；
@@ -715,12 +718,17 @@ func _show_hero_portrait(tex: Texture2D, on_end: Callable) -> void:
 
 	var tw := create_tween()
 	_hero_tween = tw        ## 存句柄：自检时 pause 它才能拍到「第一帧」
-	# ①② 符号 → 马赛克：**符号不淡出，让彩色从上面盖上去**。
-	# 两边同时淡（交叉淡入淡出）实测太生硬，且中途会发暗；覆盖式更像「符号被上了色」。
+	# ① 第一帧保留终端画面：同字同格同位置，先停一拍让观众看清「这就是刚才终端那张」
+	tw.tween_interval(SYMBOL_HOLD)
+	# ② 符号解码：每个符号随机闪成别的符号，再逐格定稿回真符号
+	tw.tween_method(func(v: float) -> void: sym.set_shuffle(v), 0.0, 1.0, SYMBOL_DECODE)
+	# ③ 彩色马赛克盖上去：每个格子变成「清晰立绘对应部位」的颜色块。
+	# **符号不淡出，让彩色从上面盖上去**。两边同时淡（交叉淡入淡出）实测太生硬，
+	# 且中途会发暗；覆盖式更像「符号被上了色」。
 	tw.tween_method(func(v: float) -> void: mat.set_shader_parameter("alpha", v),
 			0.0, 1.0, COLOR_IN)
 	tw.tween_callback(func() -> void: sym.hide())   ## 覆盖完成后把符号层收掉，免得末尾淡出时又露出来
-	# ③ 马赛克 → 清晰。线性、不要 EASE_OUT：实测 cubic/ease_out 会把变化全堆在前 0.3 秒，
+	# ④ 马赛克 → 清晰。线性、不要 EASE_OUT：实测 cubic/ease_out 会把变化全堆在前 0.3 秒，
 	# 0.5 秒就已经完全清晰，后半段等于空转。线性才「逐渐」。
 	tw.tween_method(func(v: float) -> void: mat.set_shader_parameter("block", v),
 			block0, 1.0, MOSAIC_TIME)

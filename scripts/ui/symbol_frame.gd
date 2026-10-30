@@ -14,6 +14,8 @@ extends Control
 ## 中文整行画不出来（实测只画出了 "AI"）。等宽在前保证 ASCII 走终端同款。
 const FONT_NAMES := ["Cascadia Mono", "Consolas", "Courier New", "Microsoft YaHei", "SimSun"]
 const HEIGHT_LIMIT := 1.08      ## 行高最多允许超出格高的比例（超一点没关系，字墨在行内）
+## 「解码」阶段随机替换用的字符集：只取有墨的档，不含空格/点，密度才和成品一致
+const GLYPHS := "@#%*+=~-:"
 
 var _lines: PackedStringArray = PackedStringArray()
 var _cell: Vector2 = Vector2.ONE
@@ -21,6 +23,21 @@ var _origin: Vector2 = Vector2.ZERO
 var _font: Font = null
 var _size_px: int = 16
 var _advance: float = 0.0
+## 解码进度：1 = 定稿（画真符号） 0 = 全乱（每个符号随机闪成别的符号）
+var _shuffle: float = 1.0
+var _rng := RandomNumberGenerator.new()
+
+
+func _ready() -> void:
+	_rng.randomize()        ## 每次进场的乱序都不一样
+
+
+## [param v] 0=全乱 1=定稿。由 tween 每帧推进，每帧重绘一次就有「字符解码」的闪动。
+func set_shuffle(v: float) -> void:
+	var nv := clampf(v, 0.0, 1.0)
+	if absf(nv - _shuffle) > 0.0005:
+		_shuffle = nv
+		queue_redraw()
 
 
 ## [param cell] 一个字符格的画布尺寸；[param origin] 字符画左上角（画布坐标）。
@@ -71,10 +88,14 @@ func _draw() -> void:
 			if ch == " ":
 				pen += 1
 				continue
+			# 解码阶段：还没定稿的格子随机闪成别的符号（位置不动，只换字）
+			var show := ch
+			if _shuffle < 0.999 and _rng.randf() > _shuffle:
+				show = GLYPHS[_rng.randi_range(0, GLYPHS.length() - 1)]
 			# 必须用 draw_string：draw_char 不做缺字回退，中文字形不在等宽字体里就整行画不出来
 			# （实测字幕只画出了 "AI"）。单字调用仍然保持逐格定位。
 			draw_string(_font, Vector2(_origin.x + float(pen) * _cell.x + dx, y),
-					ch, HORIZONTAL_ALIGNMENT_LEFT, -1, _size_px, Color.WHITE)
+					show, HORIZONTAL_ALIGNMENT_LEFT, -1, _size_px, Color.WHITE)
 			# 中文在终端里占两格，这里必须同样按两格推进，否则整行会越来越偏
 			pen += 2 if _is_wide(ch) else 1
 
