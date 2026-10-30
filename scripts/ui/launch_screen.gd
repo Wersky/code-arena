@@ -51,8 +51,11 @@ func _ready() -> void:
 	_boot_btn.add_theme_stylebox_override("pressed", _frame(Color(0.35, 0.65, 0.9)))
 	_boot_btn.add_theme_stylebox_override("focus", StyleBoxEmpty.new())
 	_boot_btn.custom_minimum_size = Vector2(260, 96)
-	_boot_btn.set_anchors_preset(Control.PRESET_CENTER)
-	_boot_btn.position = Vector2(800 - 130, 450 - 48)
+	# 只用绝对坐标，**不走锚点预设**：PRESET_CENTER 的 offset 在全屏模式首次布局前
+	# 会按 0 尺寸计算，等父区域变成 1600x900 后按钮被推到右下角（实测踩坑）。
+	# 本项目画布固定 1600x900 + canvas_items 缩放，绝对坐标天然与分辨率无关。
+	_boot_btn.position = Vector2(670.0, 402.0)
+	_boot_btn.size = Vector2(260.0, 96.0)
 	_boot_btn.pressed.connect(expand)
 	add_child(_boot_btn)
 
@@ -105,9 +108,9 @@ func _build_dialog() -> void:
 	_dialog.name = "AgentDialog"
 	_dialog.add_theme_stylebox_override("panel",
 			_panel(Color(0.055, 0.075, 0.12), Color(0.22, 0.32, 0.5)))
-	_dialog.custom_minimum_size = Vector2(1000, 186)
-	_dialog.position = Vector2(300, 668)
-	_dialog.size = Vector2(1000, 186)
+	_dialog.custom_minimum_size = Vector2(1080, 230)
+	_dialog.position = Vector2(306, 640)
+	_dialog.size = Vector2(1080, 230)
 	add_child(_dialog)
 
 	var v := VBoxContainer.new()
@@ -172,8 +175,8 @@ func _build_sidebar() -> void:
 	_sidebar.add_theme_stylebox_override("panel",
 			_panel(Color(0.045, 0.06, 0.10), Color(0.20, 0.28, 0.45)))
 	_sidebar.custom_minimum_size = Vector2(230, 0)
-	_sidebar.position = Vector2(56, 250)
-	_sidebar.size = Vector2(230, 604)
+	_sidebar.position = Vector2(56, 0)
+	_sidebar.size = Vector2(232, 900)
 	add_child(_sidebar)
 
 	var v := VBoxContainer.new()
@@ -213,7 +216,7 @@ func _build_portrait() -> void:
 	_portrait.name = "ModelPortrait"
 	_portrait.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 	_portrait.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
-	_portrait.position = Vector2(1210, 240)
+	_portrait.position = Vector2(1210, 210)
 	_portrait.size = Vector2(240, 420)
 	add_child(_portrait)
 

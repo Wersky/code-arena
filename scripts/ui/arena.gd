@@ -22,11 +22,15 @@ const CARD_H := 226.0
 const PAD := 24.0
 
 # ── 布局刻度 ───────────────────────────────────────────
-const RAIL_W := 220.0
-const CONSOLE_X := 268.0
+## 左侧边栏拉满上下、底部对话框、战斗画面在上方 —— 与启动界面同一套架构（主人 2026-10-30）
+const RAIL_W := 230.0
+const DIALOG_X := 240.0     ## 对话框左缘
+const DIALOG_W := 1300.0    ## 对话框宽
+const DIALOG_Y := 600.0     ## 对话框顶（底边 880）
+const DIALOG_H := 280.0
+const AI_X := 1190.0        ## AI 娘左缘：对话框右端里侧（手绘稿红框位置）
+const ENEMY_W := 440.0      ## 敌人 HUD 宽
 const CONSOLE_H := 300.0
-const SIDE_W := 320.0
-const STATUS_W := 700.0
 
 # ── 手牌横排参数 ───────────────────────────────────────
 const HAND_BOTTOM := 30.0
@@ -35,8 +39,8 @@ const HAND_MIN_GAP := -34.0
 const HOVER_LIFT := 30.0
 
 # ── 敌人舞台 ───────────────────────────────────────────
-const STAGE_TOP := 348.0
-const STAGE_BOTTOM := 812.0
+const STAGE_TOP := 40.0
+const STAGE_BOTTOM := 540.0
 
 # ── 进场立绘（终端 → 战斗的衔接点）────────────────────
 const HERO_HOLD := 0.45         ## 进度条满之后的停顿（然后揭幕进战斗）
@@ -242,7 +246,7 @@ func _build_right_hud() -> void:
 	right.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	add_child(right)
 
-	var head := UiKit.title_bar("敌人", SIDE_W, HORIZONTAL_ALIGNMENT_RIGHT, UiKit.TEXT_DIM)
+	var head := UiKit.title_bar("敌人", ENEMY_W, HORIZONTAL_ALIGNMENT_RIGHT, UiKit.TEXT_DIM)
 	head.name = "RightTitle"
 	right.add_child(head)
 
@@ -255,7 +259,7 @@ func _build_right_hud() -> void:
 	right.add_child(_enemy_hp_label)
 
 	_enemy_hp_host = Control.new()
-	_enemy_hp_host.custom_minimum_size = Vector2(SIDE_W, 10)
+	_enemy_hp_host.custom_minimum_size = Vector2(ENEMY_W, 10)
 	_enemy_hp_host.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	right.add_child(_enemy_hp_host)
 	var ebg := ColorRect.new()
@@ -265,7 +269,7 @@ func _build_right_hud() -> void:
 	_enemy_hp_host.add_child(ebg)
 	_enemy_fill = ColorRect.new()
 	_enemy_fill.color = Color(0.86, 0.28, 0.34)
-	_enemy_fill.size = Vector2(SIDE_W, 10)
+	_enemy_fill.size = Vector2(ENEMY_W, 10)
 	_enemy_fill.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_enemy_hp_host.add_child(_enemy_fill)
 
@@ -318,7 +322,7 @@ func _build_bottom() -> void:
 	add_child(tip)
 
 	_status_label = UiKit.dim("", UiKit.FS_XS)
-	_status_label.custom_minimum_size = Vector2(STATUS_W, 0)
+	_status_label.custom_minimum_size = Vector2(620, 0)
 	_status_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	tip.add_child(_status_label)
 
@@ -329,7 +333,7 @@ func _build_bottom() -> void:
 	add_child(side)
 
 	_end_turn_button = UiKit.accent_button("结束回合", UiKit.FS_S)
-	_end_turn_button.custom_minimum_size = Vector2(SIDE_W, 48)
+	_end_turn_button.custom_minimum_size = Vector2(320, 48)
 	_end_turn_button.pressed.connect(_on_end_turn_pressed)
 	side.add_child(_end_turn_button)
 
@@ -393,46 +397,49 @@ func _layout() -> void:
 	var W := size.x
 	var H := size.y
 
+	# 左侧边栏：拉满上下（与启动界面同一套架构）
 	var rail := get_node_or_null("HudLeft") as Control
 	if rail:
-		rail.position = Vector2(PAD, PAD)
-		rail.size = Vector2(RAIL_W, H - PAD * 2.0)
+		rail.position = Vector2(0, 0)
+		rail.size = Vector2(RAIL_W, H)
 
+	# 底部对话框：整体下移放大（Agent 对话软件的样子）
 	var area := get_node_or_null("PromptArea") as Control
 	if area:
-		area.position = Vector2(CONSOLE_X, PAD)
-		area.size = Vector2(W - CONSOLE_X - PAD - SIDE_W - UiKit.SP_4, CONSOLE_H)
+		area.position = Vector2(DIALOG_X, DIALOG_Y)
+		area.size = Vector2(DIALOG_W, DIALOG_H)
 
+	# 敌人 HUD：战斗画面右上
 	var right := get_node_or_null("HudRight") as Control
 	if right:
-		right.position = Vector2(W - PAD - SIDE_W, PAD)
-		right.size = Vector2(SIDE_W, CONSOLE_H)
+		right.position = Vector2(W - ENEMY_W - PAD, PAD)
+		right.size = Vector2(ENEMY_W, 150.0)
 
+	# 状态提示：战斗画面左上
 	var tip := get_node_or_null("BottomTip") as Control
 	if tip:
-		tip.position = Vector2(CONSOLE_X, PAD + CONSOLE_H + UiKit.SP_4)
-		tip.size = Vector2(STATUS_W, 40)
+		tip.position = Vector2(DIALOG_X, PAD)
+		tip.size = Vector2(620, 40)
 
+	# 结束回合：右缘、AI 娘头顶上方
 	var side := get_node_or_null("BottomSide") as Control
 	if side:
-		side.position = Vector2(W - PAD - SIDE_W, H - 120.0)
-		side.size = Vector2(SIDE_W, 90)
+		side.position = Vector2(AI_X, DIALOG_Y - 130.0)
+		side.size = Vector2(W - AI_X - PAD, 90)
 
+	# AI 娘：对话框右端里侧（手绘稿红框位置）
 	if _companion:
-		var c_top := PAD + CONSOLE_H + UiKit.SP_4
-		_companion.position = Vector2(W - PAD - SIDE_W, c_top)
-		_companion.size = Vector2(SIDE_W, (H - 120.0) - c_top - 8.0)
+		_companion.position = Vector2(AI_X, DIALOG_Y - 24.0)
+		_companion.size = Vector2(W - AI_X - PAD, H - (DIALOG_Y - 24.0) - 20.0)
 
 	if _overlay:
 		_overlay.position = Vector2(W * 0.5 - 280.0, H * 0.5 - 170.0)
 		_overlay.size = Vector2(560, 340)
 
-	# 敌人舞台：控制台下方、手牌上方之间的中央区域
+	# 敌人舞台：对话框上方、状态栏下方的中央
 	if _enemy_root:
-		var stage_l := CONSOLE_X
-		var stage_r := W - PAD - SIDE_W
-		var cx := (stage_l + stage_r) * 0.5
-		var bottom := minf(H - CARD_H - 92.0, STAGE_BOTTOM)
+		var cx := (DIALOG_X + AI_X) * 0.5
+		var bottom := minf(H - CARD_H - 40.0, STAGE_BOTTOM)
 		_enemy_root.position = Vector2(cx - 90.0, bottom - 150.0)
 		_enemy_root.size = Vector2(180.0, 150.0)
 		if _enemy_sprite:
@@ -450,8 +457,8 @@ func _layout() -> void:
 
 ## 手牌槽位：横向一排、底边对齐
 func _hand_slot(i: int, n: int) -> Dictionary:
-	var left := CONSOLE_X
-	var right := size.x - PAD - SIDE_W
+	var left := DIALOG_X + 10.0
+	var right := AI_X - 12.0
 	var avail := right - left
 	var gap := HAND_GAP
 	if n > 1:
@@ -803,8 +810,15 @@ func _mosaic_block0(tex_w: int, artw: int) -> float:
 func _reveal_from_intro() -> void:
 	for i in _hand_views.size():
 		var v := _hand_views[i]
+		# 卡牌从对话框左侧弹入（主人手绘稿）：先藏到对话框左缘外，再滑进各自槽位
+		var slot := _hand_slot(i, _hand_views.size())
+		v.position = Vector2(DIALOG_X - CARD_W - 24.0, slot["pos"].y + 14.0)
+		v.scale = Vector2(0.7, 0.7)
 		var tw := v.create_tween()
-		tw.tween_property(v, "scale", Vector2.ONE, 0.30).set_delay(i * 0.05) \
+		tw.set_parallel()
+		tw.tween_property(v, "position", slot["pos"], 0.34).set_delay(i * 0.06) \
+			.set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_OUT)
+		tw.tween_property(v, "scale", Vector2.ONE, 0.34).set_delay(i * 0.06) \
 			.set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
 	var base_pos := _enemy_sprite.position
 	_enemy_sprite.position = base_pos - Vector2(0, 90)
@@ -931,7 +945,7 @@ func _refresh_hud() -> void:
 
 	_enemy_hp_label.text = "HP %d/%d" % [combat.enemy_hp, combat.enemy_max_hp]
 	var er := clampf(float(combat.enemy_hp) / float(maxi(1, combat.enemy_max_hp)), 0.0, 1.0)
-	_enemy_fill.size = Vector2(SIDE_W * er, 10.0)
+	_enemy_fill.size = Vector2(ENEMY_W * er, 10.0)
 	_enemy_block_label.text = "格挡 %d" % combat.enemy_block if combat.enemy_block > 0 else ""
 	_intent_label.text = _intent_text()
 	var piles := get_node_or_null("BottomSide/PileCounts") as Label
@@ -1008,7 +1022,7 @@ func _play_card_fx(view: StsCardView, card: StsCard, ev: Dictionary) -> void:
 	if is_attack:
 		dest = _enemy_root.position + _enemy_root.size * 0.5 - Vector2(CARD_W, CARD_H) * 0.35
 	else:
-		dest = Vector2(CONSOLE_X + 60.0, size.y - 140.0)
+		dest = Vector2(DIALOG_X + 60.0, size.y - 140.0)
 	var tw := view.create_tween()
 	tw.set_parallel(true)
 	tw.tween_property(view, "position", dest, 0.22) \

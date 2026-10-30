@@ -211,7 +211,7 @@ func _maybe_capture() -> void:
 		return
 	if screen in ["menu", "arena", "battle", "intro", "reward", "result",
 			"menuhover", "rig", "rigwalk", "loadrun", "card", "cardtext", "cardcost", "terminal", "termgif",
-			"termdump", "hero", "stairs", "launch", "launch2"]:
+			"termdump", "hero", "stairs", "launch", "launch2", "arenalayout"]:
 		run.reset_run()
 		if screen == "launch" or screen == "launch2":
 			var sc := _current as LaunchScreen
@@ -249,8 +249,18 @@ func _maybe_capture() -> void:
 			# 演示：进入游戏进度条 + Q 版角色跟着填充边缘跑 → .tmp/loadrun/ PNG 序列
 			await _capture_loadrun(out_path)
 			return
-		if screen == "aiselect":
+		if screen == "aiselect" or screen == "arenalayout":
+			# arenalayout：验收战斗区新布局（侧边栏拉满 + 底部对话框 + AI 娘右端）
 			_show_ai_select()
+			if screen == "arenalayout":
+				if _current != null:
+					_current.queue_free()
+					_current = null
+				_show_level(_levels[0])
+				await get_tree().create_timer(1.4).timeout
+				_shot(out_path)
+				print("[shot=arenalayout] 已存 → %s" % out_path)
+				get_tree().quit()
 		elif screen == "reward":
 			_show_reward()
 		elif screen == "result":
