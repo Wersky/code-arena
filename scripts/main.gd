@@ -277,6 +277,9 @@ func _maybe_capture() -> void:
 					_current = null
 				_show_level(_levels[0])
 				await get_tree().create_timer(1.4).timeout
+				var ar := _current as ArenaScreen
+				if ar != null:
+					print("[shot=arenalayout] %s" % ar.debug_layout_rects())
 				_shot(out_path)
 				print("[shot=arenalayout] 已存 → %s" % out_path)
 				get_tree().quit()
