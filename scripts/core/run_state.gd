@@ -20,6 +20,8 @@ var run_seed: int = 0
 
 # ── 跨关状态 ──────────────────────────────────────────
 var hp := MAX_HP
+## 终端进场只在开始游戏时播一次（2026-10-31 主人钦定：每场战斗打完不再进加载）
+var intro_played := false
 ## 累计造成的伤害（结算画面 / 排行用）
 var score: int = 0
 var last_result: Dictionary = {}
@@ -44,6 +46,7 @@ func reset_run() -> void:
 	score = 0
 	last_result = {}
 	ai = null
+	intro_played = false
 
 
 ## 设定核心 AI 娘

@@ -26,7 +26,7 @@ const CARDS := {
 		"damage": 0,
 		"block": 0,
 		"art": "res://assets/art/sts-art-rice.png",
-		"desc": "吃掉一碗白米饭：DeepSeek 状态 +1（吃满 2 碗成长）。",
+		"desc": "神奇的白米饭。",
 		"flavor": "碳水才是本体。",
 	},
 	"taunt": {

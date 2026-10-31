@@ -510,16 +510,17 @@ func _start_battle() -> void:
 		var ht := head.get_node_or_null("Text") as Label
 		if ht != null:
 			ht.text = "%s · %s" % [level.id, level.title]
-	_status_label.text = "%s ｜ 整理手牌后点下方「发送」，整手按 左→右 依次打出" % level.brief
+	_status_label.text = level.brief
 	_update_rice_hud()
 	_enemy_name_label.text = level.enemy_name
 
 	_rebuild_hand()
 	_refresh_hud()
 
-	# 进场转场（2D → 3D → 2D，主人 2026-10-26 钦定）。
-	# 无头环境跳过动画直接开打（不拖慢冒烟测试）。
-	if _fx_enabled:
+	# 进场转场：仅开始游戏后的第一场战斗播（2026-10-31 主人钦定：
+	# 每场战斗打完不再进终端/加载，直接开打）。无头环境跳过。
+	if _fx_enabled and run != null and not run.intro_played:
+		run.intro_played = true
 		_play_intro()
 	else:
 		_status_label.text = "战斗开始！意图：%s" % _intent_text()
@@ -987,7 +988,7 @@ func _on_card_clicked(view: StsCardView) -> void:
 			_busy = false
 		return
 	# 点牌不再单张出牌：整理手牌（弃牌）后点下方「发送」整手打出
-	_status_label.text = "点下方「发送」把整手牌按 左→右 依次打出；想调整顺序用弃牌模式。"
+	_status_label.text = "点「发送」打出整手牌。"
 
 
 ## 发送：整手牌按 **从左到右** 的顺序一张张打出，每张往对话框左侧弹出
@@ -1060,7 +1061,7 @@ func _update_rice_hud() -> void:
 	var awake := combat.is_awake()
 	if _rice_label != null:
 		if awake:
-			_rice_label.text = "白米饭 %d/%d · 有点睡醒（攻防 +20%%）" % [
+			_rice_label.text = "白米饭 %d/%d · 有点睡醒" % [
 				combat.rice_eaten, StsCombat.RICE_AWAKE]
 			_rice_label.add_theme_color_override("font_color", Color(0.6, 1.0, 0.75))
 		else:
