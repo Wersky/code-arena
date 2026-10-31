@@ -917,9 +917,13 @@ func _rebuild_hand() -> void:
 
 
 func _refresh_playable() -> void:
+	var mult := 1.0
+	if combat != null and combat.is_awake():
+		mult = StsCombat.RICE_BUFF
 	for v in _hand_views:
 		if v != null and v.card != null:
 			v.set_playable(combat != null and combat.can_play(v.card))
+			v.set_multiplier(mult)
 
 
 func _refresh_hud() -> void:

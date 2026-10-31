@@ -39,6 +39,7 @@ const FRAME_PATHS := {
 
 var card: StsCard = null
 var playable := true
+var _mult := 1.0   ## 成长倍率（白米饭吃满后 1.2；1.0 = 无加成）
 
 var _frame: TextureRect = null
 var _art: TextureRect = null
@@ -187,6 +188,27 @@ func flash() -> void:
 	tw.tween_property(self, "modulate",
 			Color(1.6, 1.6, 1.6), 0.06)
 	tw.tween_property(self, "modulate", Color.WHITE, 0.14)
+
+
+## 成长倍率变化 → 数值行改显「基础值 (×倍率)」（2026-10-31 主人钦定：
+## 说明里不写加成，数值直接读在卡面上）
+func set_multiplier(m: float) -> void:
+	if absf(m - _mult) < 0.001:
+		return
+	_mult = m
+	if _desc_lbl != null and card != null:
+		_desc_lbl.text = _desc_text()
+
+
+func _desc_text() -> String:
+	var base := StsCardPool.desc(card.id)
+	if absf(_mult - 1.0) < 0.001:
+		return base
+	if card.kind == StsCard.Kind.ATTACK and card.damage > 0:
+		return "造成 %d (×%.1f) 点伤害。" % [card.damage, _mult]
+	if card.kind == StsCard.Kind.SKILL and card.block > 0:
+		return "获得 %d (×%.1f) 点格挡。" % [card.block, _mult]
+	return base
 
 
 ## 能量不够 → 整卡压暗（arena 每次能量变化后刷新）
