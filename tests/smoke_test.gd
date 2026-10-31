@@ -102,7 +102,7 @@ func _test_sts_combat() -> void:
 	cb.setup(StsCardPool.starter_deck(), "幻觉幼虫", 40,
 			[{"kind": "attack", "value": 7}, {"kind": "defend", "value": 4},
 			 {"kind": "attack", "value": 7}], 80, 424242)
-	_eq(cb.hand.size(), 3, "开局抽 3 张（DeepSeek 补牌数）")
+	_eq(cb.hand.size(), 4, "开局抽 4 张（DeepSeek 补牌数）")
 	_eq(cb.turn, 1, "开局回合 1")
 	_eq(cb.enemy_atk, 7, "敌人攻击取自意图序列（7）")
 	_eq(cb.enemy_def, 4, "敌人防御取自意图序列（4）")
@@ -112,12 +112,12 @@ func _test_sts_combat() -> void:
 	if cb.hand.size() > 1:
 		_check(not cb.can_play(cb.hand[1]), "第二张不能跳着打")
 
-	# 按顺序把 3 张全打出去（无出牌数量限制）：打空后自动从弃牌堆随机补 3
-	for i in 3:
+	# 按顺序把 4 张全打出去（无出牌数量限制）：打空后自动从弃牌堆随机补 4
+	for i in 4:
 		_check(cb.can_play(cb.hand[0]), "第 %d 张：最左可打" % (i + 1))
 		var e1 := cb.play_card(cb.hand[0])
 		_check(bool(e1.get("ok", false)), "第 %d 张按顺序打出" % (i + 1))
-	_eq(cb.hand.size(), 3, "手牌打空后自动从弃牌堆随机补 3 张")
+	_eq(cb.hand.size(), 4, "手牌打空后自动从弃牌堆随机补 4 张")
 	_eq(cb.discard_pile.size(), 0, "补牌从弃牌堆抽走")
 	_eq(cb.draw_pile.size() + cb.discard_pile.size() + cb.hand.size(), 10,
 			"牌堆守恒：抽 + 弃 + 手 = 10")
@@ -248,11 +248,12 @@ func _test_sts_combat() -> void:
 	dcb.play_card(dcb.hand[0], false)
 	var e_rr := dcb.play_card(dcb.hand[0], false)
 	_eq(String(e_rr.get("kind", "")), "rice", "loop 后打 rice：米饭正常")
-	_check(not bool(e_rr.get("repeat", false)), "复读不作用于白米饭（rice 无 repeat 标记）")
-	_eq(dcb.pending_repeat, 1, "米饭不消费复读缓冲（仍挂起）")
+	_check(bool(e_rr.get("repeat", false)), "复读机对米饭生效（repeat 标记）")
+	_eq(int(e_rr.get("value", 0)), 2, "一次吃 2 碗（2026-11-01 主人钦定）")
+	_eq(dcb.pending_repeat, 0, "复读缓冲已消费")
 	dcb.hand.append(StsCardPool.card("fish_ram"))
 	var e_defer := dcb.play_card(dcb.hand[0], false, false, true)
-	_eq(int(e_defer.get("value", 0)), 19, "缓冲顺延：下一张非饭卡 fish 复读 8+11=19")
+	_eq(int(e_defer.get("value", 0)), 8, "复读已被米饭消费：fish 单次执行（末位 6+2=8）")
 
 	# 预览同步：指令行条目（growth 标记）与并行冻结语义
 	dcb.end_send()
@@ -431,11 +432,14 @@ func _test_ui() -> void:
 	_check(arena.get_node_or_null("EnemyStage") != null, "敌人舞台已构建")
 	_check(arena.get_node_or_null("Overlay") != null, "结算弹窗已构建")
 	_check(arena.get_node_or_null("AiCompanion") != null, "右侧 AI 娘已挂载")
+	_check(arena.get_node_or_null("PileDrawIcon") != null, "牌堆图标已构建")
+	_check(arena.get_node_or_null("PileDiscardIcon") != null, "弃牌图标已构建")
+	_check(arena.get_node_or_null("PilePanel") != null, "牌堆查看面板已构建")
 
 	var st := arena.debug_combat_state()
-	_eq(st.get("hand", 0), 3, "界面手牌 3 张（按角色补牌数）")
+	_eq(st.get("hand", 0), 4, "界面手牌 4 张（按角色补牌数）")
 	_eq(st.get("enemy_hp", -1), 40, "L1 敌人 HP 40")
-	_eq(arena.debug_hand_count(), 3, "手牌视图 3 张")
+	_eq(arena.debug_hand_count(), 4, "手牌视图 4 张")
 
 	# 卡视图尺寸与小 GUI
 	var layer := arena.get_node_or_null("CardLayer")

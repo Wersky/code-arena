@@ -23,7 +23,7 @@ var hp := 80
 var max_hp := 80
 var block := 0
 ## 手牌打空后从弃牌堆随机补几张：因角色而异（主人 2026-10-30，DeepSeek 默认 3）
-const REFILL_BY_AI := {"deepdeek": 3}
+const REFILL_BY_AI := {"deepdeek": 4}
 
 ## 白米饭成长（2026-10-31 主人钦定三段）：
 ##   0..1 碗 = 睡眠（躺）｜2..4 碗 = 翻身（坐起，仍睡眠）｜5 碗 = 完全觉醒（站立）
@@ -32,7 +32,7 @@ const RICE_STIR := 2
 const RICE_AWAKE := 5
 const RICE_BUFF := 1.2
 var rice_eaten := 0
-var _refill_count := 3
+var _refill_count := 4
 
 # ── 执行序列机制（2026-10-31 主人钦定 A/B/C/E）──────────
 ## 一回合 = 一次程序运行：发送执行整手 → 自动进入敌方回合。
@@ -75,7 +75,7 @@ var damage_dealt := 0
 ## setup(卡组, 敌人名, 敌人HP, 意图序列, 种子)
 ## pattern 例：[{"kind":"attack","value":8}, {"kind":"defend","value":6}]，循环取用
 func setup(deck: Array[StsCard], e_name: String, e_hp: int,
-		pattern: Array, start_hp: int, seed_i: int, hand_refill: int = 3) -> void:
+		pattern: Array, start_hp: int, seed_i: int, hand_refill: int = 4) -> void:
 	rng.seed = seed_i
 	_refill_count = maxi(1, hand_refill)
 	rice_eaten = 0              ## 每局重置
@@ -167,12 +167,19 @@ func play_card(card: StsCard, auto_refill: bool = true,
 
 	# 白米饭：程序里的「注释行」——不断连段，只推进成长
 	if card.id == "rice":
-		rice_eaten += 1
+		# 复读机对米饭生效（2026-11-01 主人钦定）：一次吃 2 碗
+		var bowls := 1 + (1 if pending_repeat > 0 else 0)
+		pending_repeat = 0
+		if bowls == 2:
+			ev["repeat"] = true
+		rice_eaten += bowls
 		seq_grows += 1
 		## 翻身（2 碗）与觉醒（5 碗）的瞬间 → 事件标记（UI 飘字/赠卡）
-		if rice_eaten == RICE_STIR:
+		var was_stir := rice_eaten - bowls >= RICE_STIR
+		var was_awake := rice_eaten - bowls >= RICE_AWAKE
+		if not was_stir and is_stir():
 			ev["stir_now"] = true
-		if rice_eaten == RICE_AWAKE:
+		if not was_awake and is_awake():
 			_grant_awake_cards()
 			ev["granted"] = 2
 			ev["awake_now"] = true
@@ -331,9 +338,9 @@ func refill_hand() -> void:
 	refill_from_deck()
 
 
-## 该角色每轮回补几张（因角色而异，主人钦定 DeepSeek 3 张）
+## 该角色每轮回补几张（因角色而异，主人钦定 DeepSeek 4 张）
 static func refill_for(ai_id: String) -> int:
-	return int(REFILL_BY_AI.get(ai_id, 3))
+	return int(REFILL_BY_AI.get(ai_id, 4))
 
 
 func set_refill(n: int) -> void:

@@ -29,7 +29,7 @@ const RICE_BUFF := 1.2
 const OBS_BRACE := 0
 const OBS_CHARGE := 3
 const PLAYER_HP := 80
-const HAND_REFILL := 3
+const HAND_REFILL := 4
 const MAX_TURNS := 60
 
 # ── 评估器权重（本模拟器自定，不是游戏常量）───────────────────────────
@@ -47,16 +47,16 @@ const SEED_STEP := 7919
 
 ## 关卡表快照（读自 scripts/data/level_pool.gd）：敌 hp / atk / def
 const LEVELS := [
-	{"id": "L1", "hp": 40, "atk": 7, "def": 4},
-	{"id": "L2", "hp": 60, "atk": 8, "def": 5},
-	{"id": "L3", "hp": 76, "atk": 9, "def": 6},
-	{"id": "L4", "hp": 92, "atk": 10, "def": 6},
-	{"id": "L5", "hp": 110, "atk": 11, "def": 7},
-	{"id": "L6", "hp": 126, "atk": 12, "def": 8},
-	{"id": "L7", "hp": 130, "atk": 13, "def": 8},
-	{"id": "L8", "hp": 138, "atk": 12, "def": 8},
-	{"id": "L9", "hp": 140, "atk": 12, "def": 8},
-	{"id": "L10", "hp": 146, "atk": 13, "def": 8},
+	{"id": "L1", "hp": 148, "atk": 7, "def": 4},
+	{"id": "L2", "hp": 220, "atk": 8, "def": 5},
+	{"id": "L3", "hp": 282, "atk": 9, "def": 6},
+	{"id": "L4", "hp": 342, "atk": 10, "def": 6},
+	{"id": "L5", "hp": 408, "atk": 11, "def": 7},
+	{"id": "L6", "hp": 470, "atk": 12, "def": 8},
+	{"id": "L7", "hp": 480, "atk": 13, "def": 8},
+	{"id": "L8", "hp": 508, "atk": 12, "def": 8},
+	{"id": "L9", "hp": 518, "atk": 12, "def": 8},
+	{"id": "L10", "hp": 542, "atk": 13, "def": 8},
 ]
 
 ## 起始卡组快照（读自 sts_card_pool.gd starter_deck @T4 完成态）：

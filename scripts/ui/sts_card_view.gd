@@ -216,7 +216,7 @@ func _desc_text() -> String:
 ## 队列槽位徽标：放卡名条右端（左端是费用球，互不遮挡）
 const SLOT_BADGE_RECT := Rect2(124, 3, 18, 20)
 const C_SLOT_LEAD := Color(1.0, 0.82, 0.40)     ## 「首」金 #ffd166
-const C_SLOT_FINISH := Color(0.31, 0.64, 0.88)  ## 「尾」蓝 #4fa3e0
+const C_SLOT_FINISH := Color(0.639, 0.388, 0.815)  ## 「尾」紫 #a363d0（2026-11-01 主人钦定：与防御卡蓝框区分）
 
 var _slot_lead_lbl: Label = null
 var _slot_finish_lbl: Label = null
@@ -227,7 +227,7 @@ var _slot_finish_lbl: Label = null
 func set_slot(lead: bool, finish: bool) -> void:
 	if _slot_frame_first == null:
 		_slot_frame_first = _make_slot_frame(Color(1.0, 0.82, 0.4))
-		_slot_frame_last = _make_slot_frame(Color(0.31, 0.64, 0.88))
+		_slot_frame_last = _make_slot_frame(Color(0.639, 0.388, 0.815))
 	_slot_frame_first.visible = lead
 	_slot_frame_last.visible = finish and not lead
 

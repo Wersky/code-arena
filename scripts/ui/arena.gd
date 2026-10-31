@@ -965,6 +965,7 @@ func _refresh_hud() -> void:
 	var piles := get_node_or_null("BottomSide/PileCounts") as Label
 	if piles != null:
 		piles.text = "抽 %d ｜ 弃 %d" % [combat.draw_pile.size(), combat.discard_pile.size()]
+	_update_pile_counts()
 
 
 func _on_hand_hover(view: StsCardView, entered: bool) -> void:
