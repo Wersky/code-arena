@@ -6,6 +6,7 @@ extends RefCounted
 ## 起始卡组张数：3 攻 + 2 防（主人钦定：初始共 5 张）
 const STARTER_ATTACKS := 3
 const STARTER_SKILLS := 2
+const STARTER_RICE := 3        ## 白米饭：DeepSeek 的成长燃料（主人 2026-10-30）
 
 const CARDS := {
 	"fish_ram": {
@@ -17,6 +18,16 @@ const CARDS := {
 		"art": "res://assets/art/sts-art-fish_ram.png",
 		"desc": "造成 6 点伤害。",
 		"flavor": "全速前进！",
+	},
+	"rice": {
+		"name": "白米饭",
+		"kind": StsCard.Kind.SKILL,
+		"cost": 0,
+		"damage": 0,
+		"block": 0,
+		"art": "res://assets/art/sts-art-rice.png",
+		"desc": "吃掉一碗白米饭：DeepSeek 状态 +1（吃满 2 碗成长）。",
+		"flavor": "碳水才是本体。",
 	},
 	"taunt": {
 		"name": "来打我呀！",
@@ -74,11 +85,13 @@ static func kind_color(k: int) -> Color:
 	return KIND_COLORS.get(k, Color.WHITE)
 
 
-## 起始卡组：3 张肥鱼铁头撞 + 2 张来打我呀！
+## 起始卡组：3 张肥鱼铁头撞 + 2 张来打我呀！+ 3 张白米饭
 static func starter_deck() -> Array[StsCard]:
 	var out: Array[StsCard] = []
 	for i in STARTER_ATTACKS:
 		out.append(card("fish_ram"))
 	for i in STARTER_SKILLS:
 		out.append(card("taunt"))
+	for i in STARTER_RICE:
+		out.append(card("rice"))
 	return out

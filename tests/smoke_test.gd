@@ -19,6 +19,7 @@ func _initialize() -> void:
 	_test_sts_cards()
 	_test_level_pool()
 	_test_sts_combat()
+	_test_rice()
 	await _test_ui()
 	await _test_battle_flow(true)
 	await _test_battle_flow(false)
@@ -45,7 +46,7 @@ func _eq(a, b, what: String) -> void:
 func _test_sts_cards() -> void:
 	print("[卡池]")
 	var ids := StsCardPool.all_ids()
-	_eq(ids.size(), 2, "卡池共 2 张卡")
+	_eq(ids.size(), 3, "卡池共 3 张卡（含白米饭）")
 	var ram := StsCardPool.card("fish_ram")
 	_check(ram != null and ram.damage == 6 and ram.cost == 1
 			and ram.kind == StsCard.Kind.ATTACK, "肥鱼铁头撞：1 费攻击 6 伤")
@@ -53,13 +54,13 @@ func _test_sts_cards() -> void:
 	_check(taunt != null and taunt.block == 5 and taunt.cost == 1
 			and taunt.kind == StsCard.Kind.SKILL, "来打我呀！：1 费防御 5 格挡")
 	var deck := StsCardPool.starter_deck()
-	_eq(deck.size(), 5, "起始卡组共 5 张")
+	_eq(deck.size(), 8, "起始卡组共 8 张")
 	var atk := 0
 	var def := 0
 	for c in deck:
 		atk += 1 if c.kind == StsCard.Kind.ATTACK else 0
 		def += 1 if c.kind == StsCard.Kind.SKILL else 0
-	_check(atk == 3 and def == 2, "起始卡组 3 攻 + 2 防（得 %d+%d）" % [atk, def])
+	_check(atk == 3 and def == 5, "起始卡组 3 攻 + 5 防（含 3 张白米饭，得 %d+%d）" % [atk, def])
 	for c in deck:
 		_check(ResourceLoader.exists(c.art_path), "卡面贴图存在：%s" % c.id)
 
@@ -103,15 +104,15 @@ func _test_sts_combat() -> void:
 		_check(bool(e1.get("ok", false)), "第 %d 张按顺序打出" % (i + 1))
 	_eq(cb.hand.size(), 3, "手牌打空后自动从弃牌堆随机补 3 张")
 	_eq(cb.discard_pile.size(), 0, "补牌从弃牌堆抽走")
-	_eq(cb.draw_pile.size() + cb.discard_pile.size() + cb.hand.size(), 5,
-			"牌堆守恒：抽 + 弃 + 手 = 5")
+	_eq(cb.draw_pile.size() + cb.discard_pile.size() + cb.hand.size(), 8,
+			"牌堆守恒：抽 + 弃 + 手 = 8")
 	_check(cb.can_play(cb.hand[0]), "补牌后最左一张可打")
 
 	# 弃牌：弃 1 张立刻从牌堆抽 1 张，手牌数不变
 	var before := cb.hand.size()
 	_check(cb.discard_card(cb.hand[0]), "弃牌成功")
 	_eq(cb.hand.size(), before, "弃 1 抽 1，手牌数不变")
-	_eq(cb.draw_pile.size() + cb.discard_pile.size() + cb.hand.size(), 5, "弃牌后守恒")
+	_eq(cb.draw_pile.size() + cb.discard_pile.size() + cb.hand.size(), 8, "弃牌后守恒")
 
 	# 结束回合：敌人行动 + 回合推进
 	var events := cb.end_turn()
@@ -119,7 +120,7 @@ func _test_sts_combat() -> void:
 	_check(cb.hand.size() >= 1, "新回合手牌有牌（弃牌堆随机补）")
 	_check(events.size() >= 1, "结束回合返回敌人行动事件")
 	_eq(cb.turn, 2, "回合推进到 2")
-	_eq(cb.draw_pile.size() + cb.discard_pile.size() + cb.hand.size(), 5, "新回合守恒")
+	_eq(cb.draw_pile.size() + cb.discard_pile.size() + cb.hand.size(), 8, "新回合守恒")
 
 	# 连打：攻击/防御两种牌都会轮到，打死敌人
 	var saw_attack := false
@@ -148,13 +149,55 @@ func _test_sts_combat() -> void:
 	_eq(cb2.hp, 0, "败时 HP 归 0")
 
 
+# ── ③b 白米饭成长 ───────────────────────────────────────
+func _test_rice() -> void:
+	print("[白米饭成长]")
+	var deck := StsCardPool.starter_deck()
+	_eq(deck.size(), 8, "起始卡组 8 张（3 攻 + 2 防 + 3 饭）")
+	var rice_n := 0
+	for c in deck:
+		if c.id == "rice":
+			rice_n += 1
+	_eq(rice_n, 3, "白米饭 3 张")
+
+	var cb := StsCombat.new()
+	cb.setup(deck, "沙袋", 9999, [{"kind": "attack", "value": 4}], 80, 7)
+	_eq(cb.rice_eaten, 0, "开局 0 碗（每局重置）")
+	_eq(cb.is_awake(), false, "开局未成长")
+
+	# 按顺序出牌只能打 hand[0]：把白米饭插到最左再打
+	cb.hand.insert(0, StsCardPool.card("rice"))
+	var e1 := cb.play_card(cb.hand[0])
+	_eq(String(e1.get("kind", "")), "rice", "白米饭可打出")
+	_eq(cb.rice_eaten, 1, "吃 1 碗")
+	_eq(cb.is_awake(), false, "1 碗还没醒")
+
+	cb.hand.insert(0, StsCardPool.card("rice"))
+	cb.play_card(cb.hand[0])
+	_eq(cb.rice_eaten, 2, "吃满 2 碗")
+	_eq(cb.is_awake(), true, "吃满 2 碗 → 有点睡醒")
+
+	# 醒态加成：攻击 6 → 7（+20%），格挡 5 → 6（+20%）
+	cb.hand.insert(0, StsCardPool.card("fish_ram"))
+	var ea := cb.play_card(cb.hand[0])
+	_eq(int(ea.get("value", 0)), 7, "醒态攻击 6 → 7（+20%）")
+	cb.hand.insert(0, StsCardPool.card("taunt"))
+	var ed := cb.play_card(cb.hand[0])
+	_eq(int(ed.get("value", 0)), 6, "醒态格挡 5 → 6（+20%）")
+
+	# 新开一局 → 计数清零
+	var cb2 := StsCombat.new()
+	cb2.setup(deck, "沙袋", 9999, [{"kind": "attack", "value": 4}], 80, 7)
+	_eq(cb2.rice_eaten, 0, "新对局状态重置")
+
+
 # ── ④ 战斗 UI 构建 ────────────────────────────────────
 func _test_ui() -> void:
 	print("[战斗界面]")
 	var run := RunState.new()
 	run.reset_run()
 	run.set_ai(AiPool.get_ai("deepdeek"))
-	_eq(run.deck.size(), 5, "开局卡组 5 张")
+	_eq(run.deck.size(), 8, "开局卡组 8 张（含 3 张白米饭）")
 
 	# 启动界面接手了旧主菜单的 BGM 播放入口，先确认它真的在放
 	var launch := LaunchScreen.new()

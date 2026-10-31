@@ -211,7 +211,7 @@ func _maybe_capture() -> void:
 		return
 	if screen in ["menu", "arena", "battle", "intro", "reward", "result",
 			"menuhover", "rig", "rigwalk", "loadrun", "card", "cardtext", "cardcost", "terminal", "termgif",
-			"termdump", "hero", "stairs", "launch", "launch2", "arenalayout", "sendtest"]:
+			"termdump", "hero", "stairs", "launch", "launch2", "arenalayout", "sendtest", "ricetest"]:
 		run.reset_run()
 		if screen == "launch" or screen == "launch2":
 			var sc := _current as LaunchScreen
@@ -248,6 +248,24 @@ func _maybe_capture() -> void:
 		if screen == "loadrun":
 			# 演示：进入游戏进度条 + Q 版角色跟着填充边缘跑 → .tmp/loadrun/ PNG 序列
 			await _capture_loadrun(out_path)
+			return
+		if screen == "ricetest":
+			# 验收白米饭成长：喂满 2 碗 → 伙伴换成「有点睡醒」+ HUD 显示增益
+			_show_ai_select()
+			if _current != null:
+				_current.queue_free()
+				_current = null
+			_show_level(_levels[0])
+			await get_tree().create_timer(1.2).timeout
+			var arr := _current as ArenaScreen
+			if arr != null:
+				arr.debug_feed_rice(2)
+				await get_tree().create_timer(1.2).timeout
+				print("[shot=ricetest] 白米饭=%d 醒=%s" % [
+					arr.combat.rice_eaten, str(arr.combat.is_awake())])
+			_shot(out_path)
+			print("[shot=ricetest] 已存 → %s" % out_path)
+			get_tree().quit()
 			return
 		if screen == "sendtest":
 			# 验收「点发送后手牌尺寸」：打一整手 → 补牌 → 再截图，牌应与开局同样大

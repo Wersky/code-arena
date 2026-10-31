@@ -24,6 +24,12 @@ var max_hp := 80
 var block := 0
 ## 手牌打空后从弃牌堆随机补几张：因角色而异（主人 2026-10-30，DeepSeek 默认 3）
 const REFILL_BY_AI := {"deepdeek": 3}
+
+## 白米饭成长：每吃一碗 +1，吃满 RICE_AWAKE 碗进入「有点睡醒」，攻防 ×1.2
+## 计数在 setup 里清零 → 每局战斗独立，符合主人「每个对局里状态都要重置」
+const RICE_AWAKE := 2
+const RICE_BUFF := 1.2
+var rice_eaten := 0
 var _refill_count := 3
 # 敌人
 var enemy_name := ""
@@ -51,6 +57,7 @@ func setup(deck: Array[StsCard], e_name: String, e_hp: int,
 		pattern: Array, start_hp: int, seed_i: int, hand_refill: int = 3) -> void:
 	rng.seed = seed_i
 	_refill_count = maxi(1, hand_refill)
+	rice_eaten = 0              ## 每局重置
 	hp = maxi(1, start_hp)
 	max_hp = maxi(hp, 80)
 	block = 0
@@ -116,13 +123,30 @@ func play_card(card: StsCard, auto_refill: bool = true) -> Dictionary:
 		return ev
 	hand.erase(card)
 	discard_pile.append(card)
+
+	# 白米饭：不结算伤害/格挡，只推进成长进度
+	if card.id == "rice":
+		rice_eaten += 1
+		if auto_refill:
+			_refill()
+		ev.merge({"ok": true, "kind": "rice", "value": rice_eaten, "to_enemy": false}, true)
+		return ev
+
+	# 「有点睡醒」：攻击牌伤害 +20%、防御牌格挡 +20%
+	var dmg := card.damage
+	var blk := card.block
+	if is_awake():
+		if card.kind == StsCard.Kind.ATTACK:
+			dmg = int(round(float(dmg) * RICE_BUFF))
+		else:
+			blk = int(round(float(blk) * RICE_BUFF))
 	if card.kind == StsCard.Kind.ATTACK:
-		var dealt := _hit_enemy(card.damage)
+		var dealt := _hit_enemy(dmg)
 		damage_dealt += dealt
 		ev.merge({"ok": true, "kind": "attack", "value": dealt, "to_enemy": true}, true)
 	else:
-		block += card.block
-		ev.merge({"ok": true, "kind": "defend", "value": card.block, "to_enemy": false}, true)
+		block += blk
+		ev.merge({"ok": true, "kind": "defend", "value": blk, "to_enemy": false}, true)
 	if auto_refill:
 		_refill()               ## 单张出牌：打空立刻从弃牌堆随机补
 	if enemy_hp <= 0:
@@ -150,6 +174,11 @@ func _refill() -> void:
 		var idx := rng.randi_range(0, discard_pile.size() - 1)
 		hand.append(discard_pile[idx])
 		discard_pile.remove_at(idx)
+
+
+## 是否已成长到「有点睡醒」（吃满 2 碗白米饭）
+func is_awake() -> bool:
+	return rice_eaten >= RICE_AWAKE
 
 
 ## 整手打出后由 UI 调一次补牌（批量出牌时中途不补，避免永远打不完）

@@ -92,6 +92,7 @@ var _dialog: PanelContainer = null   ## 底部对话框底板（手牌 + 操作�
 var _companion: AiCompanion = null
 var _discard_mode := false
 var _discard_btn: Button = null
+var _rice_label: Label = null
 var _send_btn: Button = null
 var _discards_left := DISCARD_LIMIT_PER_TURN
 
@@ -334,6 +335,10 @@ func _build_companion() -> void:
 	add_child(_companion)
 	if run != null:
 		_companion.setup(run.ai)
+	_rice_label = UiKit.label("白米饭 0/2", UiKit.FS_XS, Color(1.0, 0.9, 0.55))
+	_rice_label.name = "RiceLabel"
+	_rice_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	add_child(_rice_label)
 
 
 func _build_fx() -> void:
@@ -415,6 +420,9 @@ func _layout() -> void:
 	if _companion:
 		_companion.position = Vector2(AI_X, H - 324.0)
 		_companion.size = Vector2(W - AI_X - PAD, 304.0)
+	if _rice_label:
+		_rice_label.position = Vector2(AI_X + 8.0, H - 350.0)
+		_rice_label.size = Vector2(W - AI_X - PAD - 8.0, 24.0)
 
 	if _overlay:
 		_overlay.position = Vector2(W * 0.5 - 280.0, H * 0.5 - 170.0)
@@ -503,6 +511,7 @@ func _start_battle() -> void:
 		if ht != null:
 			ht.text = "%s · %s" % [level.id, level.title]
 	_status_label.text = "%s ｜ 整理手牌后点下方「发送」，整手按 左→右 依次打出" % level.brief
+	_update_rice_hud()
 	_enemy_name_label.text = level.enemy_name
 
 	_rebuild_hand()
@@ -1007,8 +1016,15 @@ func _on_send_pressed() -> void:
 			break
 		order += 1
 		_layout_hand(true)
-		# 数值反馈：攻击 → 敌人闪红飘伤害；防御 → 格挡飘字
-		if String(ev.get("kind", "")) == "attack":
+		# 数值反馈：攻击 → 敌人闪红飘伤害；防御 → 格挡飘字；白米饭 → 成长进度
+		var kind := String(ev.get("kind", ""))
+		if kind == "rice":
+			_float_text(Vector2(size.x * 0.5, size.y - CARD_H - 90.0),
+					"吃掉白米饭 %d/%d" % [int(ev.get("value", 0)), StsCombat.RICE_AWAKE],
+					Color(1.0, 0.9, 0.55), UiKit.FS_M)
+			SfxNode.play("hand_small")
+			_update_rice_hud()
+		elif kind == "attack":
 			_enemy_hit_fx(int(ev.get("value", 0)))
 			SfxNode.play("hand_big")
 		else:
@@ -1021,6 +1037,7 @@ func _on_send_pressed() -> void:
 			view.queue_free()
 		_refresh_playable()
 
+	_update_rice_hud()
 	combat.refill_hand()        ## 整手打完，才从弃牌堆随机补 N 张
 	_refresh_hud()
 	_sync_hand_views()
@@ -1036,6 +1053,22 @@ func _on_send_pressed() -> void:
 
 
 ## 发送动画：这张牌往**对话框左侧**弹出去并淡出
+## 白米饭成长 HUD：进度 + 到点换伙伴立绘
+func _update_rice_hud() -> void:
+	if combat == null:
+		return
+	var awake := combat.is_awake()
+	if _rice_label != null:
+		if awake:
+			_rice_label.text = "白米饭 %d/%d · 有点睡醒（攻防 +20%%）" % [
+				combat.rice_eaten, StsCombat.RICE_AWAKE]
+			_rice_label.add_theme_color_override("font_color", Color(0.6, 1.0, 0.75))
+		else:
+			_rice_label.text = "白米饭 %d/%d" % [combat.rice_eaten, StsCombat.RICE_AWAKE]
+	if _companion != null:
+		_companion.set_awake(awake)
+
+
 func _send_card_fx(view: StsCardView) -> void:
 	var tw := view.create_tween()
 	tw.set_parallel(true)
@@ -1357,6 +1390,14 @@ func debug_hand_count() -> int:
 
 
 ## 手牌首张的缩放（验收「发送后牌变小」用）
+## 自检：直接喂 n 碗白米饭，用来看成长后的伙伴立绘与 HUD
+func debug_feed_rice(n: int) -> void:
+	if combat == null:
+		return
+	combat.rice_eaten = mini(combat.rice_eaten + n, StsCombat.RICE_AWAKE)
+	_update_rice_hud()
+
+
 ## 输入条与侧栏的实际矩形（验收「下缘齐平」用）
 func debug_layout_rects() -> String:
 	var dlg := get_node_or_null("ActionDialog") as Control
