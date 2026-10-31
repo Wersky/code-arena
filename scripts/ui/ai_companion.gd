@@ -23,6 +23,8 @@ const Z_RISE := 22.0
 const SLEEP_ASSET := "res://assets/art/ai-deepdeek-sleep.png"
 ## 成长到「有点睡醒」用的立绘（快跑 1K 生图，2026-10-30）
 const AWAKE_ASSET := "res://assets/art/ai-deepdeek-awake.png"
+## 完全觉醒站立立绘（2026-10-31 主人钦定：调皮自信「来打我呀」神态）
+const STAND_ASSET := "res://assets/art/ai-deepdeek-awake-stand.png"
 
 ## 深蓝调色板（与 chibi_rig 占位件一致，保持一套 DeepSeek 系颜色）
 const C_OUT := Color("#1B2246")
@@ -41,7 +43,7 @@ var _ai: AiData = null
 var _art: TextureRect = null
 var _zs: Array[Label] = []
 var _mode := ""   ## "sleep" / "portrait"
-var _awake := false   ## 睡觉造型是否已成长到「有点睡醒」
+var _stage := "sleep"   ## 睡觉造型成长阶段：sleep / stir / stand
 var _art_generated := false   ## 睡觉图用的是生成立绘（true）还是程序化回退（false）
 
 
@@ -53,25 +55,29 @@ func _init() -> void:
 ## 展示哪位 AI 娘。ai == null 时隐藏。
 ## 成长状态切换：吃满白米饭后从「沉睡」换成「有点睡醒」。
 ## 只对 deepdeek 的睡觉造型生效（其它 AI 是立绘模式，没有这个阶段）。
-func set_awake(on: bool) -> void:
-	if _mode != "sleep" or _art == null or _awake == on:
+## 展示哪位 AI 娘。ai == null 时隐藏。
+## 成长三段（2026-10-31 主人钦定）：sleep 躺睡 → stir 翻身坐起 → stand 觉醒站立。
+## 只对 deepdeek 的睡觉造型生效（其它 AI 是立绘模式，没有这个阶段）。
+func set_stage(stage: String) -> void:
+	if _mode != "sleep" or _art == null or _stage == stage:
 		return
-	_awake = on
-	var t := load(AWAKE_ASSET if on else SLEEP_ASSET) as Texture2D
+	_stage = stage
+	var path := SLEEP_ASSET
+	if stage == "stir":
+		path = AWAKE_ASSET
+	elif stage == "stand":
+		path = STAND_ASSET
+	var t := load(path) as Texture2D
 	if t == null:
 		return
 	_art.texture = t
 	_art_generated = true
 	_place_children()
-	if on:
-		# 醒来时弹一下，肉眼能看出「变了」
-		_art.pivot_offset = Vector2(_art.size.x * 0.5, _art.size.y)
-		_art.scale = Vector2(0.84, 0.84)
-		var tw := _art.create_tween()
-		tw.tween_property(_art, "scale", Vector2.ONE, 0.42) \
-				.set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
-
-
+	# 换形态弹一下，肉眼能看出「变了」
+	_art.pivot_offset = Vector2(_art.size.x * 0.5, _art.size.y)
+	_art.scale = Vector2(0.84, 0.84)
+	var tw := _art.create_tween()
+	tw.tween_property(_art, "scale", Vector2.ONE, 0.42) 			.set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
 func setup(ai: AiData) -> void:
 	_ai = ai
 	_teardown()

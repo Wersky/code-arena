@@ -25,9 +25,11 @@ var block := 0
 ## 手牌打空后从弃牌堆随机补几张：因角色而异（主人 2026-10-30，DeepSeek 默认 3）
 const REFILL_BY_AI := {"deepdeek": 3}
 
-## 白米饭成长：每吃一碗 +1，吃满 RICE_AWAKE 碗进入「有点睡醒」，攻防 ×1.2
-## 计数在 setup 里清零 → 每局战斗独立，符合主人「每个对局里状态都要重置」
-const RICE_AWAKE := 2
+## 白米饭成长（2026-10-31 主人钦定三段）：
+##   0..1 碗 = 睡眠（躺）｜2..4 碗 = 翻身（坐起，仍睡眠）｜5 碗 = 完全觉醒（站立）
+## 觉醒瞬间：赠 2 张特殊攻击牌进弃牌堆（鲸鱼铁头炮/觉醒怒涛），每局重置
+const RICE_STIR := 2
+const RICE_AWAKE := 5
 const RICE_BUFF := 1.2
 var rice_eaten := 0
 var _refill_count := 3
@@ -167,8 +169,12 @@ func play_card(card: StsCard, auto_refill: bool = true,
 	if card.id == "rice":
 		rice_eaten += 1
 		seq_grows += 1
-		## 恰好吃满第 RICE_AWAKE 碗的瞬间 → 事件带 awake_now（UI 飘「有点睡醒！」）
+		## 翻身（2 碗）与觉醒（5 碗）的瞬间 → 事件标记（UI 飘字/赠卡）
+		if rice_eaten == RICE_STIR:
+			ev["stir_now"] = true
 		if rice_eaten == RICE_AWAKE:
+			_grant_awake_cards()
+			ev["granted"] = 2
 			ev["awake_now"] = true
 		if auto_refill:
 			_refill()
@@ -204,11 +210,14 @@ func play_card(card: StsCard, auto_refill: bool = true,
 	seq_kind = card.kind
 
 	# 复读机（D）：本卡效果执行两次，连段也算两阶——第二次从下一阶起步
+	# 觉醒怒涛（觉醒赠卡）：自带执行两次
 	var times := 1
 	if pending_repeat > 0 and card.id != "rice":
 		times = 2
 		pending_repeat = 0
 		ev["repeat"] = true
+	elif card.id == "rage":
+		times = 2
 
 	# 数值 = 基础 + 连段阶梯 + 槽位，再乘成长倍率。
 	# 复读的两次逐次推阶（如末位鱼 8 → 10）；槽位在两次执行里都生效（同占一个槽）。
@@ -222,7 +231,7 @@ func play_card(card: StsCard, auto_refill: bool = true,
 		if is_awake():
 			v = int(round(float(v) * RICE_BUFF))
 		if card.kind == StsCard.Kind.ATTACK:
-			dealt += _hit_enemy(v)
+			dealt += _hit_enemy(v, card.id == "cannon")
 		else:
 			blk_gain += v
 		if i < times - 1:
@@ -302,6 +311,21 @@ func is_awake() -> bool:
 	return rice_eaten >= RICE_AWAKE
 
 
+## 翻身阶段（2..4 碗）：还睡着，但视觉上坐起来了
+func is_stir() -> bool:
+	return rice_eaten >= RICE_STIR and not is_awake()
+
+
+## 觉醒瞬间赠卡（进弃牌堆，随循环进入手牌）
+const AWAKE_GRANT_IDS := ["cannon", "rage"]
+
+func _grant_awake_cards() -> void:
+	for card_id in AWAKE_GRANT_IDS:
+		var c := StsCardPool.card(card_id)
+		if c != null:
+			discard_pile.append(c)
+
+
 ## 整手打出后由 UI 调一次补牌（T5 起与回合补牌同语义：全牌堆采样）
 func refill_hand() -> void:
 	refill_from_deck()
@@ -317,9 +341,9 @@ func set_refill(n: int) -> void:
 
 
 ## 对敌人结算伤害（先扣敌人格挡）。返回实际造成的伤害。
-func _hit_enemy(dmg: int) -> int:
+func _hit_enemy(dmg: int, ignore_block: bool = false) -> int:
 	var d := dmg
-	if enemy_block > 0:
+	if enemy_block > 0 and not ignore_block:
 		var absorbed: int = mini(enemy_block, d)
 		enemy_block -= absorbed
 		d -= absorbed

@@ -24,7 +24,7 @@ extends SceneTree
 const STREAK_STEP := 3
 const LEAD_BONUS := 2
 const FINISH_BONUS := 2
-const RICE_AWAKE := 2
+const RICE_AWAKE := 5
 const RICE_BUFF := 1.2
 const OBS_BRACE := 0
 const OBS_CHARGE := 3
@@ -48,11 +48,11 @@ const SEED_STEP := 7919
 ## 关卡表快照（读自 scripts/data/level_pool.gd）：敌 hp / atk / def
 const LEVELS := [
 	{"id": "L1", "hp": 40, "atk": 7, "def": 4},
-	{"id": "L2", "hp": 54, "atk": 8, "def": 5},
-	{"id": "L3", "hp": 68, "atk": 9, "def": 6},
-	{"id": "L4", "hp": 82, "atk": 10, "def": 6},
-	{"id": "L5", "hp": 98, "atk": 11, "def": 7},
-	{"id": "L6", "hp": 114, "atk": 12, "def": 8},
+	{"id": "L2", "hp": 60, "atk": 8, "def": 5},
+	{"id": "L3", "hp": 76, "atk": 9, "def": 6},
+	{"id": "L4", "hp": 92, "atk": 10, "def": 6},
+	{"id": "L5", "hp": 110, "atk": 11, "def": 7},
+	{"id": "L6", "hp": 126, "atk": 12, "def": 8},
 	{"id": "L7", "hp": 130, "atk": 13, "def": 8},
 	{"id": "L8", "hp": 138, "atk": 12, "def": 8},
 	{"id": "L9", "hp": 140, "atk": 12, "def": 8},
@@ -207,6 +207,10 @@ func _play_one(st: SimState, c: Dictionary, lead: bool, finish: bool) -> void:
 		var step := STREAK_STEP * (st.seq_streak - 1)
 		if int(c["kind"]) == KIND_ATTACK:
 			var v := int(c["dmg"]) + step + slot
+			if st.rice == RICE_AWAKE:
+				## 觉醒赠卡（与游戏 sts_combat._grant_awake_cards 一致）
+				st.discard.append({"id": "cannon", "kind": KIND_ATTACK, "dmg": 12, "blk": 0})
+				st.discard.append({"id": "rage", "kind": KIND_ATTACK, "dmg": 5, "blk": 0})
 			if st.rice >= RICE_AWAKE:
 				v = int(round(float(v) * RICE_BUFF))
 			st.seq_attacks += 1

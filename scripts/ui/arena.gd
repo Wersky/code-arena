@@ -502,10 +502,19 @@ func _start_battle() -> void:
 	combat.set_refill(StsCombat.refill_for(run.ai.id))
 
 	if _enemy_sprite:
-		_enemy_sprite.texture = _enemy_texture(level.enemy_tint, level.is_boss)
+		var art_path := "res://assets/art/enemy-%s.png" % level.id
+		if ResourceLoader.exists(art_path):
+			_enemy_sprite.texture = load(art_path)
+			_enemy_sprite.texture_filter = CanvasItem.TEXTURE_FILTER_LINEAR
+		else:
+			_enemy_sprite.texture = _enemy_texture(level.enemy_tint, level.is_boss)
 		_enemy_sprite.modulate = Color.WHITE
 		_enemy_sprite.visible = true
 		_enemy_sprite.pivot_offset = _enemy_sprite.size * 0.5
+		# 呼吸动效（2026-10-31 主人钦定）：敌人也轻轻起伏
+		var breath := _enemy_sprite.create_tween().set_loops()
+		breath.tween_property(_enemy_sprite, "scale:y", 1.04, 1.6) 				.set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN_OUT)
+		breath.tween_property(_enemy_sprite, "scale:y", 1.0, 1.6) 				.set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN_OUT)
 
 	var head := _rail_box.get_node_or_null("RailTitle")
 	if head != null:
@@ -1120,7 +1129,12 @@ func _update_rice_hud() -> void:
 		else:
 			_rice_label.text = "白米饭 %d/%d" % [combat.rice_eaten, StsCombat.RICE_AWAKE]
 	if _companion != null:
-		_companion.set_awake(awake)
+		if awake:
+			_companion.set_stage("stand")
+		elif combat.is_stir():
+			_companion.set_stage("stir")
+		else:
+			_companion.set_stage("sleep")
 
 
 func _send_card_fx(view: StsCardView) -> void:

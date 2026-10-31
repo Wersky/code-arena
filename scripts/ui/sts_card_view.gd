@@ -39,6 +39,8 @@ const FRAME_PATHS := {
 
 var card: StsCard = null
 var playable := true
+var _slot_frame_first: Panel = null
+var _slot_frame_last: Panel = null
 var _mult := 1.0   ## 成长倍率（白米饭吃满后 1.2；1.0 = 无加成）
 
 var _frame: TextureRect = null
@@ -223,11 +225,27 @@ var _slot_finish_lbl: Label = null
 ## 序列槽位徽标（arena._update_seq_preview 每次刷新调用）：
 ## 队列首位 →「首」（初始化 +1）、末位 →「尾」（收尾 +2）；互斥显示，都没有就藏。
 func set_slot(lead: bool, finish: bool) -> void:
-	if _slot_lead_lbl == null:
-		_slot_lead_lbl = _make_slot_badge("首", C_SLOT_LEAD)
-		_slot_finish_lbl = _make_slot_badge("尾", C_SLOT_FINISH)
-	_slot_lead_lbl.visible = lead
-	_slot_finish_lbl.visible = (not lead) and finish
+	if _slot_frame_first == null:
+		_slot_frame_first = _make_slot_frame(Color(1.0, 0.82, 0.4))
+		_slot_frame_last = _make_slot_frame(Color(0.31, 0.64, 0.88))
+	_slot_frame_first.visible = lead
+	_slot_frame_last.visible = finish and not lead
+
+
+func _make_slot_frame(col: Color) -> Panel:
+	var pn := Panel.new()
+	var sb := StyleBoxFlat.new()
+	sb.bg_color = Color(0, 0, 0, 0)
+	sb.border_color = col
+	sb.set_border_width_all(3)
+	sb.set_corner_radius_all(6)
+	sb.anti_aliasing = false
+	pn.add_theme_stylebox_override("panel", sb)
+	pn.position = Vector2(1, 1)
+	pn.size = Vector2(W - 2, H - 2)
+	pn.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	add_child(pn)
+	return pn
 
 
 func _make_slot_badge(txt: String, col: Color) -> Label:

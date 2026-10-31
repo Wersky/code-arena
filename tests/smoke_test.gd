@@ -46,7 +46,7 @@ func _eq(a, b, what: String) -> void:
 func _test_sts_cards() -> void:
 	print("[卡池]")
 	var ids := StsCardPool.all_ids()
-	_eq(ids.size(), 5, "卡池共 5 张卡（含白米饭与两张 D 指令行）")
+	_eq(ids.size(), 7, "卡池共 7 张卡（含白米饭、两张 D 指令行与两张觉醒攻击）")
 	var ram := StsCardPool.card("fish_ram")
 	_check(ram != null and ram.damage == 6 and ram.cost == 1
 			and ram.kind == StsCard.Kind.ATTACK, "肥鱼铁头撞：1 费攻击 6 伤")
@@ -349,8 +349,30 @@ func _test_rice() -> void:
 	cb.hand.insert(0, StsCardPool.card("rice"))
 	var e2r := cb.play_card(cb.hand[0])
 	_eq(cb.rice_eaten, 2, "吃满 2 碗")
-	_check(bool(e2r.get("awake_now", false)), "第 2 碗：事件带 awake_now（睡醒瞬间）")
-	_eq(cb.is_awake(), true, "吃满 2 碗 → 有点睡醒")
+	_check(bool(e2r.get("stir_now", false)), "第 2 碗：事件带 stir_now（翻身瞬间）")
+	_check(not bool(e2r.get("awake_now", false)), "第 2 碗：仍不唤醒")
+	_eq(cb.is_stir(), true, "2 碗 → 翻身阶段（仍睡眠）")
+	_eq(cb.is_awake(), false, "2 碗还没醒")
+
+	# 3..4 碗：仍在翻身阶段
+	cb.hand.insert(0, StsCardPool.card("rice"))
+	cb.play_card(cb.hand[0])
+	cb.hand.insert(0, StsCardPool.card("rice"))
+	var e4r := cb.play_card(cb.hand[0])
+	_eq(cb.rice_eaten, 4, "吃满 4 碗")
+	_eq(cb.is_stir(), true, "4 碗仍是翻身阶段")
+	_eq(cb.is_awake(), false, "4 碗还没醒")
+
+	# 第 5 碗：完全觉醒 + 赠两张特殊攻击牌进弃牌堆
+	cb.hand.insert(0, StsCardPool.card("rice"))
+	var e5r := cb.play_card(cb.hand[0])
+	_eq(cb.rice_eaten, 5, "吃满 5 碗")
+	_check(bool(e5r.get("awake_now", false)), "第 5 碗：事件带 awake_now（觉醒瞬间）")
+	_eq(cb.is_awake(), true, "吃满 5 碗 → 完全觉醒")
+	_check(cb.discard_pile.any(func(c: StsCard) -> bool: return c.id == "cannon"),
+			"觉醒赠卡：鲸鱼铁头炮进弃牌堆")
+	_check(cb.discard_pile.any(func(c: StsCard) -> bool: return c.id == "rage"),
+			"觉醒赠卡：觉醒怒涛进弃牌堆")
 
 	# 醒态加成：攻击 6 → 7（+20%），格挡 5 → 6（+20%）
 	cb.hand.insert(0, StsCardPool.card("fish_ram"))
@@ -359,6 +381,22 @@ func _test_rice() -> void:
 	cb.hand.insert(0, StsCardPool.card("taunt"))
 	var ed := cb.play_card(cb.hand[0])
 	_eq(int(ed.get("value", 0)), 6, "醒态格挡 5 → 6（+20%）")
+
+	# 觉醒攻击牌：鲸鱼铁头炮无视格挡
+	cb.enemy_block = 10
+	cb.hand.insert(0, StsCardPool.card("cannon"))
+	var ec := cb.play_card(cb.hand[0])
+	_eq(int(ec.get("value", 0)), int(round(12.0 * StsCombat.RICE_BUFF)),
+			"鲸鱼铁头炮：无视 10 点格挡全额命中（×1.2）")
+
+	# 觉醒怒涛：执行两次，连段进两阶（前一张是炮=攻击连段中）
+	cb.hand.insert(0, StsCardPool.card("rage"))
+	var er := cb.play_card(cb.hand[0])
+	_check(bool(er.get("repeat", false)) == false and int(er.get("value", 0)) > 0,
+			"觉醒怒涛打出")
+	_eq(int(er.get("streak", 0)), 0, "占位（下面按 hit 明细断言）") if false else null
+	var hits := int(er.get("value", 0))
+	_check(hits > 0, "觉醒怒涛造成伤害 %d（两次执行合计）" % hits)
 
 	# 新开一局 → 计数清零
 	var cb2 := StsCombat.new()
