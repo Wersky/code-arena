@@ -46,21 +46,34 @@ func _eq(a, b, what: String) -> void:
 func _test_sts_cards() -> void:
 	print("[卡池]")
 	var ids := StsCardPool.all_ids()
-	_eq(ids.size(), 3, "卡池共 3 张卡（含白米饭）")
+	_eq(ids.size(), 5, "卡池共 5 张卡（含白米饭与两张 D 指令行）")
 	var ram := StsCardPool.card("fish_ram")
 	_check(ram != null and ram.damage == 6 and ram.cost == 1
 			and ram.kind == StsCard.Kind.ATTACK, "肥鱼铁头撞：1 费攻击 6 伤")
 	var taunt := StsCardPool.card("taunt")
 	_check(taunt != null and taunt.block == 5 and taunt.cost == 1
 			and taunt.kind == StsCard.Kind.SKILL, "来打我呀！：1 费防御 5 格挡")
+	var loop := StsCardPool.card("loop")
+	_check(loop != null and loop.cost == 1 and loop.damage == 0 and loop.block == 0
+			and loop.kind == StsCard.Kind.SKILL, "复读机：1 费指令行（0 伤 0 挡）")
+	var par := StsCardPool.card("parallel")
+	_check(par != null and par.cost == 1 and par.damage == 0 and par.block == 0
+			and par.kind == StsCard.Kind.SKILL, "并行：1 费指令行（0 伤 0 挡）")
+	_eq(StsCardPool.desc("loop"), "下一张卡执行两次。", "复读机描述")
+	_eq(StsCardPool.desc("parallel"), "本次运行换类型不断连段。", "并行描述")
 	var deck := StsCardPool.starter_deck()
-	_eq(deck.size(), 8, "起始卡组共 8 张")
+	_eq(deck.size(), 10, "起始卡组共 10 张")
 	var atk := 0
 	var def := 0
+	var loop_n := 0
+	var par_n := 0
 	for c in deck:
 		atk += 1 if c.kind == StsCard.Kind.ATTACK else 0
 		def += 1 if c.kind == StsCard.Kind.SKILL else 0
-	_check(atk == 3 and def == 5, "起始卡组 3 攻 + 5 防（含 3 张白米饭，得 %d+%d）" % [atk, def])
+		loop_n += 1 if c.id == "loop" else 0
+		par_n += 1 if c.id == "parallel" else 0
+	_check(atk == 3 and def == 7, "起始卡组 3 攻 + 7 防（3 鱼 + 2 锅 + 3 饭 + 2 指令行，得 %d+%d）" % [atk, def])
+	_check(loop_n == 1 and par_n == 1, "起始卡组含复读机与并行各 1 张（得 %d+%d）" % [loop_n, par_n])
 	for c in deck:
 		_check(ResourceLoader.exists(c.art_path), "卡面贴图存在：%s" % c.id)
 
@@ -91,6 +104,8 @@ func _test_sts_combat() -> void:
 			 {"kind": "attack", "value": 7}], 80, 424242)
 	_eq(cb.hand.size(), 3, "开局抽 3 张（DeepSeek 补牌数）")
 	_eq(cb.turn, 1, "开局回合 1")
+	_eq(cb.enemy_atk, 7, "敌人攻击取自意图序列（7）")
+	_eq(cb.enemy_def, 4, "敌人防御取自意图序列（4）")
 
 	# 按顺序出牌：只有最左一张能打
 	_check(cb.can_play(cb.hand[0]), "最左一张可打")
@@ -104,23 +119,181 @@ func _test_sts_combat() -> void:
 		_check(bool(e1.get("ok", false)), "第 %d 张按顺序打出" % (i + 1))
 	_eq(cb.hand.size(), 3, "手牌打空后自动从弃牌堆随机补 3 张")
 	_eq(cb.discard_pile.size(), 0, "补牌从弃牌堆抽走")
-	_eq(cb.draw_pile.size() + cb.discard_pile.size() + cb.hand.size(), 8,
-			"牌堆守恒：抽 + 弃 + 手 = 8")
+	_eq(cb.draw_pile.size() + cb.discard_pile.size() + cb.hand.size(), 10,
+			"牌堆守恒：抽 + 弃 + 手 = 10")
 	_check(cb.can_play(cb.hand[0]), "补牌后最左一张可打")
 
 	# 弃牌：弃 1 张立刻从牌堆抽 1 张，手牌数不变
 	var before := cb.hand.size()
 	_check(cb.discard_card(cb.hand[0]), "弃牌成功")
 	_eq(cb.hand.size(), before, "弃 1 抽 1，手牌数不变")
-	_eq(cb.draw_pile.size() + cb.discard_pile.size() + cb.hand.size(), 8, "弃牌后守恒")
+	_eq(cb.draw_pile.size() + cb.discard_pile.size() + cb.hand.size(), 10, "弃牌后守恒")
 
 	# 结束回合：敌人行动 + 回合推进
 	var events := cb.end_turn()
 	_eq(cb.block, 0, "新回合格挡清零")
-	_check(cb.hand.size() >= 1, "新回合手牌有牌（弃牌堆随机补）")
+	_check(cb.hand.size() >= 1, "新回合手牌有牌（全牌堆采样补牌）")
 	_check(events.size() >= 1, "结束回合返回敌人行动事件")
 	_eq(cb.turn, 2, "回合推进到 2")
-	_eq(cb.draw_pile.size() + cb.discard_pile.size() + cb.hand.size(), 8, "新回合守恒")
+	_eq(cb.draw_pile.size() + cb.discard_pile.size() + cb.hand.size(), 10, "新回合守恒")
+
+	# ── 执行序列（A 连段 / B 首尾槽 / C 米饭不断连）：空牌局 + 手动摆队列 ──
+	var empty_deck: Array[StsCard] = []
+	var sq := StsCombat.new()
+	sq.setup(empty_deck, "沙袋", 9999,
+			[{"kind": "attack", "value": 5}, {"kind": "defend", "value": 4}], 80, 1)
+	# B 首位「初始化」+2：hand[0] 鱼 = lead → 6+2=8
+	sq.hand.clear()
+	sq.hand.append(StsCardPool.card("fish_ram"))
+	sq.hand.append(StsCardPool.card("fish_ram"))
+	var e_lead := sq.play_card(sq.hand[0], false, true)
+	_eq(int(e_lead.get("value", 0)), 8, "首位「初始化」：鱼 6+2=8")
+	_eq(int(e_lead.get("streak", 0)), 1, "第一条鱼连段 1")
+	# A 连段阶梯：同类连击每进一阶 +3 → 6+3=9；第三条 6+3×2=12
+	var e_s2 := sq.play_card(sq.hand[0], false)
+	_eq(int(e_s2.get("value", 0)), 9, "同类连击连段 2：6+3=9")
+	sq.hand.append(StsCardPool.card("fish_ram"))
+	var e_s3 := sq.play_card(sq.hand[0], false)
+	_eq(int(e_s3.get("value", 0)), 12, "连段 3：6+3×2=12")
+	# A 换类型断连：taunt 从连段 1 重新起步 → 5
+	sq.hand.clear()
+	sq.hand.append(StsCardPool.card("taunt"))
+	var e_br := sq.play_card(sq.hand[0], false)
+	_eq(int(e_br.get("value", 0)), 5, "换类型断连：taunt 连段 1 → 5")
+	# B 末位「收尾」+2：断连后的 taunt 在末位 → 5+2=7
+	sq.hand.clear()
+	sq.hand.append(StsCardPool.card("fish_ram"))
+	sq.hand.append(StsCardPool.card("fish_ram"))
+	sq.hand.append(StsCardPool.card("taunt"))
+	sq.play_card(sq.hand[0], false, true)
+	sq.play_card(sq.hand[0], false)
+	var e_fn := sq.play_card(sq.hand[0], false, false, true)
+	_eq(int(e_fn.get("value", 0)), 7, "末位「收尾」：taunt 5+2=7")
+	# C 米饭是「注释行」：夹在两条鱼之间不断连
+	sq.hand.clear()
+	sq.hand.append(StsCardPool.card("fish_ram"))
+	sq.hand.append(StsCardPool.card("rice"))
+	sq.hand.append(StsCardPool.card("fish_ram"))
+	sq.play_card(sq.hand[0], false, true)
+	var e_rice := sq.play_card(sq.hand[0], false)
+	_eq(String(e_rice.get("kind", "")), "rice", "米饭打出 rice 事件")
+	var e_af := sq.play_card(sq.hand[0], false)
+	_eq(int(e_af.get("value", 0)), 9, "米饭不断连：第二条鱼仍是连段 2 → 9")
+
+	# preview_sequence：影子推演（先序列收尾，与真实发送同一起点）
+	sq.end_send()
+	_eq(sq.seq_streak, 0, "序列收尾：连段清零（下一回合从连段 1 起步）")
+	sq.hand.clear()
+	sq.hand.append(StsCardPool.card("fish_ram"))
+	sq.hand.append(StsCardPool.card("fish_ram"))
+	sq.hand.append(StsCardPool.card("rice"))
+	var seq := sq.preview_sequence()
+	_eq(seq.size(), 3, "预览与手牌等长")
+	_eq(int(seq[0].get("value", 0)), 8, "预览：首位鱼 8（lead）")
+	_eq(int(seq[1].get("value", 0)), 9, "预览：第二条鱼连段 2 → 9")
+	_check(not bool(seq[1].get("buffed", true)), "预览：未睡醒无加成标记")
+	_eq(int(seq[1].get("buffed_value", 0)), int(round(9.0 * StsCombat.RICE_BUFF)),
+			"预览：buffed_value = round(9×1.2) = 11")
+	_check(bool(seq[2].get("growth", false)), "预览：米饭 growth=true")
+	_eq(sq.hand.size(), 3, "预览不改手牌")
+	# 睡醒后的预览：buffed=true，value 保持未乘值
+	sq.rice_eaten = StsCombat.RICE_AWAKE
+	var seq2 := sq.preview_sequence()
+	_check(bool(seq2[1].get("buffed", false)), "预览：睡醒后 buffed=true")
+	_eq(int(seq2[1].get("value", 0)), 9, "预览：睡醒后 value 仍是阶梯+槽位未乘值")
+
+	# ── D 指令行：复读机（loop）与并行（parallel）──────────
+	var dcb := StsCombat.new()
+	dcb.setup(empty_deck, "沙袋", 9999,
+			[{"kind": "attack", "value": 5}, {"kind": "defend", "value": 4}], 80, 1)
+	# D 复读：[loop][fish]（loop 首位、fish 末位）→ fish 两次逐次推阶 8+10=18
+	dcb.hand.clear()
+	dcb.hand.append(StsCardPool.card("loop"))
+	dcb.hand.append(StsCardPool.card("fish_ram"))
+	var e_loop := dcb.play_card(dcb.hand[0], false, true)
+	_eq(String(e_loop.get("kind", "")), "loop", "复读机打出 loop 事件（指令行不断连段）")
+	_eq(dcb.pending_repeat, 1, "复读缓冲挂起：pending_repeat=1")
+	_eq(dcb.seq_streak, 0, "指令行不推连段（loop）")
+	var e_rep := dcb.play_card(dcb.hand[0], false, false, true)
+	_eq(int(e_rep.get("value", 0)), 19, "复读：fish 执行两次 8+11=19（连段两阶+末位收尾）")
+	_check(bool(e_rep.get("repeat", false)), "复读事件带 repeat 标记")
+	_eq(int(e_rep.get("streak", 0)), 2, "复读后连段停在 2（连段算两阶）")
+	_eq(dcb.pending_repeat, 0, "复读缓冲已消费")
+
+	# D 并行：[parallel][fish][taunt][fish] → 锁连段 = 阶数冻结 → 6/5/8
+	dcb.end_send()
+	_eq(dcb.pending_repeat, 0, "end_send 清 pending_repeat（缓冲不跨运行）")
+	_eq(dcb.streak_lock, false, "end_send 清 streak_lock")
+	dcb.hand.clear()
+	dcb.hand.append(StsCardPool.card("parallel"))
+	dcb.hand.append(StsCardPool.card("fish_ram"))
+	dcb.hand.append(StsCardPool.card("taunt"))
+	dcb.hand.append(StsCardPool.card("fish_ram"))
+	var e_par := dcb.play_card(dcb.hand[0], false, true)
+	_eq(String(e_par.get("kind", "")), "parallel", "并行打出 parallel 事件")
+	_eq(dcb.streak_lock, true, "并行锁挂起：streak_lock=true")
+	_eq(dcb.seq_streak, 0, "指令行不推连段（parallel）")
+	var e_pf1 := dcb.play_card(dcb.hand[0], false)
+	_eq(int(e_pf1.get("value", 0)), 6, "并行锁：fish 连段 1 → 6")
+	var e_pf2 := dcb.play_card(dcb.hand[0], false)
+	_eq(int(e_pf2.get("value", 0)), 5, "并行锁：换类型阶数冻结，taunt 连段 1 → 5")
+	var e_pf3 := dcb.play_card(dcb.hand[0], false, false, true)
+	_eq(int(e_pf3.get("value", 0)), 8, "并行锁：fish 冻结连段 1 + 末位收尾 → 8")
+
+	# loop 后接 rice：复读不作用于白米饭，缓冲顺延给下一张非饭卡
+	dcb.end_send()
+	dcb.hand.clear()
+	dcb.hand.append(StsCardPool.card("loop"))
+	dcb.hand.append(StsCardPool.card("rice"))
+	dcb.play_card(dcb.hand[0], false)
+	var e_rr := dcb.play_card(dcb.hand[0], false)
+	_eq(String(e_rr.get("kind", "")), "rice", "loop 后打 rice：米饭正常")
+	_check(not bool(e_rr.get("repeat", false)), "复读不作用于白米饭（rice 无 repeat 标记）")
+	_eq(dcb.pending_repeat, 1, "米饭不消费复读缓冲（仍挂起）")
+	dcb.hand.append(StsCardPool.card("fish_ram"))
+	var e_defer := dcb.play_card(dcb.hand[0], false, false, true)
+	_eq(int(e_defer.get("value", 0)), 19, "缓冲顺延：下一张非饭卡 fish 复读 8+11=19")
+
+	# 预览同步：指令行条目（growth 标记）与并行冻结语义
+	dcb.end_send()
+	dcb.hand.clear()
+	dcb.hand.append(StsCardPool.card("parallel"))
+	dcb.hand.append(StsCardPool.card("fish_ram"))
+	dcb.hand.append(StsCardPool.card("taunt"))
+	dcb.hand.append(StsCardPool.card("fish_ram"))
+	var pseq := dcb.preview_sequence()
+	_eq(pseq.size(), 4, "预览与手牌等长（D）")
+	_check(bool(pseq[0].get("growth", false)), "预览：并行是指令行（growth 标记）")
+	_eq(int(pseq[1].get("value", 0)), 6, "预览：并行锁下 fish 连段 1 → 6")
+	_eq(int(pseq[2].get("value", 0)), 5, "预览：并行锁下换类型冻结 taunt → 5")
+	_eq(int(pseq[3].get("value", 0)), 8, "预览：末位 fish 冻结连段 1 + 收尾 → 8")
+	dcb.hand.clear()
+	dcb.hand.append(StsCardPool.card("loop"))
+	dcb.hand.append(StsCardPool.card("fish_ram"))
+	var pseq2 := dcb.preview_sequence()
+	_check(bool(pseq2[0].get("growth", false)), "预览：复读机是指令行（growth 标记）")
+	_eq(int(pseq2[1].get("value", 0)), 8, "预览：复读只显示单次 8（复读加成不在预览内）")
+
+	# E 观察者：一序列 ≥2 攻 → 敌人下回合意图改防御（enemy_def+OBS_BRACE）
+	var ob := StsCombat.new()
+	ob.setup(empty_deck, "沙袋", 9999,
+			[{"kind": "attack", "value": 5}, {"kind": "defend", "value": 4}], 80, 1)
+	ob.hand.clear()
+	ob.hand.append(StsCardPool.card("fish_ram"))
+	ob.hand.append(StsCardPool.card("fish_ram"))
+	ob.play_card(ob.hand[0], false, true)
+	ob.play_card(ob.hand[0], false)
+	_eq(ob.seq_attacks, 2, "观察者统计：本序列 2 次攻击")
+	var evs := ob.end_turn()
+	var saw_obs := false
+	for e in evs:
+		if String(e.get("kind", "")) == "observer":
+			saw_obs = true
+	_check(saw_obs, "观察者反应出现在 end_turn 事件里")
+	_eq(String(ob.intent.get("kind", "")), "defend", "观察者：敌人下回合意图改防御")
+	_eq(int(ob.intent.get("value", 0)), ob.enemy_def + StsCombat.OBS_BRACE,
+			"观察者防御值 = enemy_def(4)+0 = 4（T5 定稿：架基本盾不加码）")
+	_eq(ob.seq_attacks, 0, "观察者统计随回合清零")
 
 	# 连打：攻击/防御两种牌都会轮到，打死敌人
 	var saw_attack := false
@@ -153,7 +326,7 @@ func _test_sts_combat() -> void:
 func _test_rice() -> void:
 	print("[白米饭成长]")
 	var deck := StsCardPool.starter_deck()
-	_eq(deck.size(), 8, "起始卡组 8 张（3 攻 + 2 防 + 3 饭）")
+	_eq(deck.size(), 10, "起始卡组 10 张（3 攻 + 2 防 + 3 饭 + 1 复读 + 1 并行）")
 	var rice_n := 0
 	for c in deck:
 		if c.id == "rice":
@@ -170,11 +343,13 @@ func _test_rice() -> void:
 	var e1 := cb.play_card(cb.hand[0])
 	_eq(String(e1.get("kind", "")), "rice", "白米饭可打出")
 	_eq(cb.rice_eaten, 1, "吃 1 碗")
+	_check(not bool(e1.get("awake_now", false)), "第 1 碗：事件不带 awake_now")
 	_eq(cb.is_awake(), false, "1 碗还没醒")
 
 	cb.hand.insert(0, StsCardPool.card("rice"))
-	cb.play_card(cb.hand[0])
+	var e2r := cb.play_card(cb.hand[0])
 	_eq(cb.rice_eaten, 2, "吃满 2 碗")
+	_check(bool(e2r.get("awake_now", false)), "第 2 碗：事件带 awake_now（睡醒瞬间）")
 	_eq(cb.is_awake(), true, "吃满 2 碗 → 有点睡醒")
 
 	# 醒态加成：攻击 6 → 7（+20%），格挡 5 → 6（+20%）
@@ -197,7 +372,7 @@ func _test_ui() -> void:
 	var run := RunState.new()
 	run.reset_run()
 	run.set_ai(AiPool.get_ai("deepdeek"))
-	_eq(run.deck.size(), 8, "开局卡组 8 张（含 3 张白米饭）")
+	_eq(run.deck.size(), 10, "开局卡组 10 张（含 3 张白米饭与两张 D 指令行）")
 
 	# 启动界面接手了旧主菜单的 BGM 播放入口，先确认它真的在放
 	var launch := LaunchScreen.new()

@@ -3,10 +3,12 @@ extends RefCounted
 ## 杀戮尖塔制的卡池。卡面 = 生成的像素立绘（主人钦定的 DeepSeek 娘专属形象），
 ## 名称 / 描述 / 配色集中在这张表里，加卡只改这里。
 
-## 起始卡组张数：3 攻 + 2 防（主人钦定：初始共 5 张）
+## 起始卡组张数：3 攻 + 2 防 + 3 饭 + 1 复读 + 1 并行（主人钦定：初始共 10 张）
 const STARTER_ATTACKS := 3
 const STARTER_SKILLS := 2
 const STARTER_RICE := 3        ## 白米饭：DeepSeek 的成长燃料（主人 2026-10-30）
+const STARTER_LOOP := 1        ## 复读机：D 指令行（主人 2026-10-31）
+const STARTER_PARALLEL := 1    ## 并行：D 指令行（主人 2026-10-31）
 
 const CARDS := {
 	"fish_ram": {
@@ -38,6 +40,26 @@ const CARDS := {
 		"art": "res://assets/art/sts-art-taunt.png",
 		"desc": "获得 5 点格挡。",
 		"flavor": "锅在头，不慌。",
+	},
+	"loop": {
+		"name": "复读机",
+		"kind": StsCard.Kind.SKILL,
+		"cost": 1,
+		"damage": 0,
+		"block": 0,
+		"art": "res://assets/art/sts-art-loop.png",
+		"desc": "下一张卡执行两次。",
+		"flavor": "这段我说两遍。",
+	},
+	"parallel": {
+		"name": "并行",
+		"kind": StsCard.Kind.SKILL,
+		"cost": 1,
+		"damage": 0,
+		"block": 0,
+		"art": "res://assets/art/sts-art-parallel.png",
+		"desc": "本次运行换类型不断连段。",
+		"flavor": "多线程，不断线。",
 	},
 }
 
@@ -85,7 +107,7 @@ static func kind_color(k: int) -> Color:
 	return KIND_COLORS.get(k, Color.WHITE)
 
 
-## 起始卡组：3 张肥鱼铁头撞 + 2 张来打我呀！+ 3 张白米饭
+## 起始卡组：3 肥鱼铁头撞 + 2 来打我呀！+ 3 白米饭 + 1 复读机 + 1 并行（共 10 张）
 static func starter_deck() -> Array[StsCard]:
 	var out: Array[StsCard] = []
 	for i in STARTER_ATTACKS:
@@ -94,4 +116,8 @@ static func starter_deck() -> Array[StsCard]:
 		out.append(card("taunt"))
 	for i in STARTER_RICE:
 		out.append(card("rice"))
+	for i in STARTER_LOOP:
+		out.append(card("loop"))
+	for i in STARTER_PARALLEL:
+		out.append(card("parallel"))
 	return out

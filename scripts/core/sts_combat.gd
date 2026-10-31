@@ -31,11 +31,30 @@ const RICE_AWAKE := 2
 const RICE_BUFF := 1.2
 var rice_eaten := 0
 var _refill_count := 3
+
+# ── 执行序列机制（2026-10-31 主人钦定 A/B/C/E）──────────
+## 一回合 = 一次程序运行：发送执行整手 → 自动进入敌方回合。
+## 玩家唯一的杠杆是队列顺序——连段、槽位、成长时机全部由此展开。
+const STREAK_STEP := 3      ## A 连段阶梯：同类连击每进一阶 +3（6→9→12）
+const LEAD_BONUS := 2       ## B 首位「初始化」：+2（热机，T5 定稿）
+const FINISH_BONUS := 2     ## B 末位「收尾」：+2（大招）
+var seq_streak := 0         ## 本序列同类连击阶数（1 起，0 = 未开打）
+var seq_kind := -1          ## 连段类型
+var seq_open := false       ## 正在执行序列（首位判定用）
+var seq_attacks := 0        ## E 观察者统计：本序列攻击张数
+var seq_grows := 0          ## E 观察者统计：本序列发育张数（饭/防）
+var pending_repeat := 0     ## D 复读机：下一张非米饭卡执行两次
+var streak_lock := false    ## D 并行：本序列换类型不断连
+var last_observer_note := ""  ## 观察者反应（UI 日志用，读后即清）
+const OBS_BRACE := 0        ## 观察者反爆牌：≥2 攻 → 敌下回合架基本盾（T5 定稿不加码）
+const OBS_CHARGE := 3
 # 敌人
 var enemy_name := ""
 var enemy_hp := 1
 var enemy_max_hp := 1
 var enemy_block := 0
+var enemy_atk := 6
+var enemy_def := 4
 ## 意图：{"kind": "attack"/"defend", "value": int}
 var intent: Dictionary = {}
 var _pattern: Array = []
@@ -58,6 +77,14 @@ func setup(deck: Array[StsCard], e_name: String, e_hp: int,
 	rng.seed = seed_i
 	_refill_count = maxi(1, hand_refill)
 	rice_eaten = 0              ## 每局重置
+	seq_streak = 0
+	seq_kind = -1
+	seq_open = false
+	seq_attacks = 0
+	seq_grows = 0
+	pending_repeat = 0
+	streak_lock = false
+	last_observer_note = ""
 	hp = maxi(1, start_hp)
 	max_hp = maxi(hp, 80)
 	block = 0
@@ -67,6 +94,12 @@ func setup(deck: Array[StsCard], e_name: String, e_hp: int,
 	enemy_block = 0
 	_pattern = pattern.duplicate(true)
 	_pattern_idx = 0
+	## 敌人攻防取自意图序列（原实现读的是赋值前的旧 _pattern，新局永远拿默认 6/4）
+	for it in _pattern:
+		if String(it.get("kind", "")) == "attack":
+			enemy_atk = int(it.get("value", 0))
+		else:
+			enemy_def = int(it.get("value", 0))
 	draw_pile = deck.duplicate()
 	discard_pile.clear()
 	hand.clear()
@@ -87,16 +120,16 @@ func _shuffle(arr: Array[StsCard]) -> void:
 		arr[j] = tmp
 
 
-## 新回合：格挡清零、上手残余进弃牌堆、手牌空了从弃牌堆随机补
+## 新回合：格挡清零、上手残余进弃牌堆、补牌改为**全牌堆采样**（T5 修循环锁定）
 func start_turn() -> void:
 	turn += 1
 	block = 0
 	for c in hand:
 		discard_pile.append(c)
 	hand.clear()
-	_refill()
+	refill_from_deck()
 	if hand.is_empty():
-		_draw(_refill_count)    ## 弃牌堆也没牌（开局/打光）→ 从牌堆抽
+		_draw(_refill_count)    ## 整卡组都不在手（极端兜底）→ 直接抽
 
 
 func _draw(n: int) -> void:
@@ -115,43 +148,118 @@ func can_play(card: StsCard) -> bool:
 	return over == Result.RUNNING and not hand.is_empty() and hand[0] == card
 
 
-## 打一张牌。返回事件字典（UI 拿去播动画 / 打日志）。
-func play_card(card: StsCard, auto_refill: bool = true) -> Dictionary:
-	var ev := {"ok": false, "card": card, "kind": "", "value": 0, "to_enemy": false}
+## 打一张牌（执行序列中的一行）。
+## is_lead / is_finish：首尾槽位标记（arena 按队列位置传入）。
+## 返回事件字典（UI 拿去播动画 / 打日志）。
+func play_card(card: StsCard, auto_refill: bool = true,
+		is_lead: bool = false, is_finish: bool = false) -> Dictionary:
+	var ev := {"ok": false, "card": card, "kind": "", "value": 0, "to_enemy": false,
+			"streak": 0, "lead": is_lead, "finish": is_finish, "repeat": false}
 	if not can_play(card):
 		ev["reason"] = "按顺序出牌：先打最左边那张" if hand.has(card) else "不在手牌"
 		return ev
 	hand.erase(card)
 	discard_pile.append(card)
+	if not seq_open:
+		seq_open = true
 
-	# 白米饭：不结算伤害/格挡，只推进成长进度
+	# 白米饭：程序里的「注释行」——不断连段，只推进成长
 	if card.id == "rice":
 		rice_eaten += 1
+		seq_grows += 1
+		## 恰好吃满第 RICE_AWAKE 碗的瞬间 → 事件带 awake_now（UI 飘「有点睡醒！」）
+		if rice_eaten == RICE_AWAKE:
+			ev["awake_now"] = true
 		if auto_refill:
 			_refill()
 		ev.merge({"ok": true, "kind": "rice", "value": rice_eaten, "to_enemy": false}, true)
 		return ev
 
-	# 「有点睡醒」：攻击牌伤害 +20%、防御牌格挡 +20%
-	var dmg := card.damage
-	var blk := card.block
-	if is_awake():
+	# D 指令行：复读机——不连段、不结算数值，给下一张非米饭卡挂「执行两次」
+	# （缓冲保留到同序列里被消费；米饭不消费它，end_send 收尾时作废）
+	if card.id == "loop":
+		pending_repeat = 1
+		if auto_refill:
+			_refill()
+		ev.merge({"ok": true, "kind": "loop", "value": 0, "to_enemy": false}, true)
+		return ev
+
+	# D 指令行：并行——本次运行内换类型不断连（阶数冻结，见上方连段推进）
+	if card.id == "parallel":
+		streak_lock = true
+		if auto_refill:
+			_refill()
+		ev.merge({"ok": true, "kind": "parallel", "value": 0, "to_enemy": false}, true)
+		return ev
+
+	# 连段阶梯（A）：同类连击进阶；换类型断连重置。
+	# D 并行卡可锁：锁 = 阶数冻结——换类型的行不清链也不进阶，
+	# 下一张同类卡接着往上走（主人钦定数值 [parallel][fish][taunt][fish] → 6/5/8）。
+	if seq_streak == 0:
+		seq_streak = 1
+	elif seq_kind == card.kind:
+		seq_streak += 1
+	elif not streak_lock:
+		seq_streak = 1
+	seq_kind = card.kind
+
+	# 复读机（D）：本卡效果执行两次，连段也算两阶——第二次从下一阶起步
+	var times := 1
+	if pending_repeat > 0 and card.id != "rice":
+		times = 2
+		pending_repeat = 0
+		ev["repeat"] = true
+
+	# 数值 = 基础 + 连段阶梯 + 槽位，再乘成长倍率。
+	# 复读的两次逐次推阶（如末位鱼 8 → 10）；槽位在两次执行里都生效（同占一个槽）。
+	var slot := LEAD_BONUS if is_lead else (FINISH_BONUS if is_finish else 0)
+	var dealt := 0
+	var blk_gain := 0
+	for i in times:
+		var step := STREAK_STEP * (seq_streak - 1)
+		var v: int = (card.damage if card.kind == StsCard.Kind.ATTACK else card.block) \
+				+ step + slot
+		if is_awake():
+			v = int(round(float(v) * RICE_BUFF))
 		if card.kind == StsCard.Kind.ATTACK:
-			dmg = int(round(float(dmg) * RICE_BUFF))
+			dealt += _hit_enemy(v)
 		else:
-			blk = int(round(float(blk) * RICE_BUFF))
+			blk_gain += v
+		if i < times - 1:
+			seq_streak += 1     ## 复读第二次：连段进阶（连段算两阶）
+
+	# E 观察者统计
 	if card.kind == StsCard.Kind.ATTACK:
-		var dealt := _hit_enemy(dmg)
+		seq_attacks += times
+	else:
+		seq_grows += times
+
+	if card.kind == StsCard.Kind.ATTACK:
 		damage_dealt += dealt
 		ev.merge({"ok": true, "kind": "attack", "value": dealt, "to_enemy": true}, true)
 	else:
-		block += blk
-		ev.merge({"ok": true, "kind": "defend", "value": blk, "to_enemy": false}, true)
+		block += blk_gain
+		ev.merge({"ok": true, "kind": "defend", "value": blk_gain, "to_enemy": false}, true)
+	ev["streak"] = seq_streak
 	if auto_refill:
 		_refill()               ## 单张出牌：打空立刻从弃牌堆随机补
 	if enemy_hp <= 0:
 		over = Result.WIN
 	return ev
+
+
+## 序列收尾：关闭本次运行。连段阶梯按「序列」计，收尾即清零——
+## 这样下一回合的发送从连段 1 起步，且与 preview_sequence 每次从 0 推演一致。
+## （观察者统计的清零在 end_turn 里做：观察者要看整序列。）
+func end_send() -> void:
+	seq_open = false
+	seq_streak = 0
+	seq_kind = -1
+	## D 机制收尾（主人钦定「简单可预测」：缓冲不跨运行）：
+	## - streak_lock：并行锁只保本序列，收尾即解
+	## - pending_repeat：复读缓冲未消费就作废（「保留到下回合」方案更难预测，弃用）
+	streak_lock = false
+	pending_repeat = 0
 
 
 ## 主动弃牌（每回合不限次）：弃掉这张，立刻从牌堆补 1 张。
@@ -166,6 +274,7 @@ func discard_card(card: StsCard) -> bool:
 
 
 ## 手牌为空时才补：从弃牌堆**随机**抽 _refill_count 张（顺序也随机）
+## （仅存于 play_card 的单张出牌路径；回合补牌已改走 refill_from_deck）
 func _refill() -> void:
 	if not hand.is_empty():
 		return
@@ -176,14 +285,26 @@ func _refill() -> void:
 		discard_pile.remove_at(idx)
 
 
+## 回合补牌 = **全牌堆采样**（T5 修「卡组循环锁定」，2026-10-31）：
+## 旧 _refill 只从弃牌堆抽回刚打的几张 → 每回合同几张无限循环，
+## 抽牌堆其余卡永不进循环，顺序杠杆被开局组合锁死。
+## 现在：弃牌堆全部并回抽牌堆 → 洗混 → 抽 _refill_count 张，
+## 每回合手牌是全卡组的随机样本，跨回合组合真正变化。
+func refill_from_deck() -> void:
+	draw_pile.append_array(discard_pile)
+	discard_pile.clear()
+	_shuffle(draw_pile)
+	_draw(_refill_count)
+
+
 ## 是否已成长到「有点睡醒」（吃满 2 碗白米饭）
 func is_awake() -> bool:
 	return rice_eaten >= RICE_AWAKE
 
 
-## 整手打出后由 UI 调一次补牌（批量出牌时中途不补，避免永远打不完）
+## 整手打出后由 UI 调一次补牌（T5 起与回合补牌同语义：全牌堆采样）
 func refill_hand() -> void:
-	_refill()
+	refill_from_deck()
 
 
 ## 该角色每轮回补几张（因角色而异，主人钦定 DeepSeek 3 张）
@@ -224,8 +345,20 @@ func end_turn() -> Array[Dictionary]:
 		over = Result.LOSE
 		return events
 	refresh_intent()
+	# E 观察者：敌人看完你这段程序，调整下回合意图（循环 pattern 被覆写一次）
+	if seq_attacks >= 2:
+		intent = {"kind": "defend", "value": enemy_def + OBS_BRACE}
+		last_observer_note = "它看穿了你的连攻，架起了盾"
+	elif seq_grows >= 2:
+		intent = {"kind": "attack", "value": enemy_atk + OBS_CHARGE}
+		last_observer_note = "它趁你发育，蓄起了大力"
+	seq_attacks = 0
+	seq_grows = 0
 	start_turn()
 	events.append({"kind": "new_turn", "turn": turn})
+	if last_observer_note != "":
+		events.append({"kind": "observer", "note": last_observer_note})
+		last_observer_note = ""
 	return events
 
 
@@ -246,6 +379,47 @@ func refresh_intent() -> void:
 		_pattern = [{"kind": "attack", "value": 6}]
 	intent = _pattern[_pattern_idx % _pattern.size()].duplicate()
 	_pattern_idx += 1
+
+
+## 序列预览：按当前队列顺序逐卡推演「将打出的数值」。
+## 返回数组与 hand 等长，条目字段：
+##   growth        是否白米饭（成长行，无数值）
+##   lead/finish   首位/末位槽位标记（B）
+##   streak        该位置的连段阶数（A）
+##   value         阶梯+槽位后的数值（**未乘**睡醒加成）
+##   buffed        is_awake() 时是否乘 RICE_BUFF（C）
+##   buffed_value  int(round(value * RICE_BUFF))（buffed 时才是最终结算值）
+##   kind          卡类型（米饭条目无此字段）
+## 跑一遍"影子执行"：不改任何真实状态。
+func preview_sequence() -> Array:
+	var out: Array = []
+	var streak := 0
+	var kind := -1
+	var n := hand.size()
+	for i in n:
+		var c := hand[i]
+		var lead := i == 0
+		var finish := i == n - 1
+		## 指令行（米饭/复读机/并行）：无数值行——growth 标记让 UI 显示卡面描述
+		if c.id == "rice" or c.id == "loop" or c.id == "parallel":
+			out.append({"growth": true, "lead": lead, "finish": finish, "streak": streak,
+					"value": 0, "buffed": false})
+			continue
+		## 连段推进与 play_card 同构（含并行「冻结」语义），预览不撒谎
+		if streak == 0:
+			streak = 1
+		elif kind == c.kind:
+			streak += 1
+		elif not streak_lock:
+			streak = 1
+		kind = c.kind
+		var step := STREAK_STEP * (streak - 1)
+		var slot := LEAD_BONUS if lead else (FINISH_BONUS if finish else 0)
+		var v: int = (c.damage if c.kind == StsCard.Kind.ATTACK else c.block) + step + slot
+		out.append({"growth": false, "lead": lead, "finish": finish, "streak": streak,
+				"value": v, "kind": c.kind,
+				"buffed": is_awake(), "buffed_value": int(round(float(v) * RICE_BUFF))})
+	return out
 
 
 ## 当前手牌里能量够的牌数（UI 提示用）

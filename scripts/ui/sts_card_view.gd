@@ -211,6 +211,65 @@ func _desc_text() -> String:
 	return base
 
 
+## 队列槽位徽标：放卡名条右端（左端是费用球，互不遮挡）
+const SLOT_BADGE_RECT := Rect2(124, 3, 18, 20)
+const C_SLOT_LEAD := Color(1.0, 0.82, 0.40)     ## 「首」金 #ffd166
+const C_SLOT_FINISH := Color(0.31, 0.64, 0.88)  ## 「尾」蓝 #4fa3e0
+
+var _slot_lead_lbl: Label = null
+var _slot_finish_lbl: Label = null
+
+
+## 序列槽位徽标（arena._update_seq_preview 每次刷新调用）：
+## 队列首位 →「首」（初始化 +1）、末位 →「尾」（收尾 +2）；互斥显示，都没有就藏。
+func set_slot(lead: bool, finish: bool) -> void:
+	if _slot_lead_lbl == null:
+		_slot_lead_lbl = _make_slot_badge("首", C_SLOT_LEAD)
+		_slot_finish_lbl = _make_slot_badge("尾", C_SLOT_FINISH)
+	_slot_lead_lbl.visible = lead
+	_slot_finish_lbl.visible = (not lead) and finish
+
+
+func _make_slot_badge(txt: String, col: Color) -> Label:
+	var l := UiKit.label(txt, UiKit.FS_XS, col)
+	l.name = "SlotBadge_" + txt
+	l.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	l.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	l.size = SLOT_BADGE_RECT.size
+	l.position = SLOT_BADGE_RECT.position
+	l.add_theme_constant_override("outline_size", 3)
+	l.add_theme_color_override("font_outline_color", Color(0.02, 0.03, 0.06, 0.95))
+	l.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	add_child(l)
+	return l
+
+
+## 序列预览数值行（arena._update_seq_preview 每次刷新调用）：
+## 该卡在队列这一格「将打出的数值」= 阶梯 + 槽位（info.value，未乘睡醒加成）；
+## 睡醒加成照 set_multiplier 的惯例标成 (×1.2)。空 info / 米饭 → 回落卡池描述。
+func set_seq_value(info: Dictionary) -> void:
+	if _desc_lbl == null or card == null:
+		return
+	if info.is_empty() or bool(info.get("growth", false)):
+		_desc_lbl.text = StsCardPool.desc(card.id)
+		return
+	var v := int(info.get("value", 0))
+	var buffed := bool(info.get("buffed", false))
+	var mult_txt := "%.1f" % StsCombat.RICE_BUFF
+	if card.kind == StsCard.Kind.ATTACK:
+		if buffed:
+			_desc_lbl.text = "造成 %d (×%s) 点伤害。" % [v, mult_txt]
+		else:
+			_desc_lbl.text = "造成 %d 点伤害。" % v
+	elif card.kind == StsCard.Kind.SKILL:
+		if buffed:
+			_desc_lbl.text = "获得 %d (×%s) 点格挡。" % [v, mult_txt]
+		else:
+			_desc_lbl.text = "获得 %d 点格挡。" % v
+	else:
+		_desc_lbl.text = StsCardPool.desc(card.id)
+
+
 ## 能量不够 → 整卡压暗（arena 每次能量变化后刷新）
 func set_playable(ok: bool) -> void:
 	playable = ok

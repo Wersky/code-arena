@@ -100,6 +100,8 @@ var _discards_left := DISCARD_LIMIT_PER_TURN
 var _fx_enabled := true
 var _fx_root: Control = null
 var _fx_flash: ColorRect = null
+## 观察者反应（E）：最近一条（落到状态栏显示，debug_console_log 读取）
+var _observer_note := ""
 
 # 覆盖层（结算弹窗）
 var _overlay: PanelContainer = null
@@ -914,6 +916,7 @@ func _rebuild_hand() -> void:
 		_hand_views.append(v)
 	_layout_hand(false)
 	_refresh_playable()
+	_update_seq_preview()
 
 
 func _refresh_playable() -> void:
@@ -924,6 +927,22 @@ func _refresh_playable() -> void:
 		if v != null and v.card != null:
 			v.set_playable(combat != null and combat.can_play(v.card))
 			v.set_multiplier(mult)
+
+
+## 序列预览接线：把 preview_sequence 的影子推演刷到每张手牌上——
+## 首位/末位槽位徽标（set_slot）+ 该位置将打出的数值（set_seq_value）。
+## 手牌发生变化的所有出口（重建 / 补位同步 / 发送逐张 / 新回合）都要调一次。
+func _update_seq_preview() -> void:
+	if combat == null:
+		return
+	var seq := combat.preview_sequence()
+	for i in _hand_views.size():
+		var v := _hand_views[i]
+		if v == null or v.card == null:
+			continue
+		var info: Dictionary = seq[i] if i < seq.size() else {}
+		v.set_slot(bool(info.get("lead", false)), bool(info.get("finish", false)))
+		v.set_seq_value(info)
 
 
 func _refresh_hud() -> void:
@@ -1011,17 +1030,21 @@ func _on_send_pressed() -> void:
 	var order := 0
 	# hand[0] 就是最左那张：一张张打出，打完才补（play_card 传 auto_refill=false，
 	# 否则中途一打空就补，永远打不完）
+	var seq_n := combat.hand.size()
 	while not combat.hand.is_empty() and combat.over == StsCombat.Result.RUNNING:
 		var card := combat.hand[0]
 		var view := _view_of(card)
 		if view != null:
 			_hand_views.erase(view)     ## 先移出队列，剩下的牌才能补位
-		var ev := combat.play_card(card, false)
+		var is_lead := order == 0
+		var is_finish := order == seq_n - 1
+		var ev := combat.play_card(card, false, is_lead, is_finish)
 		if not bool(ev.get("ok", false)):
 			break
 		order += 1
 		_layout_hand(true)
-		# 数值反馈：攻击 → 敌人闪红飘伤害；防御 → 格挡飘字；白米饭 → 成长进度
+		# 数值反馈：攻击 → 敌人闪红飘伤害（带连段/复读标记）；防御 → 格挡飘字；
+		# 白米饭 → 成长进度；吃满那碗 → 睡醒提示
 		var kind := String(ev.get("kind", ""))
 		if kind == "rice":
 			_float_text(Vector2(size.x * 0.5, size.y - CARD_H - 90.0),
@@ -1029,9 +1052,26 @@ func _on_send_pressed() -> void:
 					Color(1.0, 0.9, 0.55), UiKit.FS_M)
 			SfxNode.play("hand_small")
 			_update_rice_hud()
+			## 恰好吃满第 RICE_AWAKE 碗的瞬间（sts_combat 在事件里标 awake_now）
+			if bool(ev.get("awake_now", false)):
+				_float_text(Vector2(size.x * 0.5, size.y - CARD_H - 130.0),
+						"有点睡醒！", Color(0.6, 1.0, 0.75), UiKit.FS_L)
 		elif kind == "attack":
-			_enemy_hit_fx(int(ev.get("value", 0)))
+			var tag := ""
+			if bool(ev.get("repeat", false)):
+				tag = "复读！"
+			elif int(ev.get("streak", 1)) >= 2:
+				tag = "连段%d " % int(ev.get("streak", 1))
+			_enemy_hit_fx(int(ev.get("value", 0)), tag)
 			SfxNode.play("hand_big")
+		elif kind == "loop":
+			_float_text(Vector2(size.x * 0.5, size.y - CARD_H - 90.0),
+					"复读机就绪", Color("ffcf7a"), UiKit.FS_M)
+			SfxNode.play("hand_small")
+		elif kind == "parallel":
+			_float_text(Vector2(size.x * 0.5, size.y - CARD_H - 90.0),
+					"并行：连段锁定", Color(0.31, 0.64, 0.88), UiKit.FS_M)
+			SfxNode.play("hand_small")
 		else:
 			_float_text(Vector2(size.x * 0.5, size.y - CARD_H - 90.0),
 					"+%d 格挡" % int(ev.get("value", 0)), Color(0.31, 0.64, 0.88), UiKit.FS_M)
@@ -1041,19 +1081,28 @@ func _on_send_pressed() -> void:
 				await _send_card_fx(view)
 			view.queue_free()
 		_refresh_playable()
+		_update_seq_preview()
 
 	_update_rice_hud()
-	combat.refill_hand()        ## 整手打完，才从弃牌堆随机补 N 张
-	_refresh_hud()
-	_sync_hand_views()
-	_refresh_playable()
-	_send_btn.disabled = false
-	_end_turn_button.disabled = false
+	combat.end_send()           ## 序列收尾（观察者统计就此定格）
+
+	if combat.over == StsCombat.Result.WIN:
+		_refresh_hud()
+		await get_tree().create_timer(0.5).timeout
+		_finish_battle(true)
+		return
+	# 发送 = 运行程序 → 程序跑完自动进入敌方回合（2026-10-31 主人钦定：
+	# 每回合一次运行，杜绝无限连发；顺序策略集中在执行前的队列编辑）
+	if _fx_enabled:
+		await get_tree().create_timer(0.3).timeout
+	await _run_enemy_turn()
 
 	if combat.over == StsCombat.Result.WIN:
 		await get_tree().create_timer(0.5).timeout
 		_finish_battle(true)
 		return
+	_send_btn.disabled = false
+	_end_turn_button.disabled = false
 	_busy = false
 
 
@@ -1122,6 +1171,7 @@ func _sync_hand_views() -> void:
 			_hand_views.append(v)
 	_layout_hand(true)
 	_refresh_playable()
+	_update_seq_preview()
 
 
 func _update_discard_btn() -> void:
@@ -1142,8 +1192,8 @@ func _on_discard_toggled(on: bool) -> void:
 			% _discards_left) if on else "弃牌模式关闭。"
 
 
-## 敌人受击：闪红 + 抖动 + 头顶飘伤害数字
-func _enemy_hit_fx(dmg: int) -> void:
+## 敌人受击：闪红 + 抖动 + 头顶飘伤害数字（tag = 连段/复读标记，缀在数字前）
+func _enemy_hit_fx(dmg: int, tag: String = "") -> void:
 	if _enemy_sprite == null:
 		return
 	_flash(Color(1.0, 0.45, 0.45), 0.16)
@@ -1160,8 +1210,11 @@ func _enemy_hit_fx(dmg: int) -> void:
 	shake.tween_callback(func() -> void:
 		_enemy_sprite.position = Vector2(90.0 - _enemy_sprite.size.x * 0.5,
 				150.0 - _enemy_sprite.size.y))
+	var txt := "-%d" % dmg
+	if not tag.is_empty():
+		txt = "%s-%d" % [tag, dmg]
 	_float_text(_enemy_root.position + Vector2(_enemy_root.size.x * 0.5, 24.0),
-			"-%d" % dmg, Color(1.0, 0.42, 0.42), UiKit.FS_L)
+			txt, Color(1.0, 0.42, 0.42), UiKit.FS_L)
 
 
 # ─────────────────────────────────────────────────────────
@@ -1170,8 +1223,15 @@ func _enemy_hit_fx(dmg: int) -> void:
 func _on_end_turn_pressed() -> void:
 	if _busy or _overlay.visible or combat == null:
 		return
+	combat.end_send()           ## 没发送直接结束：本次运行没有统计
+	await _run_enemy_turn()
+
+
+## 敌方回合 + 新回合发牌（发送后自动走，手动结束也走）
+func _run_enemy_turn() -> void:
 	_busy = true
 	_end_turn_button.disabled = true
+	_send_btn.disabled = true
 	_discards_left = DISCARD_LIMIT_PER_TURN   ## 新回合弃牌次数回满
 	_update_discard_btn()
 	if _fx_enabled:
@@ -1190,8 +1250,15 @@ func _on_end_turn_pressed() -> void:
 						"+%d 防" % int(e.get("value", 0)), Color(0.31, 0.64, 0.88), UiKit.FS_M)
 				await get_tree().create_timer(0.3).timeout
 
+	# 观察者反应（E）：一行日志，不弹窗。（2026-10-30 简化改版拆掉了控制台，
+	# 这里存进 _observer_note 并在回合交接时缀到状态栏；debug_console_log 可读）
+	for e2 in events:
+		if String(e2.get("kind", "")) == "observer":
+			_observer_note = String(e2.get("note", ""))
+
 	_refresh_hud()
 	_rebuild_hand()
+	_update_seq_preview()
 
 	if combat.over == StsCombat.Result.LOSE:
 		await get_tree().create_timer(0.4).timeout
@@ -1200,7 +1267,10 @@ func _on_end_turn_pressed() -> void:
 
 	_busy = false
 	_end_turn_button.disabled = false
+	_send_btn.disabled = false
 	_status_label.text = "新回合：%s" % _intent_text()
+	if _observer_note != "":
+		_status_label.text += " ｜ %s" % _observer_note
 	SfxNode.play("deal")
 
 
@@ -1446,4 +1516,4 @@ func debug_status_text() -> String:
 
 
 func debug_console_log() -> String:
-	return ""
+	return _observer_note
