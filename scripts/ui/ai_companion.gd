@@ -54,6 +54,18 @@ func _init() -> void:
 	resized.connect(_place_children)
 
 
+## 运作脉冲：收到指令时的反馈（缩放弹动 + 青光闪）
+func pulse() -> void:
+	if _art == null:
+		return
+	var tw := create_tween()
+	tw.set_parallel(true)
+	tw.tween_property(self, "scale", Vector2(1.06, 1.06), 0.12) 			.set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
+	tw.tween_property(_art, "modulate", Color(1.3, 1.35, 1.5), 0.12)
+	tw.chain().tween_property(self, "scale", Vector2.ONE, 0.18)
+	tw.parallel().tween_property(_art, "modulate", Color.WHITE, 0.2)
+
+
 ## 展示哪位 AI 娘。ai == null 时隐藏。
 ## 成长状态切换：吃满白米饭后从「沉睡」换成「有点睡醒」。
 ## 只对 deepdeek 的睡觉造型生效（其它 AI 是立绘模式，没有这个阶段）。

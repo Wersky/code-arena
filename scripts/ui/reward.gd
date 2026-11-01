@@ -51,7 +51,7 @@ func _ready() -> void:
 	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	v.add_child(title)
 
-	var subtitle := UiKit.dim("卡组 %d 张 ｜ HP %d/%d" % [
+	var subtitle := UiKit.dim("卡组 %d 张 ｜ Token %dK/%dK" % [
 		run.deck.size(), run.hp, RunState.MAX_HP], UiKit.FS_XS)
 	subtitle.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	v.add_child(subtitle)
@@ -84,7 +84,7 @@ func _make_option(kind: String, base_color: Color) -> void:
 
 	var title_text := ""
 	if kind == "heal":
-		title_text = "系统重启（+%d HP）" % HEAL
+		title_text = "系统重启（+%dK Token）" % HEAL
 		var big := UiKit.label("＋%d" % HEAL, UiKit.FS_XL, base_color)
 		big.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 		v.add_child(big)

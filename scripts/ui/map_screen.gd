@@ -53,7 +53,7 @@ func _ready() -> void:
 	head.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	v.add_child(head)
 
-	var stat := UiKit.dim("HP %d/%d ｜ 卡组 %d 张 ｜ 已通关 %d/10" % [
+	var stat := UiKit.dim("Token %dK/%dK ｜ 卡组 %d 张 ｜ 已通关 %d/10" % [
 		run.hp, RunState.MAX_HP, run.deck.size(), run.level_index], UiKit.FS_XS)
 	stat.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	v.add_child(stat)

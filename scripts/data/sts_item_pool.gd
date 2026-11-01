@@ -21,7 +21,7 @@ const ITEMS := {
 	},
 	"muyu": {
 		"name": "电子木鱼",
-		"desc": "战斗开始自动敲一下：赛博功德，回复 5 HP。",
+		"desc": "战斗开始自动敲一下：赛博功德，恢复 5K Token。",
 		"effect_id": "muyu",
 		"power": 5,
 		"art": "res://assets/art/item-muyu.png",

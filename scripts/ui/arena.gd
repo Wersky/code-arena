@@ -94,6 +94,8 @@ var _discard_mode := false
 var _discard_btn: Button = null
 var _elite := false   ## 精英战斗（门选制：精英门必为精英）
 var _rice_label: Label = null
+## Token 额度标签（主人钦定：额度 = 生命值，AI 娘头顶显示）
+var _token_label: Label = null
 ## 牌堆/弃牌堆图标与查看面板（2026-11-01 主人钦定：右栏左下两图标，点开看列表）
 var _pile_draw_icon: TextureRect = null
 var _pile_discard_icon: TextureRect = null
@@ -224,7 +226,7 @@ func _build_right_hud() -> void:
 	_enemy_name_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
 	right.add_child(_enemy_name_label)
 
-	_enemy_hp_label = UiKit.label("HP 0/0", UiKit.FS_XS, Color(0.95, 0.35, 0.4))
+	_enemy_hp_label = UiKit.label("故障强度 0/0", UiKit.FS_XS, Color(0.95, 0.35, 0.4))
 	_enemy_hp_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
 	right.add_child(_enemy_hp_label)
 
@@ -353,6 +355,11 @@ func _build_companion() -> void:
 	if run != null:
 		_companion.setup(run.ai)
 	_rice_label = UiKit.label("白米饭 0/5", UiKit.FS_XS, Color(1.0, 0.9, 0.55))
+	_token_label = UiKit.label("Token 额度 %dK/%dK" % [run.hp, RunState.MAX_HP],
+			UiKit.FS_XS, Color(0.31, 0.76, 0.97))
+	_token_label.name = "TokenLabel"
+	_token_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	add_child(_token_label)
 	_rice_label.name = "RiceLabel"
 	_rice_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	add_child(_rice_label)
@@ -464,6 +471,53 @@ func _update_pile_counts() -> void:
 		_toggle_pile_panel(_pile_panel_mode)   ## 重开 = 重建卡牌网格
 
 
+## AI 娘脉冲：运作一下（缩放弹动 + 青光闪）——指令到达的反馈
+func _companion_pulse() -> void:
+	if _companion == null or not is_instance_valid(_companion):
+		return
+	_companion.pulse()
+
+
+## 指令投递：一枚发光指令球从对话框飞向 AI 娘（主人钦定：攻/防都经她中转）
+func _maid_relay() -> void:
+	if not _fx_enabled or _companion == null:
+		return
+	var orb := TextureRect.new()
+	orb.texture = _glow_circle_texture(Color(0.31, 0.76, 0.97, 0.95))
+	orb.size = Vector2(34, 34)
+	orb.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	var dlg := get_node_or_null("ActionDialog") as Control
+	var from := (dlg.position + Vector2(dlg.size.x * 0.35, dlg.size.y * 0.4)) 			if dlg != null else size * 0.5
+	var to := _companion.position + Vector2(_companion.size.x * 0.44, _companion.size.y * 0.35)
+	orb.position = from - Vector2(17, 17)
+	_fx_root.add_child(orb)
+	SfxNode.play("deal")
+	var tw := orb.create_tween()
+	tw.set_parallel(true)
+	tw.tween_property(orb, "position", to - Vector2(17, 17), 0.26) 			.set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_OUT)
+	tw.tween_property(orb, "scale", Vector2(0.6, 0.6), 0.26)
+	await tw.finished
+	orb.queue_free()
+	_companion_pulse()
+
+
+## AI 娘头顶「运作中…」小气泡（0.5s 自毁）
+func _maid_working_bubble() -> void:
+	if not _fx_enabled or _companion == null:
+		return
+	var l := UiKit.label("… 运作中", UiKit.FS_XS, Color(0.31, 0.76, 0.97))
+	l.add_theme_constant_override("outline_size", 3)
+	l.add_theme_color_override("font_outline_color", Color(0, 0, 0, 0.9))
+	l.position = _companion.position + Vector2(_companion.size.x * 0.44 - 30, _companion.size.y * 0.18)
+	l.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_fx_root.add_child(l)
+	var tw := l.create_tween()
+	tw.set_parallel(true)
+	tw.tween_property(l, "position:y", l.position.y - 26.0, 0.5)
+	tw.tween_property(l, "modulate:a", 0.0, 0.5)
+	tw.chain().tween_callback(func() -> void: l.queue_free())
+
+
 func _build_fx() -> void:
 	_fx_root = Control.new()
 	_fx_root.name = "FxLayer"
@@ -546,6 +600,9 @@ func _layout() -> void:
 	if _rice_label:
 		_rice_label.position = Vector2(AI_X + 8.0, H - 350.0)
 		_rice_label.size = Vector2(W - AI_X - PAD - 8.0, 24.0)
+	if _token_label:
+		_token_label.position = Vector2(AI_X + 8.0, H - 378.0)
+		_token_label.size = Vector2(W - AI_X - PAD - 8.0, 24.0)
 	# 牌堆/弃牌堆图标：左侧栏底部空档（主人 2026-11-01 圈选位置），上牌堆下弃牌
 	if _pile_draw_icon != null:
 		_pile_draw_icon.position = Vector2(36.0, H - 150.0)
@@ -1113,7 +1170,7 @@ func _update_seq_preview() -> void:
 func _refresh_hud() -> void:
 	if combat == null:
 		return
-	_enemy_hp_label.text = "HP %d/%d" % [combat.enemy_hp, combat.enemy_max_hp]
+	_enemy_hp_label.text = "故障强度 %d/%d" % [combat.enemy_hp, combat.enemy_max_hp]
 	var er := clampf(float(combat.enemy_hp) / float(maxi(1, combat.enemy_max_hp)), 0.0, 1.0)
 	_enemy_fill.size = Vector2(ENEMY_W * er, 10.0)
 	_enemy_block_label.text = "格挡 %d" % combat.enemy_block if combat.enemy_block > 0 else ""
@@ -1122,6 +1179,8 @@ func _refresh_hud() -> void:
 	if piles != null:
 		piles.text = "抽 %d ｜ 弃 %d" % [combat.draw_pile.size(), combat.discard_pile.size()]
 	_update_pile_counts()
+	if _token_label != null and run != null:
+		_token_label.text = "Token 额度 %dK/%dK" % [run.hp, RunState.MAX_HP]
 
 
 func _on_hand_hover(view: StsCardView, entered: bool) -> void:
@@ -1234,6 +1293,9 @@ func _on_send_pressed() -> void:
 				tag = "复读！"
 			elif int(ev.get("streak", 1)) >= 2:
 				tag = "连段%d " % int(ev.get("streak", 1))
+			# 指令投递给 AI 娘 → 她运作 → 消耗额度输出（主人钦定中转演出）
+			await _maid_relay()
+			_maid_working_bubble()
 			_enemy_hit_fx(int(ev.get("value", 0)), tag)
 			SfxNode.play("hand_big")
 		elif kind == "loop":
@@ -1245,14 +1307,16 @@ func _on_send_pressed() -> void:
 					"并行：连段锁定", Color(0.31, 0.64, 0.88), UiKit.FS_M)
 			SfxNode.play("hand_small")
 		else:
-			# 格挡特效：灰色金属盾框出现在自己的对话框上
-			var dlg := get_node_or_null("ActionDialog") as Control
-			if dlg != null:
+			# 隔离指令投递给 AI 娘 → 她撑起隔离罩（防止故障恶化）
+			await _maid_relay()
+			_maid_working_bubble()
+			if _companion != null:
 				_spawn_fx("res://assets/art/fx-shield.png",
-						dlg.position + dlg.size * 0.5 - Vector2(110, 110),
-						Vector2(220, 220), 0.0, "pop", Color.WHITE, 0.7)
+						_companion.position + Vector2(_companion.size.x * 0.44 - 110,
+						_companion.size.y * 0.3 - 110),
+						Vector2(220, 220), 0.0, "pop", Color.WHITE, 0.8)
 			_float_text(Vector2(size.x * 0.5, size.y - CARD_H - 90.0),
-					"+%d 格挡" % int(ev.get("value", 0)), Color(0.31, 0.64, 0.88), UiKit.FS_M)
+					"隔离 +%d" % int(ev.get("value", 0)), Color(0.31, 0.64, 0.88), UiKit.FS_M)
 			SfxNode.play("fx_block")
 		if view != null:
 			if _fx_enabled:
@@ -1558,7 +1622,7 @@ func _finish_battle(win: bool) -> void:
 				_overlay_body.text += "
 📦 精英宝箱：获得【%s】！" % it.display_name
 		_overlay_title.text = "胜利"
-		_overlay_body.text = "击败【%s】！\n本战造成 %d 伤害 ｜ 剩余 HP %d（回复 %d）\n算力 +%d ｜ 下一步：往卡组里加一张牌。" % [
+		_overlay_body.text = "问题【%s】已解决！\n本战输出 %d 伤害额度 ｜ 剩余额度 %dK（恢复 %dK）\n算力 +%d ｜ 下一步：往卡组里加一张牌。" % [
 			level.enemy_name, combat.damage_dealt, run.hp,
 			StsCombat.HEAL_ON_WIN, gain]
 		_pop_overlay()
@@ -1567,7 +1631,7 @@ func _finish_battle(win: bool) -> void:
 		SfxNode.play("lose")
 		run.lose_battle(combat)
 		_overlay_title.text = "战败"
-		_overlay_body.text = "被【%s】打倒了（HP %d/%d）。\n提示：防御牌能挡下攻击——\n看准敌人的「攻击 N」意图再开防。" % [
+		_overlay_body.text = "额度耗尽，被【%s】压制（剩余故障强度 %d/%d）。\n提示：熔断保护能隔离故障、防止额度流失——\n看准敌人的「攻击 N」意图再开防。" % [
 			level.enemy_name, combat.hp, combat.max_hp]
 		_pop_overlay()
 		level_failed.emit(run.score)
