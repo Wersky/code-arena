@@ -9,6 +9,7 @@ signal event_entered
 var run: RunState = null
 var _door_battle: Control = null
 var _door_event: Control = null
+var _chosen := false   ## 每次回到门界面只能选一个（2026-11-01 主人钦定）
 
 
 func _init() -> void:
@@ -92,6 +93,15 @@ func _ready() -> void:
 
 func _make_door(tex_path: String, col: Color, clickable: bool,
 		on_click: Callable) -> Control:
+	var chosen_guard := func() -> bool:
+		if _chosen:
+			return false
+		_chosen = true
+		if _door_battle != null:
+			_door_battle.modulate = Color(0.6, 0.6, 0.65)
+		if _door_event != null:
+			_door_event.modulate = Color(0.6, 0.6, 0.65)
+		return true
 	var wrap := VBoxContainer.new()
 	wrap.add_theme_constant_override("separation", UiKit.SP_2)
 
@@ -130,7 +140,10 @@ func _make_door(tex_path: String, col: Color, clickable: bool,
 			door.scale = Vector2.ONE
 			glow.text = "")
 		door.gui_input.connect(func(ev: InputEvent) -> void:
-			if ev is InputEventMouseButton and (ev as InputEventMouseButton).pressed 					and (ev as InputEventMouseButton).button_index == MOUSE_BUTTON_LEFT:
+			if ev is InputEventMouseButton and (ev as InputEventMouseButton).pressed \
+					and (ev as InputEventMouseButton).button_index == MOUSE_BUTTON_LEFT:
+				if not chosen_guard.call():
+					return
 				SfxNode.play("ui_click")
 				on_click.call())
 	return wrap

@@ -68,6 +68,13 @@ func start_battle(level: LevelData) -> StsCombat:
 	var cb := StsCombat.new()
 	cb.setup(deck, level.enemy_name, level.enemy_hp,
 			level.enemy_pattern(), hp, run_seed + level.id.hash() + 7717)
+	# 道具效果注入（2026-11-01 道具系统）
+	for it in items:
+		match it.effect_id:
+			"prompt_opt":
+				cb.atk_bonus += it.power
+			"compress":
+				cb.hand_bonus += it.power
 	return cb
 
 

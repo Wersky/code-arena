@@ -105,6 +105,9 @@ var _pile_panel_mode := -1   ## -1 关闭 ｜ 0 抽牌堆 ｜ 1 弃牌堆
 var _send_btn: Button = null
 var _discards_left := DISCARD_LIMIT_PER_TURN
 
+func _discard_unlimited() -> bool:
+	return run != null and run.has_effect("subagent")
+
 # 特效层
 var _fx_enabled := true
 var _fx_root: Control = null
@@ -353,7 +356,7 @@ func _build_companion() -> void:
 	_build_pile_ui()
 
 
-## 牌堆/弃牌堆图标（右栏左下，竖排：上牌堆下弃牌）+ 查看面板
+## 牌堆/弃牌堆图标（左下角，竖排：上牌堆下弃牌）+ 查看面板（卡牌网格，置顶）
 func _build_pile_ui() -> void:
 	for cfg in [{"mode": 0, "tex": "res://assets/art/icon-pile-draw.png", "name": "PileDrawIcon"},
 			{"mode": 1, "tex": "res://assets/art/icon-pile-discard.png", "name": "PileDiscardIcon"}]:
@@ -388,34 +391,26 @@ func _build_pile_ui() -> void:
 		else:
 			_pile_discard_count = cnt
 
+	# 查看面板：只显示卡牌（StsCardView 网格 3 列，滚轮翻看），打开时置顶
 	_pile_panel = PanelContainer.new()
 	_pile_panel.name = "PilePanel"
 	_pile_panel.add_theme_stylebox_override("panel",
-			UiKit.flat(UiKit.PANEL_2, UiKit.ACCENT, 2, UiKit.SP_4, UiKit.EL_2))
+			UiKit.flat(UiKit.PANEL_2, UiKit.ACCENT, 2, UiKit.SP_3, UiKit.EL_2))
 	_pile_panel.visible = false
 	_pile_panel.mouse_filter = Control.MOUSE_FILTER_STOP
 	add_child(_pile_panel)
 
-	var v := VBoxContainer.new()
-	v.add_theme_constant_override("separation", UiKit.SP_2)
-	_pile_panel.add_child(v)
-
-	_pile_panel_title = UiKit.title("抽牌堆", UiKit.FS_S)
-	v.add_child(_pile_panel_title)
-
 	var scroll := ScrollContainer.new()
-	scroll.custom_minimum_size = Vector2(500, 300)
+	scroll.custom_minimum_size = Vector2(520, 600)
 	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
-	v.add_child(scroll)
+	_pile_panel.add_child(scroll)
 
-	_pile_panel_list = VBoxContainer.new()
-	_pile_panel_list.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	_pile_panel_list.add_theme_constant_override("separation", UiKit.SP_1)
-	scroll.add_child(_pile_panel_list)
-
-	var close := UiKit.button("关闭", UiKit.FS_XS)
-	close.pressed.connect(func() -> void: _toggle_pile_panel(-1))
-	v.add_child(close)
+	var grid := GridContainer.new()
+	grid.name = "PileGrid"
+	grid.columns = 3
+	grid.add_theme_constant_override("h_separation", UiKit.SP_2)
+	grid.add_theme_constant_override("v_separation", UiKit.SP_2)
+	scroll.add_child(grid)
 
 
 func _on_pile_icon_input(event: InputEvent, mode: int) -> void:
@@ -434,8 +429,8 @@ func _toggle_pile_panel(mode: int) -> void:
 		return
 	_pile_panel_mode = mode
 	var pile := combat.draw_pile if mode == 0 else combat.discard_pile
-	_pile_panel_title.text = "%s · %d 张" % ["抽牌堆" if mode == 0 else "弃牌堆", pile.size()]
-	for c in _pile_panel_list.get_children():
+	var grid := _pile_panel.get_node("PileGrid") as GridContainer
+	for c in grid.get_children():
 		c.queue_free()
 	var sorted := pile.duplicate()
 	sorted.sort_custom(func(a: StsCard, b: StsCard) -> bool:
@@ -443,12 +438,13 @@ func _toggle_pile_panel(mode: int) -> void:
 			return a.kind < b.kind
 		return a.id < b.id)
 	for c in sorted:
-		var row := UiKit.label("%s ｜ %s ｜ %s" % [StsCardPool.card_name(c.id),
-				StsCardPool.kind_name(c.kind), StsCardPool.desc(c.id)],
-				UiKit.FS_XS, StsCardPool.kind_color(c.kind))
-		row.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-		row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-		_pile_panel_list.add_child(row)
+		var view := StsCardView.new()
+		view.setup(c)
+		view.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		view.set_playable(true)
+		grid.add_child(view)
+	_pile_panel.move_to_front()
+	_pile_panel.z_index = 100
 	_pile_panel.visible = true
 	SfxNode.play("ui_click")
 
@@ -462,7 +458,7 @@ func _update_pile_counts() -> void:
 	if _pile_discard_count != null:
 		_pile_discard_count.text = str(combat.discard_pile.size())
 	if _pile_panel != null and _pile_panel.visible:
-		_toggle_pile_panel(_pile_panel_mode)   ## 重开 = 重建列表
+		_toggle_pile_panel(_pile_panel_mode)   ## 重开 = 重建卡牌网格
 
 
 func _build_fx() -> void:
@@ -549,15 +545,15 @@ func _layout() -> void:
 		_rice_label.size = Vector2(W - AI_X - PAD - 8.0, 24.0)
 	# 牌堆/弃牌堆图标：左侧栏底部空档（主人 2026-11-01 圈选位置），上牌堆下弃牌
 	if _pile_draw_icon != null:
-		_pile_draw_icon.position = Vector2(36.0, H - 252.0)
+		_pile_draw_icon.position = Vector2(36.0, H - 150.0)
 		_pile_draw_icon.size = Vector2(56, 56)
-		_pile_discard_icon.position = Vector2(36.0, H - 180.0)
+		_pile_discard_icon.position = Vector2(36.0, H - 76.0)
 		_pile_discard_icon.size = Vector2(56, 56)
-		_pile_draw_count.position = Vector2(98.0, H - 234.0)
-		_pile_discard_count.position = Vector2(98.0, H - 162.0)
+		_pile_draw_count.position = Vector2(98.0, H - 134.0)
+		_pile_discard_count.position = Vector2(98.0, H - 60.0)
 	if _pile_panel != null:
-		_pile_panel.position = Vector2(W * 0.5 - 280.0, H * 0.5 - 240.0)
-		_pile_panel.size = Vector2(560, 420)
+		_pile_panel.position = Vector2(W * 0.5 - 290.0, H * 0.5 - 330.0)
+		_pile_panel.size = Vector2(580, 660)
 
 	if _overlay:
 		_overlay.position = Vector2(W * 0.5 - 280.0, H * 0.5 - 170.0)
@@ -1126,7 +1122,7 @@ func _on_card_clicked(view: StsCardView) -> void:
 		return
 	# 弃牌模式：点谁弃谁，弃 1 抽 1（从牌堆）；每回合有次数上限
 	if _discard_mode:
-		if _discards_left <= 0:
+		if (_discards_left <= 0 and not _discard_unlimited()):
 			_status_label.text = "本回合弃牌次数用完（上限 %d 张），先结束回合。" \
 					% DISCARD_LIMIT_PER_TURN
 			return

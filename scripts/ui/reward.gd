@@ -39,8 +39,8 @@ func _ready() -> void:
 
 	var v := VBoxContainer.new()
 	v.set_anchors_preset(Control.PRESET_FULL_RECT)
-	v.offset_left = 80
-	v.offset_right = -80
+	v.offset_left = 40
+	v.offset_right = -40
 	v.offset_top = 50
 	v.offset_bottom = -50
 	v.alignment = BoxContainer.ALIGNMENT_CENTER
@@ -64,6 +64,7 @@ func _ready() -> void:
 	_make_option("fish_ram", StsCardPool.kind_color(StsCard.Kind.ATTACK))
 	_make_option("taunt", StsCardPool.kind_color(StsCard.Kind.SKILL))
 	_make_option("heal", Color(0.443, 0.839, 0.557))
+	_make_item_option(StsItemPool.make(StsItemPool.random_id(run.rng)))
 
 
 func _make_option(kind: String, base_color: Color) -> void:
@@ -136,6 +137,65 @@ func _make_option(kind: String, base_color: Color) -> void:
 		frame.modulate = Color(1, 1, 1, 0.25))
 
 	_row.add_child(wrap)
+
+
+## 道具选项：图 + 名 + 说明，选了加进 run.items
+func _make_item_option(item: AiItemData) -> void:
+	var wrap := VBoxContainer.new()
+	wrap.custom_minimum_size = Vector2(280, 0)
+	wrap.add_theme_constant_override("separation", UiKit.SP_2)
+
+	var panel := PanelContainer.new()
+	panel.custom_minimum_size = Vector2(280, 380)
+	var col := AiItemData.rarity_color(item.rarity)
+	panel.add_theme_stylebox_override("panel", UiKit.flat(UiKit.PANEL, col, 2, UiKit.SP_3, UiKit.EL_2))
+	panel.mouse_filter = Control.MOUSE_FILTER_STOP
+	wrap.add_child(panel)
+
+	var v := VBoxContainer.new()
+	v.add_theme_constant_override("separation", UiKit.SP_2)
+	panel.add_child(v)
+
+	var art := TextureRect.new()
+	if item.art_path != "" and ResourceLoader.exists(item.art_path):
+		art.texture = load(item.art_path)
+	art.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	art.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+	art.custom_minimum_size = Vector2(268, 210)
+	v.add_child(art)
+
+	var ribbon := ColorRect.new()
+	ribbon.color = col
+	ribbon.custom_minimum_size = Vector2(0, 3)
+	v.add_child(ribbon)
+
+	var name_lbl := UiKit.label(item.display_name, UiKit.FS_S, col)
+	name_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	v.add_child(name_lbl)
+
+	var desc := UiKit.label(item.description, UiKit.FS_XS, UiKit.TEXT)
+	desc.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	desc.custom_minimum_size = Vector2(268, 0)
+	v.add_child(desc)
+
+	var spacer := Control.new()
+	spacer.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	v.add_child(spacer)
+
+	var btn := UiKit.button("▶  选择这个", UiKit.FS_XS)
+	btn.custom_minimum_size = Vector2(0, 40)
+	btn.pressed.connect(_on_pick_item.bind(item))
+	v.add_child(btn)
+	_row.add_child(wrap)
+
+
+func _on_pick_item(item: AiItemData) -> void:
+	if _taken:
+		return
+	_taken = true
+	SfxNode.play("card_select")
+	run.add_item(item)
+	chosen.emit()
 
 
 func _on_pick(kind: String) -> void:

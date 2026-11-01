@@ -26,6 +26,7 @@ const RARITY_COLORS := {
 @export var power: int = 0
 @export var rarity: Rarity = Rarity.COMMON
 @export var min_chapter: int = 1
+@export var art_path: String = ""
 
 
 static func rarity_name(r: int) -> String:

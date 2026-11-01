@@ -33,6 +33,9 @@ const RICE_AWAKE := 5
 const RICE_BUFF := 1.2
 var rice_eaten := 0
 var _refill_count := 4
+## 道具效果（run.start_battle 按持有道具注入）
+var atk_bonus := 0        ## 提示词优化器：攻击牌伤害 +N
+var hand_bonus := 0       ## 上下文压缩：手牌上限 +N
 
 # ── 执行序列机制（2026-10-31 主人钦定 A/B/C/E）──────────
 ## 一回合 = 一次程序运行：发送执行整手 → 自动进入敌方回合。
@@ -109,7 +112,7 @@ func setup(deck: Array[StsCard], e_name: String, e_hp: int,
 	over = Result.RUNNING
 	damage_dealt = 0
 	_shuffle(draw_pile)
-	_draw(_refill_count)        ## 初始手牌：从牌堆抽
+	_draw(hand_size())        ## 初始手牌：从牌堆抽
 	refresh_intent()
 	start_turn()
 
@@ -131,7 +134,12 @@ func start_turn() -> void:
 	hand.clear()
 	refill_from_deck()
 	if hand.is_empty():
-		_draw(_refill_count)    ## 整卡组都不在手（极端兜底）→ 直接抽
+		_draw(hand_size())    ## 整卡组都不在手（极端兜底）→ 直接抽
+
+
+## 手牌上限（基础补牌数 + 上下文压缩加成）
+func hand_size() -> int:
+	return _refill_count + hand_bonus
 
 
 func _draw(n: int) -> void:
@@ -235,6 +243,8 @@ func play_card(card: StsCard, auto_refill: bool = true,
 		var step := STREAK_STEP * (seq_streak - 1)
 		var v: int = (card.damage if card.kind == StsCard.Kind.ATTACK else card.block) \
 				+ step + slot
+		if card.kind == StsCard.Kind.ATTACK:
+			v += atk_bonus
 		if is_awake():
 			v = int(round(float(v) * RICE_BUFF))
 		if card.kind == StsCard.Kind.ATTACK:
@@ -294,7 +304,7 @@ func discard_card(card: StsCard) -> bool:
 func _refill() -> void:
 	if not hand.is_empty():
 		return
-	var n := mini(_refill_count, discard_pile.size())
+	var n := mini(hand_size(), discard_pile.size())
 	for i in n:
 		var idx := rng.randi_range(0, discard_pile.size() - 1)
 		hand.append(discard_pile[idx])
@@ -310,7 +320,7 @@ func refill_from_deck() -> void:
 	draw_pile.append_array(discard_pile)
 	discard_pile.clear()
 	_shuffle(draw_pile)
-	_draw(_refill_count)
+	_draw(hand_size())
 
 
 ## 是否已成长到「有点睡醒」（吃满 2 碗白米饭）
