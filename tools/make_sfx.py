@@ -360,6 +360,13 @@ def build_battle_sfx() -> None:
     )
     save("fx_edef", normalize(edef))
 
+    # 燃尽：低三角长下坠（希望熄灭的声音）+ 余烬噼啪
+    burnout = mix(
+        tri(240, 1.1, vol=0.42, decay=0.95) if False else glide(240, 70, 1.1, vol=0.4, duty=0.5),
+        noise(0.6, vol=0.1, decay=0.96),
+    )
+    save("fx_burnout", normalize(burnout))
+
 
 if __name__ == "__main__":
     random.seed(4242)

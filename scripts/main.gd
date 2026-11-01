@@ -12,6 +12,7 @@ const ResultScene := preload("res://scripts/ui/result_screen.gd")
 const MapScene := preload("res://scripts/ui/map_screen.gd")
 const EventScene := preload("res://scripts/ui/event_screen.gd")
 const RiftScene := preload("res://scripts/ui/rift_transition.gd")
+const BurnoutScene := preload("res://scripts/ui/burnout_screen.gd")
 const ChibiRigScene := preload("res://scripts/ui/chibi_rig.gd")
 
 var run := RunState.new()
@@ -86,25 +87,23 @@ func _show_reward() -> void:
 
 
 func _show_result(win: bool) -> void:
-	var rs := ResultScreen.new()
 	if win:
+		var rs := ResultScreen.new()
 		rs.setup("全部战斗胜利", "你带着 %d 张卡（%d 件 AI 道具）闯完了 10 场战斗。
 累计伤害 %d ｜ 剩余算力 %d" % [
 			run.deck.size(), run.items.size(), run.score, run.compute
 		], [
 			{"text": "再来一局", "id": "menu", "accent": true},
 		])
+		rs.retry.connect(_on_retry)
+		rs.to_menu.connect(_show_menu)
+		_swap(rs)
 	else:
-		rs.setup("战败", "倒在【%s】面前。
-可以重打本场（卡组保留），或者放弃本局。" % [
-			_pending_level.enemy_name
-		], [
-			{"text": "重打本关", "id": "retry", "accent": true},
-			{"text": "放弃本局，回到主菜单", "id": "menu"},
-		])
-	rs.retry.connect(_on_retry)
-	rs.to_menu.connect(_show_menu)
-	_swap(rs)
+		# 燃尽画面（2026-11-01 主人钦定）：额度耗尽 → 黑屏跪姿 → 「燃尽了」→ 回主界面
+		var bo := BurnoutScene.new()
+		bo.retry_requested.connect(_on_retry)
+		bo.menu_requested.connect(_show_menu)
+		_swap(bo)
 
 
 # ── 事件 ─────────────────────────────────────────────
