@@ -571,37 +571,56 @@ func _test_battle_intro() -> void:
 	host.queue_free()
 
 
-# ── ⑧ 运行序列 / 选关地图 / 事件 ──────────────────────
+# ── ⑧ 选关地图（双门） / 事件 ──────────────────────────
 func _test_map_event() -> void:
-	print("[运行序列与地图]")
+	print("[选关地图]")
 	var run := RunState.new()
 	run.reset_run()
-	_eq(run.run_seq.size(), 14, "运行序列 14 节点（10 战斗 + 4 事件）")
-	var ev_n := 0
-	for n in run.run_seq:
-		if String(n.get("type", "")) == "event":
-			ev_n += 1
-	_eq(ev_n, 4, "事件节点 4 个（每 2 战斗插 1 个）")
-	_eq(String(run.run_seq[0].get("type", "")), "battle", "首节点是战斗")
-	_eq(String(run.run_seq[2].get("type", "")), "event", "第 3 节点是事件")
+	_eq(run.events_since_battle, 0, "事件冷却开局为 0（事件门可用）")
 
 	var m := MapScreen.new()
 	m.setup(run)
 	_host.add_child(m)
 	await process_frame
-	_check(m.get_child_count() > 0, "选关地图已构建")
-	_eq(String(run.current_node().get("type", "")), "battle", "当前节点 = 第一场战斗")
+	_check(m.get_child_count() > 0, "选关地图（双门）已构建")
+
+	var battle_sig := [false]
+	m.battle_entered.connect(func() -> void: battle_sig[0] = true)
+	m._door_battle.get_node("DoorArt").gui_input.emit(_make_click_event())
+	await process_frame
+	_check(battle_sig[0], "战斗门点击 → battle_entered")
 	m.queue_free()
 
-	var hp0 := run.hp
+	run.events_since_battle = 1
+	var m2 := MapScreen.new()
+	m2.setup(run)
+	_host.add_child(m2)
+	await process_frame
+	var ev_sig := [false]
+	m2.event_entered.connect(func() -> void: ev_sig[0] = true)
+	m2._door_event.get_node("DoorArt").gui_input.emit(_make_click_event())
+	await process_frame
+	_check(not ev_sig[0], "事件门冷却中：点击不触发")
+	m2.queue_free()
+
 	var e := EventScreen.new()
 	e.setup(run, 0)
 	_host.add_child(e)
 	await process_frame
 	_check(e.get_child_count() > 0, "事件界面已构建")
+	var hp0 := run.hp
 	e._on_choice({"hp": 18})
 	await process_frame
-	_check(run.hp == mini(RunState.MAX_HP, hp0 + 18), "事件效果生效（HP %d → %d）" % [hp0, run.hp])
+	_eq(run.events_since_battle, 1, "事件结算 → 冷却 +1")
+	_check(run.hp == mini(RunState.MAX_HP, hp0 + 18), "事件回血生效（%d → %d）" % [hp0, run.hp])
 	e.queue_free()
-	run.node_finished()
-	_eq(run.seq_idx, 1, "节点推进到 1")
+	run.events_since_battle = 0
+	_eq(run.events_since_battle, 0, "战斗清了 → 事件门重置")
+
+
+func _make_click_event() -> InputEventMouseButton:
+	var ev := InputEventMouseButton.new()
+	ev.button_index = MOUSE_BUTTON_LEFT
+	ev.pressed = true
+	ev.position = Vector2(100, 100)
+	return ev

@@ -160,6 +160,7 @@ func _on_ai_chosen(ai: AiData) -> void:
 ## 关卡结算完成（战斗界面自己弹结果窗，这里只记账，不切屏）
 func _on_level_cleared(_final_score: int) -> void:
 	run.level_index += 1
+	run.events_since_battle = 0   ## 事件门冷却重置
 	if _pending_level != null:
 		run.chapter = _pending_level.chapter
 	_last_passed = true
@@ -178,7 +179,6 @@ func _on_advance() -> void:
 
 
 func _after_reward() -> void:
-	run.node_finished()
 	_show_map()
 
 
@@ -189,16 +189,17 @@ func _show_map() -> void:
 		return
 	var m := MapScene.new()
 	m.setup(run)
-	m.node_entered.connect(_on_map_node)
-	m.run_completed.connect(_show_result.bind(true))
+	m.battle_entered.connect(_on_battle_door)
+	m.event_entered.connect(_on_event_door)
 	_swap(m)
 
 
-func _on_map_node(node: Dictionary) -> void:
-	if String(node.get("type", "")) == "battle":
-		_show_level(node["level"])
-	else:
-		_show_event(int(node.get("index", 0)))
+func _on_battle_door() -> void:
+	_show_level(_levels[run.level_index])
+
+
+func _on_event_door() -> void:
+	_show_event(0)
 
 
 ## 事件节点
@@ -210,7 +211,7 @@ func _show_event(event_index: int) -> void:
 
 
 func _on_event_finished() -> void:
-	run.node_finished()
+	run.events_since_battle += 1
 	_show_map()
 
 

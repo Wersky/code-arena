@@ -1,14 +1,14 @@
 class_name MapScreen
 extends Control
-## 选关界面（2026-11-01 主人钦定）：运行序列的节点路径——
-## 战斗 / 事件两种类型；已通关打勾、当前节点高亮可进、后续节点灰。
-## 点当前节点（或底部按钮）进入。
+## 选关界面（2026-11-01 主人钦定改版）：战斗/事件各一道大门，点门进入。
+## 事件门冷却：每打完一场战斗可用 1 次（防无限刷事件）。
 
-signal node_entered(node: Dictionary)
-signal run_completed
+signal battle_entered
+signal event_entered
 
 var run: RunState = null
-var _list: VBoxContainer = null
+var _door_battle: Control = null
+var _door_event: Control = null
 
 
 func _init() -> void:
@@ -29,7 +29,7 @@ func _ready() -> void:
 	add_child(bg)
 
 	var veil := ColorRect.new()
-	veil.color = Color(0.02, 0.03, 0.05, 0.72)
+	veil.color = Color(0.02, 0.03, 0.05, 0.6)
 	veil.set_anchors_preset(Control.PRESET_FULL_RECT)
 	veil.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	add_child(veil)
@@ -38,88 +38,99 @@ func _ready() -> void:
 	v.set_anchors_preset(Control.PRESET_FULL_RECT)
 	v.offset_left = 120
 	v.offset_right = -120
-	v.offset_top = 50
-	v.offset_bottom = -50
+	v.offset_top = 40
+	v.offset_bottom = -40
 	v.add_theme_constant_override("separation", UiKit.SP_3)
 	add_child(v)
 
-	var head := UiKit.title("作战路线", UiKit.FS_M)
+	var head := UiKit.title("选择你的道路", UiKit.FS_M)
 	head.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	v.add_child(head)
 
-	var stat := UiKit.dim("HP %d/%d ｜ 卡组 %d 张 ｜ 算力 %d" % [
-		run.hp, RunState.MAX_HP, run.deck.size(), run.compute], UiKit.FS_XS)
+	var stat := UiKit.dim("HP %d/%d ｜ 卡组 %d 张 ｜ 已通关 %d/10" % [
+		run.hp, RunState.MAX_HP, run.deck.size(), run.level_index], UiKit.FS_XS)
 	stat.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	v.add_child(stat)
 
-	var scroll := ScrollContainer.new()
-	scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
-	v.add_child(scroll)
+	var doors := HBoxContainer.new()
+	doors.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	doors.alignment = BoxContainer.ALIGNMENT_CENTER
+	doors.add_theme_constant_override("separation", 90)
+	v.add_child(doors)
 
-	_list = VBoxContainer.new()
-	_list.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	_list.add_theme_constant_override("separation", UiKit.SP_1)
-	scroll.add_child(_list)
+	var all_done: bool = run.level_index >= 10
 
-	_build_nodes()
-
-
-func _build_nodes() -> void:
-	var all_done: bool = run.seq_idx >= run.run_seq.size()
-	for i in run.run_seq.size():
-		var node: Dictionary = run.run_seq[i]
-		var done := i < run.seq_idx
-		var current := i == run.seq_idx
-		var is_battle := String(node.get("type", "")) == "battle"
-		var row := HBoxContainer.new()
-		row.add_theme_constant_override("separation", UiKit.SP_3)
-
-		# 节点圆章：战（红）/ 事（金）
-		var badge := UiKit.label("战" if is_battle else "事", UiKit.FS_S,
-				Color(0.784, 0.298, 0.298) if is_battle else Color(1.0, 0.82, 0.4))
-		badge.custom_minimum_size = Vector2(40, 40)
-		badge.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-		badge.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-		var bs := StyleBoxFlat.new()
-		bs.bg_color = UiKit.PANEL_2
-		bs.border_color = Color(0.4, 0.45, 0.55) if not (done or current) 				else (StsCardPool.kind_color(StsCard.Kind.ATTACK) if is_battle 						else Color(1.0, 0.82, 0.4))
-		bs.set_border_width_all(2)
-		bs.set_corner_radius_all(20)
-		badge.add_theme_stylebox_override("normal", bs)
-		row.add_child(badge)
-
-		var label_text := ""
-		if is_battle:
-			var lv: LevelData = node["level"]
-			label_text = "%s · %s（敌人 %s）" % [lv.id, lv.title, lv.enemy_name]
-		else:
-			label_text = "事件 · 未知的遭遇"
-		if done:
-			label_text += "  ✔"
-		var lbl := UiKit.label(label_text, UiKit.FS_S,
-				UiKit.TEXT if (done or current) else Color(0.45, 0.5, 0.6))
-		lbl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-		lbl.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-		row.add_child(lbl)
-
-		if current and not all_done:
-			var go := UiKit.accent_button("进入 ▶", UiKit.FS_XS)
-			go.custom_minimum_size = Vector2(120, 40)
-			go.pressed.connect(func() -> void: node_entered.emit(run.current_node()))
-			row.add_child(go)
-		if current and all_done:
-			var fin := UiKit.accent_button("查看结算 ▶", UiKit.FS_XS)
-			fin.custom_minimum_size = Vector2(140, 40)
-			fin.pressed.connect(func() -> void: run_completed.emit())
-			row.add_child(fin)
-		_list.add_child(row)
-
+	# ── 战斗之门 ──
+	var bwrap := _make_door("res://assets/art/door-battle.png",
+			Color(0.784, 0.298, 0.298), not all_done,
+			func() -> void: battle_entered.emit())
+	_door_battle = bwrap
+	doors.add_child(bwrap)
+	var bnext := bwrap.get_meta("cap") as Label
 	if all_done:
-		var t := UiKit.title("全部节点已通关 —— 前往结算！", UiKit.FS_S)
-		t.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-		_list.add_child(t)
+		bnext.text = "已全部通关"
 	else:
-		var hint := UiKit.dim("点击高亮节点进入。战斗 = 与捣蛋鬼开战；事件 = 未知遭遇。", UiKit.FS_XS)
-		hint.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-		_list.add_child(hint)
+		var lv: LevelData = LevelPool.all_levels()[run.level_index]
+		bnext.text = "第 %d 战 · 敌人：%s" % [run.level_index + 1, lv.enemy_name]
+
+	# ── 事件之门 ──
+	var event_locked: bool = run.events_since_battle >= 1 and not all_done
+	var ewrap := _make_door("res://assets/art/door-event.png",
+			Color(1.0, 0.82, 0.4), not event_locked and not all_done,
+			func() -> void: event_entered.emit())
+	_door_event = ewrap
+	doors.add_child(ewrap)
+	var ecap := ewrap.get_meta("cap") as Label
+	ecap.text = "神秘遭遇" if not event_locked else "冷却中 · 先打一场战斗"
+	if event_locked:
+		ewrap.modulate = Color(0.5, 0.5, 0.55, 0.85)
+
+	var hint := UiKit.dim("点门进入。战斗推进路线；每打完一场战斗，事件之门开启一次。", UiKit.FS_XS)
+	hint.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	v.add_child(hint)
+
+
+func _make_door(tex_path: String, col: Color, clickable: bool,
+		on_click: Callable) -> Control:
+	var wrap := VBoxContainer.new()
+	wrap.add_theme_constant_override("separation", UiKit.SP_2)
+
+	var door := TextureRect.new()
+	door.name = "DoorArt"
+	door.texture = load(tex_path)
+	door.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	door.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+	door.custom_minimum_size = Vector2(430, 560)
+	door.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	door.texture_filter = CanvasItem.TEXTURE_FILTER_LINEAR
+	door.mouse_filter = Control.MOUSE_FILTER_STOP
+	door.pivot_offset = Vector2(215, 280)
+	wrap.add_child(door)
+
+	var glow := UiKit.label("", UiKit.FS_S, col)
+	glow.name = "DoorGlow"
+	glow.custom_minimum_size = Vector2(0, 26)
+	glow.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	wrap.add_child(glow)
+
+	var cap := UiKit.label("", UiKit.FS_XS, UiKit.TEXT_DIM)
+	cap.name = "DoorCap"
+	cap.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	cap.custom_minimum_size = Vector2(0, 20)
+	wrap.add_child(cap)
+	wrap.set_meta("cap", cap)
+
+	if clickable:
+		door.mouse_entered.connect(func() -> void:
+			door.modulate = Color(1.12, 1.12, 1.15)
+			door.scale = Vector2(1.03, 1.03)
+			glow.text = "▶ 进入")
+		door.mouse_exited.connect(func() -> void:
+			door.modulate = Color.WHITE
+			door.scale = Vector2.ONE
+			glow.text = "")
+		door.gui_input.connect(func(ev: InputEvent) -> void:
+			if ev is InputEventMouseButton and (ev as InputEventMouseButton).pressed 					and (ev as InputEventMouseButton).button_index == MOUSE_BUTTON_LEFT:
+				SfxNode.play("ui_click")
+				on_click.call())
+	return wrap

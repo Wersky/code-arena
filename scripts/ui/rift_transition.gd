@@ -75,9 +75,12 @@ func _play() -> void:
 	var tw := create_tween()
 	tw.tween_property(_left, "position:x", -7.0, 0.18) 			.set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_OUT)
 	tw.parallel().tween_property(_right, "position:x", 7.0, 0.18) 			.set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_OUT)
-	tw.tween_interval(0.14)
+	tw.tween_interval(0.08)
 	tw.tween_property(_left, "position:x", -_w, 0.55) 			.set_trans(Tween.TRANS_EXPO).set_ease(Tween.EASE_IN_OUT)
 	tw.parallel().tween_property(_right, "position:x", _w, 0.55) 			.set_trans(Tween.TRANS_EXPO).set_ease(Tween.EASE_IN_OUT)
+	# 裂纹快速消散（2026-11-01 主人反馈：裂痕停留太久）
+	tw.parallel().tween_property(_crack, "modulate:a", 0.0, 0.22)
+	tw.parallel().tween_property(_crack_glow, "modulate:a", 0.0, 0.22)
 	tw.tween_callback(func() -> void:
 		finished.emit()
 		queue_free())
