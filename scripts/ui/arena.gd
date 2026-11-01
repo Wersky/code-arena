@@ -350,6 +350,7 @@ func _build_companion() -> void:
 	_rice_label.name = "RiceLabel"
 	_rice_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	add_child(_rice_label)
+	_build_pile_ui()
 
 
 ## 牌堆/弃牌堆图标（右栏左下，竖排：上牌堆下弃牌）+ 查看面板
