@@ -6,6 +6,7 @@ extends Control
 signal battle_entered
 signal event_entered
 signal bonus_entered
+signal elite_entered
 
 var run: RunState = null
 var special := ""   ## "" 纯战斗 ｜ "event" 事件门 ｜ "bonus" 奖励门
@@ -77,6 +78,15 @@ func _ready() -> void:
 		ecap.text = "神秘遭遇" if not event_locked else "冷却中 · 先打一场战斗"
 		if event_locked:
 			ewrap.modulate = Color(0.5, 0.5, 0.55, 0.85)
+
+	# ── 精英之门（20% 掷中才出现）：强制精英战，必掉宝箱 ──
+	if special == "elite":
+		var elite_wrap := _make_door("res://assets/art/door-elite.png",
+				Color(1.0, 0.23, 0.23), not all_done,
+				func() -> void: elite_entered.emit())
+		doors.add_child(elite_wrap)
+		var elite_cap := elite_wrap.get_meta("cap") as Label
+		elite_cap.text = "精英怪 · 必掉宝箱"
 
 	# ── 奖励之门（10% 掷中才出现）：宝箱直接开道具 ──
 	if special == "bonus":

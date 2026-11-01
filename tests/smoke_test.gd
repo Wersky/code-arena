@@ -644,10 +644,45 @@ func _test_map_event() -> void:
 	_eq(run.items.size(), n0 + 1, "宝箱/精英掉落：道具 +1")
 	b.queue_free()
 
-	# 精英掷骰类型正确
+	# 精英标记：门选制——参数强制，不再掷骰
 	var cb := StsCombat.new()
 	cb.setup(run.deck, "沙袋", 999, [{"kind": "attack", "value": 4}], 80, 42)
-	_check(typeof(cb.is_elite) == TYPE_BOOL, "精英标记为布尔")
+	_check(not cb.is_elite, "普通门：非精英")
+	var ce := run.start_battle(LevelPool.get_level("L1"), true)
+	_check(ce.is_elite, "精英门：强制精英")
+	ce.queue_free() if false else null
+
+	# ── 事件效果系统 ──
+	var run2 := RunState.new()
+	run2.reset_run()
+	var cb2 := run2.start_battle(LevelPool.get_level("L1"))
+	var hp0 := cb2.enemy_hp
+	run2.next_pre_hp = -20
+	var cb3 := run2.start_battle(LevelPool.get_level("L2"))
+	_eq(cb3.enemy_hp, maxf(1, LevelPool.get_level("L2").enemy_hp - 20), "敌人先扣血：96-20")
+	_eq(run2.next_pre_hp, 0, "先扣血一次性消耗")
+	cb3.queue_free() if false else null
+
+	var cb4 := run2.start_battle(LevelPool.get_level("L3"))
+	var atk0 := cb4.atk_bonus
+	run2.run_atk_bonus = 1
+	var cb5 := run2.start_battle(LevelPool.get_level("L4"))
+	_eq(cb5.atk_bonus, atk0 + 1, "运行级攻击 +1 注入")
+	cb5.queue_free() if false else null
+
+	var cb6 := run2.start_battle(LevelPool.get_level("L5"))
+	run2.next_hand_bonus = 1
+	var cb7 := run2.start_battle(LevelPool.get_level("L6"))
+	_eq(cb7.hand_size(), 5, "下一场手牌 +1（4→5）")
+	_eq(run2.next_hand_bonus, 0, "手牌加成一次性消耗")
+	cb7.queue_free() if false else null
+
+	# 电子木鱼：赛博功德（战斗开始回 5 HP）
+	run2.add_item(StsItemPool.make("muyu"))
+	var hp_before := run2.hp
+	var cb8 := run2.start_battle(LevelPool.get_level("L7"))
+	_eq(cb8.hp, mini(RunState.MAX_HP, hp_before + 5), "电子木鱼：战斗开始回 5 HP")
+	cb8.queue_free() if false else null
 
 
 func _make_click_event() -> InputEventMouseButton:

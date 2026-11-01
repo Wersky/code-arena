@@ -17,6 +17,7 @@ const ChibiRigScene := preload("res://scripts/ui/chibi_rig.gd")
 var run := RunState.new()
 var _current: Control = null
 var _pending_level: LevelData = null
+var _pending_elite := false
 var _last_passed: bool = false
 var _levels: Array[LevelData] = []
 
@@ -59,14 +60,15 @@ func _show_menu() -> void:
 	_swap(menu)
 
 
-func _show_level(level: LevelData) -> void:
+func _show_level(level: LevelData, elite: bool = false) -> void:
+	_pending_elite = elite
 	_pending_level = level
 	_last_passed = false
 	# 正常流程由选人界面设定；调试/直跳路径兜底给初始伙伴
 	if run.ai == null:
 		run.set_ai(AiPool.get_ai("deepdeek"))
 	var arena := ArenaScene.new()
-	arena.setup(run, level)
+	arena.setup(run, level, _pending_elite)
 	arena.level_cleared.connect(_on_level_cleared)
 	arena.level_failed.connect(_on_level_failed)
 	arena.advance_requested.connect(_on_advance)
@@ -183,24 +185,32 @@ func _after_reward() -> void:
 
 
 ## 选关界面（战斗 / 事件节点）
-## 选关界面（门选制）：每次到达掷一次遭遇——50% 战斗 / 40% 事件 / 10% 奖励关
-## 战斗门常驻；事件门与奖励门按概率出现（主人 2026-11-01 概率表）
+## 选关界面（门选制）：每次到达掷一次遭遇——40% 战斗 / 30% 事件 / 10% 奖励 / 20% 精英
+## 战斗门常驻；事件门、奖励门、精英门按概率出现（主人 2026-11-01 概率表 v2）
 func _show_map() -> void:
 	if run.level_index >= _levels.size():
 		_show_result(true)
 		return
 	var roll := run.rng.randf()
 	var special := ""
-	if roll < 0.10:
-		special = "bonus"
+	if roll < 0.20:
+		special = "elite"
 	elif roll < 0.50:
 		special = "event"
+	elif roll < 0.60:
+		special = "bonus"
 	var m := MapScene.new()
 	m.setup(run, special)
 	m.battle_entered.connect(_on_battle_door)
 	m.event_entered.connect(_on_event_door)
 	m.bonus_entered.connect(_show_bonus)
+	m.elite_entered.connect(_on_elite_door)
 	_swap(m)
+
+
+## 精英门：强制精英战斗（必掉宝箱）
+func _on_elite_door() -> void:
+	_show_level(_levels[run.level_index], true)
 
 
 ## 奖励关：开宝箱得一件道具

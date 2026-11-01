@@ -19,6 +19,14 @@ const ITEMS := {
 		"art": "res://assets/art/item-subagent.png",
 		"rarity": 1,
 	},
+	"muyu": {
+		"name": "电子木鱼",
+		"desc": "战斗开始自动敲一下：赛博功德，回复 5 HP。",
+		"effect_id": "muyu",
+		"power": 5,
+		"art": "res://assets/art/item-muyu.png",
+		"rarity": 1,
+	},
 	"compress": {
 		"name": "上下文压缩",
 		"desc": "手牌上限 +1，可用 3 场战斗，之后损坏（下一局自动修好）。",

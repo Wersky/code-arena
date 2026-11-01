@@ -92,6 +92,7 @@ var _dialog: PanelContainer = null   ## 底部对话框底板（手牌 + 操作�
 var _companion: AiCompanion = null
 var _discard_mode := false
 var _discard_btn: Button = null
+var _elite := false   ## 精英战斗（门选制：精英门必为精英）
 var _rice_label: Label = null
 ## 牌堆/弃牌堆图标与查看面板（2026-11-01 主人钦定：右栏左下两图标，点开看列表）
 var _pile_draw_icon: TextureRect = null
@@ -126,9 +127,10 @@ func _init() -> void:
 	set_anchors_preset(Control.PRESET_FULL_RECT)
 
 
-func setup(run_state: RunState, lv: LevelData) -> void:
+func setup(run_state: RunState, lv: LevelData, elite: bool = false) -> void:
 	run = run_state
 	level = lv
+	_elite = elite
 
 
 func _ready() -> void:

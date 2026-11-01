@@ -64,12 +64,21 @@ func add_card(card_id: String) -> void:
 
 ## 开一场战斗：卡组洗进抽牌堆、HP 续接上关、敌人数据来自关卡。
 ## 战斗状态机由此返回，arena 拿去驱动 UI。
-func start_battle(level: LevelData) -> StsCombat:
+func start_battle(level: LevelData, elite: bool = false) -> StsCombat:
 	var cb := StsCombat.new()
 	cb.setup(deck, level.enemy_name, level.enemy_hp,
 			level.enemy_pattern(), hp, run_seed + level.id.hash() + 7717)
-	# 精英怪（2026-11-01 主人钦定）：15% 概率红光精英，打倒掉宝箱道具
-	cb.is_elite = rng.randf() < 0.15
+	# 电子木鱼（道具）：赛博功德，战斗开始回 5 HP
+	for it in items:
+		if not it.broken and it.effect_id == "muyu":
+			hp = mini(MAX_HP, hp + 5)
+	# 精英怪（2026-11-01 门选制）：精英门强制精英；事件效果挂载
+	cb.is_elite = elite
+	cb.enemy_hp = maxi(1, cb.enemy_hp + next_pre_hp)
+	cb.atk_bonus += run_atk_bonus
+	cb.hand_bonus += next_hand_bonus
+	next_pre_hp = 0
+	next_hand_bonus = 0
 	# 道具效果注入（2026-11-01 道具系统）
 	for it in items:
 		if it.broken:
@@ -114,6 +123,14 @@ func items_with(effect_id: String) -> Array[AiItemData]:
 		if it.effect_id == effect_id:
 			out.append(it)
 	return out
+
+
+## 运行级攻击加成（事件「AI 会取代人类吗」嘲讽路线）
+var run_atk_bonus := 0
+## 下一场战斗敌人先扣的血（事件效果）
+var next_pre_hp := 0
+## 下一场战斗手牌上限加成（事件「温度旋钮」）
+var next_hand_bonus := 0
 
 
 ## 精英宝箱：随机一件道具（打倒精英怪后由 arena 调用）
