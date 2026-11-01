@@ -93,6 +93,15 @@ var _companion: AiCompanion = null
 var _discard_mode := false
 var _discard_btn: Button = null
 var _rice_label: Label = null
+## 牌堆/弃牌堆图标与查看面板（2026-11-01 主人钦定：右栏左下两图标，点开看列表）
+var _pile_draw_icon: TextureRect = null
+var _pile_discard_icon: TextureRect = null
+var _pile_draw_count: Label = null
+var _pile_discard_count: Label = null
+var _pile_panel: PanelContainer = null
+var _pile_panel_title: Label = null
+var _pile_panel_list: VBoxContainer = null
+var _pile_panel_mode := -1   ## -1 关闭 ｜ 0 抽牌堆 ｜ 1 弃牌堆
 var _send_btn: Button = null
 var _discards_left := DISCARD_LIMIT_PER_TURN
 
@@ -337,10 +346,122 @@ func _build_companion() -> void:
 	add_child(_companion)
 	if run != null:
 		_companion.setup(run.ai)
-	_rice_label = UiKit.label("白米饭 0/2", UiKit.FS_XS, Color(1.0, 0.9, 0.55))
+	_rice_label = UiKit.label("白米饭 0/5", UiKit.FS_XS, Color(1.0, 0.9, 0.55))
 	_rice_label.name = "RiceLabel"
 	_rice_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	add_child(_rice_label)
+
+
+## 牌堆/弃牌堆图标（右栏左下，竖排：上牌堆下弃牌）+ 查看面板
+func _build_pile_ui() -> void:
+	for cfg in [{"mode": 0, "tex": "res://assets/art/icon-pile-draw.png", "name": "PileDrawIcon"},
+			{"mode": 1, "tex": "res://assets/art/icon-pile-discard.png", "name": "PileDiscardIcon"}]:
+		var icon := TextureRect.new()
+		icon.name = String(cfg["name"])
+		if ResourceLoader.exists(String(cfg["tex"])):
+			icon.texture = load(String(cfg["tex"]))
+		icon.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
+		icon.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+		icon.stretch_mode = TextureRect.STRETCH_SCALE
+		icon.custom_minimum_size = Vector2(56, 56)
+		icon.size = Vector2(56, 56)
+		icon.mouse_filter = Control.MOUSE_FILTER_STOP
+		var mode := int(cfg["mode"])
+		icon.gui_input.connect(_on_pile_icon_input.bind(mode))
+		icon.mouse_entered.connect(func() -> void:
+			icon.modulate = Color(1.25, 1.25, 1.25)
+			if _status_label != null:
+				_status_label.text = "点开看%s里有哪些牌" % ("抽牌堆" if mode == 0 else "弃牌堆"))
+		icon.mouse_exited.connect(func() -> void:
+			icon.modulate = Color.WHITE)
+		add_child(icon)
+		if mode == 0:
+			_pile_draw_icon = icon
+		else:
+			_pile_discard_icon = icon
+		var cnt := UiKit.label("0", UiKit.FS_XS, UiKit.TEXT_DIM)
+		cnt.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		add_child(cnt)
+		if mode == 0:
+			_pile_draw_count = cnt
+		else:
+			_pile_discard_count = cnt
+
+	_pile_panel = PanelContainer.new()
+	_pile_panel.name = "PilePanel"
+	_pile_panel.add_theme_stylebox_override("panel",
+			UiKit.flat(UiKit.PANEL_2, UiKit.ACCENT, 2, UiKit.SP_4, UiKit.EL_2))
+	_pile_panel.visible = false
+	_pile_panel.mouse_filter = Control.MOUSE_FILTER_STOP
+	add_child(_pile_panel)
+
+	var v := VBoxContainer.new()
+	v.add_theme_constant_override("separation", UiKit.SP_2)
+	_pile_panel.add_child(v)
+
+	_pile_panel_title = UiKit.title("抽牌堆", UiKit.FS_S)
+	v.add_child(_pile_panel_title)
+
+	var scroll := ScrollContainer.new()
+	scroll.custom_minimum_size = Vector2(500, 300)
+	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	v.add_child(scroll)
+
+	_pile_panel_list = VBoxContainer.new()
+	_pile_panel_list.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_pile_panel_list.add_theme_constant_override("separation", UiKit.SP_1)
+	scroll.add_child(_pile_panel_list)
+
+	var close := UiKit.button("关闭", UiKit.FS_XS)
+	close.pressed.connect(func() -> void: _toggle_pile_panel(-1))
+	v.add_child(close)
+
+
+func _on_pile_icon_input(event: InputEvent, mode: int) -> void:
+	if event is InputEventMouseButton and (event as InputEventMouseButton).pressed 			and (event as InputEventMouseButton).button_index == MOUSE_BUTTON_LEFT:
+		_toggle_pile_panel(mode)
+		accept_event()
+
+
+## 打开/关闭牌堆查看面板（mode：0 抽牌堆 ｜ 1 弃牌堆 ｜ -1 关闭）
+func _toggle_pile_panel(mode: int) -> void:
+	if _pile_panel == null or combat == null:
+		return
+	if _pile_panel_mode == mode or mode < 0:
+		_pile_panel.visible = false
+		_pile_panel_mode = -1
+		return
+	_pile_panel_mode = mode
+	var pile := combat.draw_pile if mode == 0 else combat.discard_pile
+	_pile_panel_title.text = "%s · %d 张" % ["抽牌堆" if mode == 0 else "弃牌堆", pile.size()]
+	for c in _pile_panel_list.get_children():
+		c.queue_free()
+	var sorted := pile.duplicate()
+	sorted.sort_custom(func(a: StsCard, b: StsCard) -> bool:
+		if a.kind != b.kind:
+			return a.kind < b.kind
+		return a.id < b.id)
+	for c in sorted:
+		var row := UiKit.label("%s ｜ %s ｜ %s" % [StsCardPool.card_name(c.id),
+				StsCardPool.kind_name(c.kind), StsCardPool.desc(c.id)],
+				UiKit.FS_XS, StsCardPool.kind_color(c.kind))
+		row.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		_pile_panel_list.add_child(row)
+	_pile_panel.visible = true
+	SfxNode.play("ui_click")
+
+
+## 图标计数 + 面板开着时实时刷新
+func _update_pile_counts() -> void:
+	if combat == null:
+		return
+	if _pile_draw_count != null:
+		_pile_draw_count.text = str(combat.draw_pile.size())
+	if _pile_discard_count != null:
+		_pile_discard_count.text = str(combat.discard_pile.size())
+	if _pile_panel != null and _pile_panel.visible:
+		_toggle_pile_panel(_pile_panel_mode)   ## 重开 = 重建列表
 
 
 func _build_fx() -> void:
@@ -425,6 +546,16 @@ func _layout() -> void:
 	if _rice_label:
 		_rice_label.position = Vector2(AI_X + 8.0, H - 350.0)
 		_rice_label.size = Vector2(W - AI_X - PAD - 8.0, 24.0)
+	if _pile_draw_icon != null:
+		_pile_draw_icon.position = Vector2(AI_X + 12.0, H - 210.0)
+		_pile_draw_icon.size = Vector2(56, 56)
+		_pile_discard_icon.position = Vector2(AI_X + 12.0, H - 146.0)
+		_pile_discard_icon.size = Vector2(56, 56)
+		_pile_draw_count.position = Vector2(AI_X + 74.0, H - 196.0)
+		_pile_discard_count.position = Vector2(AI_X + 74.0, H - 132.0)
+	if _pile_panel != null:
+		_pile_panel.position = Vector2(W * 0.5 - 280.0, H * 0.5 - 240.0)
+		_pile_panel.size = Vector2(560, 420)
 
 	if _overlay:
 		_overlay.position = Vector2(W * 0.5 - 280.0, H * 0.5 - 170.0)
