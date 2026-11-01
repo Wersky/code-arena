@@ -1489,7 +1489,33 @@ func _pop_overlay() -> void:
 
 func _on_overlay_continue() -> void:
 	_overlay.visible = false
+	if _fx_enabled and combat != null and combat.over == StsCombat.Result.WIN:
+		await _victory_exit()
 	advance_requested.emit()
+
+
+## 胜利谢幕（2026-11-01 主人钦定）：侧边栏向左平滑滑出、对话框向下平滑滑出、
+## 然后全屏压黑——黑幕接主控的裂隙转场，露出奖励界面。
+func _victory_exit() -> void:
+	_busy = true
+	_send_btn.disabled = true
+	_end_turn_button.disabled = true
+	var rail := get_node_or_null("HudLeft") as Control
+	var dlg := get_node_or_null("ActionDialog") as Control
+	var tw := create_tween()
+	tw.set_parallel(true)
+	if rail != null:
+		tw.tween_property(rail, "position:x", rail.position.x - rail.size.x - 60.0, 0.5) 				.set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_IN_OUT)
+	if dlg != null:
+		tw.tween_property(dlg, "position:y", size.y + 60.0, 0.5) 				.set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_IN_OUT)
+	var black := ColorRect.new()
+	black.color = Color(0.012, 0.02, 0.04, 0.0)
+	black.set_anchors_preset(Control.PRESET_FULL_RECT)
+	black.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	add_child(black)
+	tw.tween_property(black, "color:a", 1.0, 0.4).set_delay(0.2)
+	await tw.finished
+	black.color.a = 1.0
 
 
 # ─────────────────────────────────────────────────────────

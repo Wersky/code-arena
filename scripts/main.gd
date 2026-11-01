@@ -9,6 +9,9 @@ const RewardScene := preload("res://scripts/ui/reward.gd")
 const MenuScene := preload("res://scripts/ui/main_menu.gd")
 const AiSelectScene := preload("res://scripts/ui/ai_select.gd")
 const ResultScene := preload("res://scripts/ui/result_screen.gd")
+const MapScene := preload("res://scripts/ui/map_screen.gd")
+const EventScene := preload("res://scripts/ui/event_screen.gd")
+const RiftScene := preload("res://scripts/ui/rift_transition.gd")
 const ChibiRigScene := preload("res://scripts/ui/chibi_rig.gd")
 
 var run := RunState.new()
@@ -75,6 +78,9 @@ func _show_reward() -> void:
 	r.setup(run)
 	r.chosen.connect(_after_reward)
 	_swap(r)
+	# 裂隙转场（2026-11-01 主人钦定）：黑幕→中央裂纹向上下张开→左右分开露出奖励
+	if DisplayServer.get_name() != "headless":
+		r.add_child(RiftScene.new())
 
 
 func _show_result(win: bool) -> void:
@@ -172,8 +178,40 @@ func _on_advance() -> void:
 
 
 func _after_reward() -> void:
-	# 基础玩法没有商店与货币：奖励完直接下一关
-	_go_next_level()
+	run.node_finished()
+	_show_map()
+
+
+## 选关界面（战斗 / 事件节点）
+func _show_map() -> void:
+	if run.level_index >= _levels.size():
+		_show_result(true)
+		return
+	var m := MapScene.new()
+	m.setup(run)
+	m.node_entered.connect(_on_map_node)
+	m.run_completed.connect(_show_result.bind(true))
+	_swap(m)
+
+
+func _on_map_node(node: Dictionary) -> void:
+	if String(node.get("type", "")) == "battle":
+		_show_level(node["level"])
+	else:
+		_show_event(int(node.get("index", 0)))
+
+
+## 事件节点
+func _show_event(event_index: int) -> void:
+	var e := EventScene.new()
+	e.setup(run, event_index)
+	e.finished.connect(_on_event_finished)
+	_swap(e)
+
+
+func _on_event_finished() -> void:
+	run.node_finished()
+	_show_map()
 
 
 func _after_shop() -> void:
@@ -941,6 +979,10 @@ func debug_show(screen: String) -> void:
 	match screen:
 		"menu":
 			_show_menu()
+		"map":
+			_show_map()
+		"event":
+			_show_event(0)
 		"arena":
 			_show_level(_levels[0])
 		"reward":

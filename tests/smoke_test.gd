@@ -24,6 +24,7 @@ func _initialize() -> void:
 	await _test_battle_flow(true)
 	await _test_battle_flow(false)
 	await _test_battle_intro()
+	await _test_map_event()
 	await _test_screen_router()
 	print("\n==== %d 项检查，%d 项失败 ====" % [_checks, _fails])
 	quit(1 if _fails > 0 else 0)
@@ -526,7 +527,7 @@ func _test_screen_router() -> void:
 	_host.add_child(main)
 	await process_frame
 	_eq(main.debug_screen_count(), 1, "启动后只挂载 1 个界面")
-	for screen in ["arena", "reward", "menu", "result"]:
+	for screen in ["arena", "reward", "map", "event", "menu", "result"]:
 		main.debug_show(screen)
 		await process_frame
 		_eq(main.debug_screen_count(), 1, "切到「%s」后仍只有 1 个界面" % screen)
@@ -568,3 +569,39 @@ func _test_battle_intro() -> void:
 	await process_frame
 	_check(done2[0], "skip() 立刻触发回调")
 	host.queue_free()
+
+
+# ── ⑧ 运行序列 / 选关地图 / 事件 ──────────────────────
+func _test_map_event() -> void:
+	print("[运行序列与地图]")
+	var run := RunState.new()
+	run.reset_run()
+	_eq(run.run_seq.size(), 14, "运行序列 14 节点（10 战斗 + 4 事件）")
+	var ev_n := 0
+	for n in run.run_seq:
+		if String(n.get("type", "")) == "event":
+			ev_n += 1
+	_eq(ev_n, 4, "事件节点 4 个（每 2 战斗插 1 个）")
+	_eq(String(run.run_seq[0].get("type", "")), "battle", "首节点是战斗")
+	_eq(String(run.run_seq[2].get("type", "")), "event", "第 3 节点是事件")
+
+	var m := MapScreen.new()
+	m.setup(run)
+	_host.add_child(m)
+	await process_frame
+	_check(m.get_child_count() > 0, "选关地图已构建")
+	_eq(String(run.current_node().get("type", "")), "battle", "当前节点 = 第一场战斗")
+	m.queue_free()
+
+	var hp0 := run.hp
+	var e := EventScreen.new()
+	e.setup(run, 0)
+	_host.add_child(e)
+	await process_frame
+	_check(e.get_child_count() > 0, "事件界面已构建")
+	e._on_choice({"hp": 18})
+	await process_frame
+	_check(run.hp == mini(RunState.MAX_HP, hp0 + 18), "事件效果生效（HP %d → %d）" % [hp0, run.hp])
+	e.queue_free()
+	run.node_finished()
+	_eq(run.seq_idx, 1, "节点推进到 1")

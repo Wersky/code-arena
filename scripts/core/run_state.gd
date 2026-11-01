@@ -29,6 +29,31 @@ var last_result: Dictionary = {}
 ## 本局的核心 AI 娘。reset_run() 时置空，选定后整局不变。
 var ai: AiData = null
 
+# ── 运行序列（选关地图的节点，2026-11-01 主人钦定：战斗/事件两种类型）──
+## 每 2 场战斗插 1 个事件节点：B1 B2 E B3 B4 E … B9 B10（10 战斗 + 4 事件）
+var run_seq: Array[Dictionary] = []
+var seq_idx := 0               ## 当前节点（map 上高亮的那个）
+
+
+func build_run_seq() -> void:
+	run_seq.clear()
+	seq_idx = 0
+	var battles := 0
+	for lv in LevelPool.all_levels():
+		run_seq.append({"type": "battle", "level": lv})
+		battles += 1
+		if battles % 2 == 0 and battles < 10:
+			run_seq.append({"type": "event", "index": battles / 2})
+
+
+func current_node() -> Dictionary:
+	return run_seq[seq_idx] if seq_idx < run_seq.size() else {}
+
+
+## 完成当前节点，推进到下一个
+func node_finished() -> void:
+	seq_idx += 1
+
 
 func _init() -> void:
 	rng.randomize()
@@ -47,6 +72,7 @@ func reset_run() -> void:
 	last_result = {}
 	ai = null
 	intro_played = false
+	build_run_seq()
 
 
 ## 设定核心 AI 娘
