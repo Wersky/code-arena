@@ -320,8 +320,50 @@ def build_music() -> None:
     save("bgm_main", seq(evs, total=total), subdir="music")
 
 
+def build_battle_sfx() -> None:
+    """战斗特效四音（2026-11-01 主人钦定）：斩击/格挡/吃饭/敌受击重音"""
+    # 斩击：高频噪声扫落 + 方波下滑（唰——）
+    slash = mix(
+        noise(0.14, vol=0.5, decay=0.9),
+        [0.0] * 2 + glide(1500, 240, 0.13, vol=0.42, duty=0.3),
+    )
+    save("fx_slash", normalize(slash))
+
+    # 格挡：低方波"铛" + 高三角"叮"（金属盾面）
+    block = mix(
+        square(note("A3"), 0.09, vol=0.5, decay=0.85),
+        seq([(0.0, tri(note("E6"), 0.07, vol=0.4)),
+             (0.05, tri(note("B6"), 0.1, vol=0.34))]),
+    )
+    save("fx_block", normalize(block))
+
+    # 吃饭：两声可爱的 nom-nom（三角双音上扬再落）
+    eat = seq([
+        (0.0, tri(660, 0.06, vol=0.5)),
+        (0.09, tri(500, 0.06, vol=0.5)),
+        (0.18, tri(680, 0.05, vol=0.4)),
+        (0.26, tri(520, 0.05, vol=0.4)),
+    ])
+    save("fx_eat", normalize(eat))
+
+    # 敌受击：低噪声"咚" + 方波下坠（重拳命中）
+    ehit = mix(
+        noise(0.1, vol=0.5, decay=0.8),
+        glide(320, 70, 0.14, vol=0.55, duty=0.4),
+    )
+    save("fx_ehit", normalize(ehit))
+
+    # 敌防御：双层方波"嗡——"（蓄力感）
+    edef = mix(
+        square(note("E3"), 0.16, vol=0.4, duty=0.35, decay=0.8),
+        square(note("B3"), 0.16, vol=0.3, duty=0.35, decay=0.85),
+    )
+    save("fx_edef", normalize(edef))
+
+
 if __name__ == "__main__":
     random.seed(4242)
     build_sfx()
+    build_battle_sfx()
     build_music()
     print("\n全部输出到 assets/audio/{sfx,music}/")

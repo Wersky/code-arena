@@ -1216,7 +1216,13 @@ func _on_send_pressed() -> void:
 			_float_text(Vector2(size.x * 0.5, size.y - CARD_H - 90.0),
 					"吃掉白米饭 %d/%d" % [int(ev.get("value", 0)), StsCombat.RICE_AWAKE],
 					Color(1.0, 0.9, 0.55), UiKit.FS_M)
-			SfxNode.play("hand_small")
+			SfxNode.play("fx_eat")
+			# 吃饭演出：女仆切「吃饭立绘」，嚼 1 秒后切回（主人钦定）
+			if _companion != null:
+				_companion.set_stage("eat")
+			get_tree().create_timer(1.1).timeout.connect(func() -> void:
+				if is_instance_valid(_companion):
+					_update_rice_hud())
 			_update_rice_hud()
 			## 恰好吃满第 RICE_AWAKE 碗的瞬间（sts_combat 在事件里标 awake_now）
 			if bool(ev.get("awake_now", false)):
@@ -1239,9 +1245,15 @@ func _on_send_pressed() -> void:
 					"并行：连段锁定", Color(0.31, 0.64, 0.88), UiKit.FS_M)
 			SfxNode.play("hand_small")
 		else:
+			# 格挡特效：灰色金属盾框出现在自己的对话框上
+			var dlg := get_node_or_null("ActionDialog") as Control
+			if dlg != null:
+				_spawn_fx("res://assets/art/fx-shield.png",
+						dlg.position + dlg.size * 0.5 - Vector2(110, 110),
+						Vector2(220, 220), 0.0, "pop", Color.WHITE, 0.7)
 			_float_text(Vector2(size.x * 0.5, size.y - CARD_H - 90.0),
 					"+%d 格挡" % int(ev.get("value", 0)), Color(0.31, 0.64, 0.88), UiKit.FS_M)
-			SfxNode.play("hand_small")
+			SfxNode.play("fx_block")
 		if view != null:
 			if _fx_enabled:
 				await _send_card_fx(view)
@@ -1364,33 +1376,81 @@ func _on_discard_toggled(on: bool) -> void:
 
 
 ## 敌人受击：闪红 + 抖动 + 头顶飘伤害数字（tag = 连段/复读标记，缀在数字前）
+## 战斗特效贴图：生成 → 入场动画 → 自毁（2026-11-01 主人钦定的特效系统）
+## shape: "slash"（斩击扫过）｜"pop"（弹出+脉冲）｜"fade"（淡入停留淡出）
+func _spawn_fx(path: String, pos: Vector2, fx_size: Vector2, rot_deg: float,
+			shape: String, tint: Color = Color.WHITE, dur := 0.5) -> void:
+	if not _fx_enabled or not ResourceLoader.exists(path):
+		return
+	var fx := TextureRect.new()
+	fx.texture = load(path)
+	fx.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	fx.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+	fx.texture_filter = CanvasItem.TEXTURE_FILTER_LINEAR
+	fx.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	fx.position = pos
+	fx.size = fx_size
+	fx.pivot_offset = fx_size * 0.5
+	fx.rotation_degrees = rot_deg
+	fx.modulate = tint
+	_fx_root.add_child(fx)
+	var tw := fx.create_tween()
+	match shape:
+		"slash":
+			fx.scale = Vector2(1.7, 1.7)
+			fx.modulate.a = 0.0
+			tw.set_parallel(true)
+			tw.tween_property(fx, "scale", Vector2(0.95, 0.95), dur * 0.6) 					.set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_OUT)
+			tw.tween_property(fx, "modulate:a", 1.0, dur * 0.25)
+			tw.tween_property(fx, "modulate:a", 0.0, dur * 0.4).set_delay(dur * 0.5)
+		"pop":
+			fx.scale = Vector2(0.5, 0.5)
+			fx.modulate.a = 0.0
+			tw.set_parallel(true)
+			tw.tween_property(fx, "scale", Vector2.ONE, dur * 0.35) 					.set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
+			tw.tween_property(fx, "modulate:a", 1.0, dur * 0.2)
+			tw.tween_property(fx, "modulate:a", 0.0, dur * 0.35).set_delay(dur * 0.55)
+		"fade":
+			fx.modulate.a = 0.0
+			tw.set_parallel(true)
+			tw.tween_property(fx, "modulate:a", 1.0, dur * 0.25)
+			tw.tween_property(fx, "modulate:a", 0.0, dur * 0.4).set_delay(dur * 0.55)
+	tw.chain().tween_callback(func() -> void: fx.queue_free())
+
+
+## 敌人受击：上下抖动（主人钦定）——纵向为主的抖动
+func _enemy_shake_vertical(times := 4, amp := 12.0) -> void:
+	if _enemy_sprite == null:
+		return
+	var base := Vector2(90.0 - _enemy_sprite.size.x * 0.5, 150.0 - _enemy_sprite.size.y)
+	var tw := _enemy_sprite.create_tween()
+	for i in times:
+		var off := base + Vector2(0.0, randf_range(-amp, amp) * (1.0 - float(i) / float(times)))
+		tw.tween_property(_enemy_sprite, "position", off, 0.045)
+	tw.tween_property(_enemy_sprite, "position", base, 0.05)
 func _enemy_hit_fx(dmg: int, tag: String = "") -> void:
 	if _enemy_sprite == null:
 		return
 	_flash(Color(1.0, 0.45, 0.45), 0.16)
+	# 斩击特效：斜向扫过敌人（每次随机角度，不重样）
+	var slash_pos := _enemy_root.position + _enemy_root.size * 0.5 			- Vector2(120, 120) + Vector2(randf_range(-14, 14), randf_range(-14, 14))
+	_spawn_fx("res://assets/art/fx-slash.png", slash_pos, Vector2(240, 240),
+			randf_range(-24, 24), "slash", Color.WHITE, 0.4)
+	SfxNode.play("fx_slash")
 	var tw := _enemy_sprite.create_tween()
 	tw.tween_property(_enemy_sprite, "modulate", Color(2.2, 0.8, 0.8), 0.05)
 	tw.tween_property(_enemy_sprite, "modulate", Color.WHITE, 0.18)
-	var shake := _enemy_root.create_tween()
-	for i in 4:
-		var off := Vector2(randf_range(-7, 7), randf_range(-4, 4)) * (1.0 - float(i) / 4.0)
-		shake.tween_callback(func() -> void:
-			_enemy_sprite.position = Vector2(90.0 - _enemy_sprite.size.x * 0.5,
-					150.0 - _enemy_sprite.size.y) + off)
-		shake.tween_interval(0.03)
-	shake.tween_callback(func() -> void:
-		_enemy_sprite.position = Vector2(90.0 - _enemy_sprite.size.x * 0.5,
-				150.0 - _enemy_sprite.size.y))
+	# 上下抖动（主人钦定：受击纵向抖）
+	_enemy_shake_vertical(4, 12.0)
+	SfxNode.play("fx_ehit")
 	var txt := "-%d" % dmg
 	if not tag.is_empty():
-		txt = "%s-%d" % [tag, dmg]
+		txt = "%s %s" % [tag, dmg]
 	_float_text(_enemy_root.position + Vector2(_enemy_root.size.x * 0.5, 24.0),
 			txt, Color(1.0, 0.42, 0.42), UiKit.FS_L)
 
 
-# ─────────────────────────────────────────────────────────
-#  结束回合（敌人行动）
-# ─────────────────────────────────────────────────────────
+## 敌人受击：上下抖动（主人钦定）——纵向为主的抖动
 func _on_end_turn_pressed() -> void:
 	if _busy or _overlay.visible or combat == null:
 		return
@@ -1413,10 +1473,24 @@ func _run_enemy_turn() -> void:
 		var kind := String(e.get("kind", ""))
 		if kind == "enemy_attack":
 			if _fx_enabled:
+				# 红爪击特效砸在玩家对话框上（敌方攻击演出）
+				var dlg := get_node_or_null("ActionDialog") as Control
+				if dlg != null:
+					_spawn_fx("res://assets/art/fx-claw.png",
+							dlg.position + dlg.size * 0.5 - Vector2(130, 130),
+							Vector2(260, 260), randf_range(-12, 12), "slash",
+							Color.WHITE, 0.45)
+					SfxNode.play("fx_slash")
 				await _enemy_attack_fx(int(e.get("value", 0)), int(e.get("dealt", 0)),
 						int(e.get("blocked", 0)))
 		elif kind == "enemy_defend":
 			if _fx_enabled:
+				# 蓝色调盾框在敌人身上展开（敌方防御演出）
+				_spawn_fx("res://assets/art/fx-shield.png",
+						_enemy_root.position + _enemy_root.size * 0.5 - Vector2(120, 120),
+						Vector2(240, 240), 0.0, "pop",
+						Color(0.55, 0.75, 1.0), 0.7)
+				SfxNode.play("fx_edef")
 				_float_text(_enemy_root.position + Vector2(_enemy_root.size.x * 0.5, 44.0),
 						"+%d 防" % int(e.get("value", 0)), Color(0.31, 0.64, 0.88), UiKit.FS_M)
 				await get_tree().create_timer(0.3).timeout

@@ -25,6 +25,8 @@ const SLEEP_ASSET := "res://assets/art/ai-deepdeek-sleep.png"
 const AWAKE_ASSET := "res://assets/art/ai-deepdeek-awake.png"
 ## 完全觉醒站立立绘（2026-10-31 主人钦定：调皮自信「来打我呀」神态）
 const STAND_ASSET := "res://assets/art/ai-deepdeek-awake-stand.png"
+## 吃饭演出立绘（复用白米饭卡的干饭立绘，2026-11-01 主人钦定）
+const EAT_ASSET := "res://assets/art/sts-art-rice.png"
 
 ## 深蓝调色板（与 chibi_rig 占位件一致，保持一套 DeepSeek 系颜色）
 const C_OUT := Color("#1B2246")
@@ -67,6 +69,8 @@ func set_stage(stage: String) -> void:
 		path = AWAKE_ASSET
 	elif stage == "stand":
 		path = STAND_ASSET
+	elif stage == "eat":
+		path = EAT_ASSET
 	var t := load(path) as Texture2D
 	if t == null:
 		return
