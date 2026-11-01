@@ -547,13 +547,14 @@ func _layout() -> void:
 	if _rice_label:
 		_rice_label.position = Vector2(AI_X + 8.0, H - 350.0)
 		_rice_label.size = Vector2(W - AI_X - PAD - 8.0, 24.0)
+	# 牌堆/弃牌堆图标：左侧栏底部空档（主人 2026-11-01 圈选位置），上牌堆下弃牌
 	if _pile_draw_icon != null:
-		_pile_draw_icon.position = Vector2(AI_X + 12.0, H - 210.0)
+		_pile_draw_icon.position = Vector2(48.0, H - 290.0)
 		_pile_draw_icon.size = Vector2(56, 56)
-		_pile_discard_icon.position = Vector2(AI_X + 12.0, H - 146.0)
+		_pile_discard_icon.position = Vector2(48.0, H - 216.0)
 		_pile_discard_icon.size = Vector2(56, 56)
-		_pile_draw_count.position = Vector2(AI_X + 74.0, H - 196.0)
-		_pile_discard_count.position = Vector2(AI_X + 74.0, H - 132.0)
+		_pile_draw_count.position = Vector2(110.0, H - 272.0)
+		_pile_discard_count.position = Vector2(110.0, H - 198.0)
 	if _pile_panel != null:
 		_pile_panel.position = Vector2(W * 0.5 - 280.0, H * 0.5 - 240.0)
 		_pile_panel.size = Vector2(560, 420)
