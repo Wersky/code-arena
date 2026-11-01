@@ -9,8 +9,7 @@ extends Control
 ## 布局：
 ##   顶栏 0..26    卡名（类型色 + 黑描边，居中）
 ##   画区 26..166  生成的像素立绘
-##   小GUI 166..226「能量 N ｜ 类型」+ 效果描述（居中 + 描边）
-##   左上角能量费用球（引擎画），能量不够时整卡变灰
+##   小GUI 166..226「类型」+ 效果描述（居中 + 描边）
 
 signal clicked(view: StsCardView)
 
@@ -20,7 +19,7 @@ const NAME_H := 26.0
 const ART_H := 140.0
 ## 框材质的实测分区（卡框 750x1130 ÷5 = 150x226；全部按框素材像素量出来的，
 ## 不是估的）：金线在 x4/x144、y4/y166/y219；画窗 y31..161；底部面板 y168..216，
-## 其中 y≈183 有一条内部分隔线（上=能量/类型，下=效果描述）。
+## 其中 y≈183 有一条内部分隔线（上=类型，下=效果描述）。
 const ART_RECT := Rect2(9, 31, 132, 130)      ## 立绘：严格限制在画窗内
 const COST_FONT := 18                          ## 费用数字字号（球内区 ~20px，24 会顶满环）
 const COST_RECT := Rect2(9, 2, 26, 26)        ## 费用数字：居中在六边形球里（球心实测 (17,15.5)，见 docs/shots 校准图）
@@ -76,16 +75,7 @@ func setup(c: StsCard) -> void:
 			_frame.texture = ft as Texture2D
 	add_child(_frame)
 
-	# ② 顶栏：费用数字（左）+ 卡名（中，给费用让出左侧）
-	var cost_lbl := UiKit.label(str(c.cost), COST_FONT, C_COST)
-	cost_lbl.name = "CostOrb"
-	cost_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	cost_lbl.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-	cost_lbl.add_theme_constant_override("outline_size", 4)
-	cost_lbl.add_theme_color_override("font_outline_color", Color(0.02, 0.03, 0.06, 0.95))
-	cost_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	add_child(cost_lbl)
-
+	# ② 顶栏：卡名（居中；能量机制 2026-10-30 已取消，2026-11-01 显示层清理）
 	_name_lbl = UiKit.label(StsCardPool.card_name(c.id), UiKit.FS_XS, kcolor)
 	_name_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	_name_lbl.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
@@ -110,9 +100,8 @@ func setup(c: StsCard) -> void:
 			_art.texture = t as Texture2D
 	add_child(_art)
 
-	# ④ 小 GUI（图片下方）：能量+类型一行（能量色），效果描述一行（居中+描边）
-	_meta_lbl = UiKit.label("能量 %d ｜ %s" % [c.cost, StsCardPool.kind_name(c.kind)],
-			UiKit.FS_XS, C_COST)
+	# ④ 小 GUI（图片下方）：类型一行，效果描述一行（居中+描边）
+	_meta_lbl = UiKit.label(StsCardPool.kind_name(c.kind), UiKit.FS_XS, C_COST)
 	_meta_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	_meta_lbl.add_theme_constant_override("outline_size", 2)
 	_meta_lbl.add_theme_color_override("font_outline_color", Color(0.02, 0.03, 0.06, 0.9))
@@ -131,7 +120,6 @@ func setup(c: StsCard) -> void:
 	# 排版最后一步：全部文字按目标 rect 居中。
 	# 必须放在字号/描边都设好之后——Label 的最小尺寸含描边宽度，
 	# 提前算会让位置偏（实测费用数字下偏 12px）。
-	_fit_label(cost_lbl, COST_RECT)
 	_fit_label(_name_lbl, NAME_RECT)
 	_fit_label(_meta_lbl, META_RECT)
 	_fit_label(_desc_lbl, DESC_RECT)
