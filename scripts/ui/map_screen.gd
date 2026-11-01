@@ -5,10 +5,13 @@ extends Control
 
 signal battle_entered
 signal event_entered
+signal bonus_entered
 
 var run: RunState = null
+var special := ""   ## "" 纯战斗 ｜ "event" 事件门 ｜ "bonus" 奖励门
 var _door_battle: Control = null
 var _door_event: Control = null
+var _door_bonus: Control = null
 var _chosen := false   ## 每次回到门界面只能选一个（2026-11-01 主人钦定）
 
 
@@ -16,8 +19,9 @@ func _init() -> void:
 	set_anchors_preset(Control.PRESET_FULL_RECT)
 
 
-func setup(run_state: RunState) -> void:
+func setup(run_state: RunState, special_kind: String = "") -> void:
 	run = run_state
+	special = special_kind
 
 
 func _ready() -> void:
@@ -61,6 +65,29 @@ func _ready() -> void:
 
 	var all_done: bool = run.level_index >= 10
 
+	# ── 事件之门（40% 掷中才出现）──
+	if special == "event":
+		var event_locked: bool = run.events_since_battle >= 1 and not all_done
+		var ewrap := _make_door("res://assets/art/door-event.png",
+				Color(1.0, 0.82, 0.4), not event_locked and not all_done,
+				func() -> void: event_entered.emit())
+		_door_event = ewrap
+		doors.add_child(ewrap)
+		var ecap := ewrap.get_meta("cap") as Label
+		ecap.text = "神秘遭遇" if not event_locked else "冷却中 · 先打一场战斗"
+		if event_locked:
+			ewrap.modulate = Color(0.5, 0.5, 0.55, 0.85)
+
+	# ── 奖励之门（10% 掷中才出现）：宝箱直接开道具 ──
+	if special == "bonus":
+		var chest_wrap := _make_door("res://assets/art/chest.png",
+				Color(1.0, 0.82, 0.4), not all_done,
+				func() -> void: bonus_entered.emit())
+		_door_bonus = chest_wrap
+		doors.add_child(chest_wrap)
+		var chest_cap := chest_wrap.get_meta("cap") as Label
+		chest_cap.text = "奖励关卡 · 开宝箱得道具"
+
 	# ── 战斗之门 ──
 	var bwrap := _make_door("res://assets/art/door-battle.png",
 			Color(0.784, 0.298, 0.298), not all_done,
@@ -74,19 +101,9 @@ func _ready() -> void:
 		var lv: LevelData = LevelPool.all_levels()[run.level_index]
 		bnext.text = "第 %d 战 · 敌人：%s" % [run.level_index + 1, lv.enemy_name]
 
-	# ── 事件之门 ──
-	var event_locked: bool = run.events_since_battle >= 1 and not all_done
-	var ewrap := _make_door("res://assets/art/door-event.png",
-			Color(1.0, 0.82, 0.4), not event_locked and not all_done,
-			func() -> void: event_entered.emit())
-	_door_event = ewrap
-	doors.add_child(ewrap)
-	var ecap := ewrap.get_meta("cap") as Label
-	ecap.text = "神秘遭遇" if not event_locked else "冷却中 · 先打一场战斗"
-	if event_locked:
-		ewrap.modulate = Color(0.5, 0.5, 0.55, 0.85)
+	# （事件门 / 奖励门按掷骰出现，见上方 special 分支）
 
-	var hint := UiKit.dim("点门进入。战斗推进路线；每打完一场战斗，事件之门开启一次。", UiKit.FS_XS)
+	var hint := UiKit.dim("点门进入。战斗推进路线；每次抵达掷遭遇：50% 战斗 ｜ 40% 事件 ｜ 10% 奖励关。", UiKit.FS_XS)
 	hint.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	v.add_child(hint)
 

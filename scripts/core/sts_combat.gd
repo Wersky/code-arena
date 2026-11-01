@@ -73,6 +73,8 @@ var discard_pile: Array[StsCard] = []
 var turn := 0
 var over: int = Result.RUNNING
 var damage_dealt := 0
+## 精英怪标记（15% 概率，红光+宝箱掉落，主人 2026-11-01）
+var is_elite := false
 
 
 ## setup(卡组, 敌人名, 敌人HP, 意图序列, 种子)

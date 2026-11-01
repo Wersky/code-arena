@@ -105,8 +105,9 @@ var _pile_panel_mode := -1   ## -1 关闭 ｜ 0 抽牌堆 ｜ 1 弃牌堆
 var _send_btn: Button = null
 var _discards_left := DISCARD_LIMIT_PER_TURN
 
-func _discard_unlimited() -> bool:
-	return run != null and run.has_effect("subagent")
+## 弃牌次数上限（子代理零件：+1）
+func _discard_limit() -> int:
+	return DISCARD_LIMIT_PER_TURN + (1 if run != null and run.has_effect("subagent") else 0)
 
 # 特效层
 var _fx_enabled := true
@@ -640,6 +641,30 @@ func _start_battle() -> void:
 		_enemy_sprite.modulate = Color.WHITE
 		_enemy_sprite.visible = true
 		_enemy_sprite.pivot_offset = _enemy_sprite.size * 0.5
+		# 精英怪（15%）：红光光环 + 脚下宝箱角标，打倒掉道具
+		if combat.is_elite:
+			var aura := TextureRect.new()
+			aura.name = "EliteAura"
+			aura.texture = _glow_circle_texture(Color(0.9, 0.15, 0.15, 0.45))
+			aura.mouse_filter = Control.MOUSE_FILTER_IGNORE
+			aura.position = _enemy_sprite.position - Vector2(34, 30)
+			aura.size = _enemy_sprite.size + Vector2(68, 60)
+			_enemy_root.add_child(aura)
+			_enemy_root.move_child(aura, 0)
+			var pulse := aura.create_tween().set_loops()
+			pulse.tween_property(aura, "modulate:a", 0.45, 0.8) 					.set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN_OUT)
+			pulse.tween_property(aura, "modulate:a", 1.0, 0.8) 					.set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN_OUT)
+			var chest := TextureRect.new()
+			chest.name = "EliteChest"
+			chest.texture = load("res://assets/art/chest.png")
+			chest.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
+			chest.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+			chest.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+			chest.mouse_filter = Control.MOUSE_FILTER_IGNORE
+			chest.size = Vector2(52, 52)
+			chest.position = Vector2(90.0 - 26.0, 140.0 - 10.0)
+			_enemy_root.add_child(chest)
+
 		# 呼吸动效（2026-10-31 主人钦定）：敌人也轻轻起伏
 		var breath := _enemy_sprite.create_tween().set_loops()
 		breath.tween_property(_enemy_sprite, "scale:y", 1.04, 1.6) 				.set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN_OUT)
@@ -1122,7 +1147,7 @@ func _on_card_clicked(view: StsCardView) -> void:
 		return
 	# 弃牌模式：点谁弃谁，弃 1 抽 1（从牌堆）；每回合有次数上限
 	if _discard_mode:
-		if (_discards_left <= 0 and not _discard_unlimited()):
+		if _discards_left < _discard_limit():
 			_status_label.text = "本回合弃牌次数用完（上限 %d 张），先结束回合。" \
 					% DISCARD_LIMIT_PER_TURN
 			return
@@ -1376,7 +1401,7 @@ func _run_enemy_turn() -> void:
 	_busy = true
 	_end_turn_button.disabled = true
 	_send_btn.disabled = true
-	_discards_left = DISCARD_LIMIT_PER_TURN   ## 新回合弃牌次数回满
+	_discards_left = _discard_limit()   ## 新回合弃牌次数回满
 	_update_discard_btn()
 	if _fx_enabled:
 		await get_tree().create_timer(0.25).timeout
@@ -1451,6 +1476,11 @@ func _finish_battle(win: bool) -> void:
 	if win:
 		SfxNode.play("win")
 		var gain := run.win_battle(combat, level)
+		if combat.is_elite:
+			var it := run.grant_elite_chest()
+			if it != null:
+				_overlay_body.text += "
+📦 精英宝箱：获得【%s】！" % it.display_name
 		_overlay_title.text = "胜利"
 		_overlay_body.text = "击败【%s】！\n本战造成 %d 伤害 ｜ 剩余 HP %d（回复 %d）\n算力 +%d ｜ 下一步：往卡组里加一张牌。" % [
 			level.enemy_name, combat.damage_dealt, run.hp,
@@ -1557,6 +1587,19 @@ func _float_text(pos: Vector2, text: String, color: Color, fs: int) -> void:
 
 
 ## 程序化敌人像素形象：48×56 小怪（圆身、红眼、獠牙、小角；BOSS 戴皇冠）
+## 精英红光圈贴图：两档 alpha 实心圆（像素风无渐变）
+func _glow_circle_texture(col: Color) -> ImageTexture:
+	var d := 128
+	var img := Image.create_empty(d, d, false, Image.FORMAT_RGBA8)
+	var c := Vector2(d * 0.5, d * 0.5)
+	for y in d:
+		for x in d:
+			var dist := Vector2(x + 0.5, y + 0.5).distance_to(c) / (d * 0.5)
+			if dist <= 1.0:
+				img.set_pixel(x, y, Color(col.r, col.g, col.b, col.a if dist > 0.55 else col.a * 1.6))
+	return ImageTexture.create_from_image(img)
+
+
 func _enemy_texture(tint: Color, boss: bool) -> ImageTexture:
 	var img := Image.create_empty(48, 56, false, Image.FORMAT_RGBA8)
 	img.fill(Color(0, 0, 0, 0))

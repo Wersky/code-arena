@@ -68,13 +68,20 @@ func start_battle(level: LevelData) -> StsCombat:
 	var cb := StsCombat.new()
 	cb.setup(deck, level.enemy_name, level.enemy_hp,
 			level.enemy_pattern(), hp, run_seed + level.id.hash() + 7717)
+	# 精英怪（2026-11-01 主人钦定）：15% 概率红光精英，打倒掉宝箱道具
+	cb.is_elite = rng.randf() < 0.15
 	# 道具效果注入（2026-11-01 道具系统）
 	for it in items:
+		if it.broken:
+			continue
 		match it.effect_id:
 			"prompt_opt":
 				cb.atk_bonus += it.power
 			"compress":
 				cb.hand_bonus += it.power
+				it.charges -= 1        ## 每打一场消耗 1 点耐久
+				if it.charges <= 0:
+					it.broken = true   ## 3 场用完 → 本局损坏（下一局重置自动修好）
 	return cb
 
 
@@ -107,6 +114,14 @@ func items_with(effect_id: String) -> Array[AiItemData]:
 		if it.effect_id == effect_id:
 			out.append(it)
 	return out
+
+
+## 精英宝箱：随机一件道具（打倒精英怪后由 arena 调用）
+func grant_elite_chest() -> AiItemData:
+	var it := StsItemPool.make(StsItemPool.random_id(rng))
+	if it != null:
+		add_item(it)
+	return it
 
 
 ## 过关奖励算力点（战斗制：基础值随关卡走，不再有溢出分）

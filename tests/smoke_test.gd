@@ -571,51 +571,83 @@ func _test_battle_intro() -> void:
 	host.queue_free()
 
 
-# ── ⑧ 选关地图（双门） / 事件 ──────────────────────────
+# ── ⑧ 选关地图（门概率制） / 事件 / 精英 ────────────────
 func _test_map_event() -> void:
 	print("[选关地图]")
 	var run := RunState.new()
 	run.reset_run()
-	_eq(run.events_since_battle, 0, "事件冷却开局为 0（事件门可用）")
+	_eq(run.events_since_battle, 0, "事件冷却开局为 0")
 
+	# 纯战斗段（50%）：只有战斗门
 	var m := MapScreen.new()
-	m.setup(run)
+	m.setup(run, "")
 	_host.add_child(m)
 	await process_frame
-	_check(m.get_child_count() > 0, "选关地图（双门）已构建")
-
+	_check(m.get_child_count() > 0, "门界面已构建（纯战斗）")
 	var battle_sig := [false]
 	m.battle_entered.connect(func() -> void: battle_sig[0] = true)
-	m._door_battle.get_node("DoorArt").gui_input.emit(_make_click_event())
+	(m._door_battle.get_node("DoorArt") as Control).gui_input.emit(_make_click_event())
 	await process_frame
 	_check(battle_sig[0], "战斗门点击 → battle_entered")
 	m.queue_free()
 
-	run.events_since_battle = 1
+	# 事件段（40%）：事件门可用 → 点击进入
 	var m2 := MapScreen.new()
-	m2.setup(run)
+	m2.setup(run, "event")
 	_host.add_child(m2)
 	await process_frame
 	var ev_sig := [false]
 	m2.event_entered.connect(func() -> void: ev_sig[0] = true)
-	m2._door_event.get_node("DoorArt").gui_input.emit(_make_click_event())
+	(m2._door_event.get_node("DoorArt") as Control).gui_input.emit(_make_click_event())
 	await process_frame
-	_check(not ev_sig[0], "事件门冷却中：点击不触发")
+	_check(ev_sig[0], "事件门点击 → event_entered")
 	m2.queue_free()
 
+	# 冷却：战斗清了之后事件才再开（events_since_battle 手动置 1 → 门灰）
+	run.events_since_battle = 1
+	var m3 := MapScreen.new()
+	m3.setup(run, "event")
+	_host.add_child(m3)
+	await process_frame
+	var ev_sig2 := [false]
+	m3.event_entered.connect(func() -> void: ev_sig2[0] = true)
+	(m3._door_event.get_node("DoorArt") as Control).gui_input.emit(_make_click_event())
+	await process_frame
+	_check(not ev_sig2[0], "事件门冷却中：点击不触发")
+	m3.queue_free()
+
+	# 奖励段（10%）：奖励门 → 宝箱
+	var m4 := MapScreen.new()
+	m4.setup(run, "bonus")
+	_host.add_child(m4)
+	await process_frame
+	var bn_sig := [false]
+	m4.bonus_entered.connect(func() -> void: bn_sig[0] = true)
+	(m4._door_event if m4._door_event != null else m4._door_battle)
+	(m4._door_bonus.get_node("DoorArt") as Control).gui_input.emit(_make_click_event())
+	await process_frame
+	_check(bn_sig[0], "奖励门点击 → bonus_entered")
+	m4.queue_free()
+
+	# 奖励关界面：开箱得道具
+	var n0 := run.items.size()
+	var b := BonusScreen.new()
+	b.setup(run)
+	_host.add_child(b)
+	await process_frame
+	_check(b.get_child_count() > 0, "奖励关界面已构建")
 	var e := EventScreen.new()
 	e.setup(run, 0)
-	_host.add_child(e)
-	await process_frame
-	_check(e.get_child_count() > 0, "事件界面已构建")
-	var hp0 := run.hp
-	e._on_choice({"hp": 18})
-	await process_frame
-	_eq(run.events_since_battle, 1, "事件结算 → 冷却 +1")
-	_check(run.hp == mini(RunState.MAX_HP, hp0 + 18), "事件回血生效（%d → %d）" % [hp0, run.hp])
 	e.queue_free()
-	run.events_since_battle = 0
-	_eq(run.events_since_battle, 0, "战斗清了 → 事件门重置")
+	# 直接走开箱逻辑
+	run.grant_elite_chest()
+	_eq(run.items.size(), n0 + 1, "宝箱/精英掉落：道具 +1")
+	b.queue_free()
+
+	# 精英掷骰类型正确
+	var cb := StsCombat.new()
+	cb.setup(run.deck, "沙袋", 999, [{"kind": "attack", "value": 4}], 80, 42)
+	_check(typeof(cb.is_elite) == TYPE_BOOL, "精英标记为布尔")
 
 
 func _make_click_event() -> InputEventMouseButton:

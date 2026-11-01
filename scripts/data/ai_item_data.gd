@@ -27,6 +27,10 @@ const RARITY_COLORS := {
 @export var rarity: Rarity = Rarity.COMMON
 @export var min_chapter: int = 1
 @export var art_path: String = ""
+## 耐用型道具的剩余场次（-1 = 无限）；0 = 损坏
+@export var charges := -1
+## 是否已损坏（本局内不再生效）
+@export var broken := false
 
 
 static func rarity_name(r: int) -> String:

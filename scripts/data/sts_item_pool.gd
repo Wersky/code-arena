@@ -13,7 +13,7 @@ const ITEMS := {
 	},
 	"subagent": {
 		"name": "子代理零件",
-		"desc": "弃牌模式不限次数。小代理们帮你无限整理队列。",
+		"desc": "弃牌模式次数 +1（每回合 4 次）。小代理帮你整理队列。",
 		"effect_id": "subagent",
 		"power": 1,
 		"art": "res://assets/art/item-subagent.png",
@@ -21,9 +21,10 @@ const ITEMS := {
 	},
 	"compress": {
 		"name": "上下文压缩",
-		"desc": "手牌上限 +1。压缩上下文，腾出更多空间。",
+		"desc": "手牌上限 +1，可用 3 场战斗，之后损坏（下一局自动修好）。",
 		"effect_id": "compress",
 		"power": 1,
+		"charges": 3,
 		"art": "res://assets/art/item-compress.png",
 		"rarity": 1,
 	},
@@ -49,6 +50,7 @@ static func make(item_id: String) -> AiItemData:
 	it.power = int(d["power"])
 	it.rarity = int(d["rarity"])
 	it.art_path = String(d["art"])
+	it.charges = int(d.get("charges", -1))
 	return it
 
 

@@ -183,15 +183,32 @@ func _after_reward() -> void:
 
 
 ## 选关界面（战斗 / 事件节点）
+## 选关界面（门选制）：每次到达掷一次遭遇——50% 战斗 / 40% 事件 / 10% 奖励关
+## 战斗门常驻；事件门与奖励门按概率出现（主人 2026-11-01 概率表）
 func _show_map() -> void:
 	if run.level_index >= _levels.size():
 		_show_result(true)
 		return
+	var roll := run.rng.randf()
+	var special := ""
+	if roll < 0.10:
+		special = "bonus"
+	elif roll < 0.50:
+		special = "event"
 	var m := MapScene.new()
-	m.setup(run)
+	m.setup(run, special)
 	m.battle_entered.connect(_on_battle_door)
 	m.event_entered.connect(_on_event_door)
+	m.bonus_entered.connect(_show_bonus)
 	_swap(m)
+
+
+## 奖励关：开宝箱得一件道具
+func _show_bonus() -> void:
+	var b := BonusScreen.new()
+	b.setup(run)
+	b.finished.connect(_show_map)
+	_swap(b)
 
 
 func _on_battle_door() -> void:
