@@ -1819,6 +1819,37 @@ func debug_hand_count() -> int:
 
 ## 手牌首张的缩放（验收「发送后牌变小」用）
 ## 自检：直接喂 n 碗白米饭，用来看成长后的伙伴立绘与 HUD
+## 沙盒：秒杀当前敌人 → 走完整胜利链（谢幕→裂隙→奖励→门）
+func debug_win_battle() -> void:
+	if combat == null or combat.over != StsCombat.Result.RUNNING:
+		return
+	combat.enemy_hp = 0
+	combat.over = StsCombat.Result.WIN
+	_finish_battle(true)
+
+
+## 沙盒：特效演示（斩击打敌人 / 盾框上对话框 / 爪击砸对话框）
+func debug_fx_demo(kind: String) -> void:
+	var dlg := get_node_or_null("ActionDialog") as Control
+	match kind:
+		"slash":
+			if _enemy_sprite != null:
+				_enemy_hit_fx(9, "体验")
+		"shield":
+			if dlg != null:
+				_spawn_fx("res://assets/art/fx-shield.png",
+						dlg.position + dlg.size * 0.5 - Vector2(110, 110),
+						Vector2(220, 220), 0.0, "pop", Color.WHITE, 0.8)
+				SfxNode.play("fx_block")
+		"claw":
+			if dlg != null:
+				_spawn_fx("res://assets/art/fx-claw.png",
+						dlg.position + dlg.size * 0.5 - Vector2(130, 130),
+						Vector2(260, 260), randf_range(-12, 12), "slash",
+						Color.WHITE, 0.5)
+				SfxNode.play("fx_slash")
+
+
 func debug_feed_rice(n: int) -> void:
 	if combat == null:
 		return

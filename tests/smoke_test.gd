@@ -527,6 +527,12 @@ func _test_screen_router() -> void:
 	_host.add_child(main)
 	await process_frame
 	_eq(main.debug_screen_count(), 1, "启动后只挂载 1 个界面")
+	# 体验沙盒：F1 面板存在、不计入界面数
+	var sb := main.get_node_or_null("SandboxPanel")
+	_check(sb != null, "体验沙盒面板已构建")
+	_check(sb != null and sb.get_child_count() > 0, "沙盒面板有内容")
+	_eq(main.debug_screen_count(), 1, "沙盒面板不计入界面数")
+
 	for screen in ["arena", "reward", "map", "event", "menu", "result"]:
 		main.debug_show(screen)
 		await process_frame

@@ -13,12 +13,16 @@ const MapScene := preload("res://scripts/ui/map_screen.gd")
 const EventScene := preload("res://scripts/ui/event_screen.gd")
 const RiftScene := preload("res://scripts/ui/rift_transition.gd")
 const BurnoutScene := preload("res://scripts/ui/burnout_screen.gd")
+const SandboxPanelScene := preload("res://scripts/ui/sandbox_panel.gd")
 const ChibiRigScene := preload("res://scripts/ui/chibi_rig.gd")
 
 var run := RunState.new()
 var _current: Control = null
 var _pending_level: LevelData = null
 var _pending_elite := false
+## 体验沙盒（F1）：面板 + 强制门类型
+var _sandbox: Control = null
+var _force_special := ""   ## "" 随机 ｜ event/bonus/elite 强制下一门
 var _last_passed: bool = false
 var _levels: Array[LevelData] = []
 
@@ -28,6 +32,7 @@ func _ready() -> void:
 		if a == "--mute":
 			AudioServer.set_bus_mute(0, true)
 	_levels = LevelPool.all_levels()
+	_build_sandbox()
 	get_window().title = "代码擂台 Code Arena"
 	PixelTheme.install(self)
 	GameSettings.load_from_disk()
@@ -192,6 +197,8 @@ func _show_map() -> void:
 		return
 	var roll := run.rng.randf()
 	var special := ""
+	if _force_special != "":
+		special = _force_special
 	if roll < 0.20:
 		special = "elite"
 	elif roll < 0.50:
@@ -263,6 +270,91 @@ func _on_retry() -> void:
 ##   可选 screen：menu / arena / reward / result / flow
 ##                 flip / slot / hover / typing / typebreak / runresult / syntax
 # ─────────────────────────────────────────────────────────
+## 体验沙盒（F1 开关）：按钮直达全部内容（2026-11-01 主人钦定）
+func _build_sandbox() -> void:
+	_sandbox = SandboxPanelScene.new()
+	_sandbox.name = "SandboxPanel"
+	_sandbox.visible = false
+	add_child(_sandbox)
+	_sandbox.build(_sandbox_actions())
+
+
+func _unhandled_key_input(event: InputEvent) -> void:
+	if event is InputEventKey and event.pressed and event.keycode == KEY_F1:
+		_toggle_sandbox()
+
+
+func _toggle_sandbox() -> void:
+	if _sandbox == null:
+		return
+	_sandbox.visible = not _sandbox.visible
+	if _sandbox.visible:
+		_sandbox.move_to_front()
+		_sandbox.build(_sandbox_actions())
+
+
+func _arena() -> ArenaScreen:
+	return _current as ArenaScreen
+
+
+func _sandbox_actions() -> Dictionary:
+	return {
+		"stir": func() -> void:
+			if _arena() != null and _arena().combat != null:
+				_arena().combat.rice_eaten = 2
+				_arena()._update_rice_hud(),
+		"awake": func() -> void:
+			if _arena() != null and _arena().combat != null:
+				_arena().combat.rice_eaten = StsCombat.RICE_AWAKE
+				_arena()._update_rice_hud(),
+		"sleep": func() -> void:
+			if _arena() != null and _arena().combat != null:
+				_arena().combat.rice_eaten = 0
+				_arena()._update_rice_hud(),
+		"win": func() -> void:
+			if _arena() != null:
+				_arena().debug_win_battle(),
+		"elite": func() -> void:
+			if run.level_index < _levels.size():
+				_show_level(_levels[run.level_index], true),
+		"heal": func() -> void:
+			run.hp = RunState.MAX_HP
+			if _arena() != null:
+				_arena()._refresh_hud(),
+		"ev0": func() -> void: _show_event(0),
+		"ev1": func() -> void: _show_event(1),
+		"ev2": func() -> void: _show_event(2),
+		"ev3": func() -> void: _show_event(3),
+		"ev4": func() -> void: _show_event(4),
+		"door_event": func() -> void: _force_special = "event"; _show_map(),
+		"door_bonus": func() -> void: _force_special = "bonus"; _show_map(),
+		"door_elite": func() -> void: _force_special = "elite"; _show_map(),
+		"door_none": func() -> void: _force_special = ""; _show_map(),
+		"item_opt": func() -> void: _grant_item("prompt_opt"),
+		"item_parts": func() -> void: _grant_item("subagent"),
+		"item_compress": func() -> void: _grant_item("compress"),
+		"fx_slash": func() -> void:
+			if _arena() != null:
+				_arena().debug_fx_demo("slash"),
+		"fx_shield": func() -> void:
+			if _arena() != null:
+				_arena().debug_fx_demo("shield"),
+		"fx_claw": func() -> void:
+			if _arena() != null:
+				_arena().debug_fx_demo("claw"),
+		"burnout": func() -> void:
+			if _pending_level == null and run.level_index < _levels.size():
+				_pending_level = _levels[run.level_index]
+			_show_result(false),
+	}
+
+
+func _grant_item(item_id: String) -> void:
+	var it := StsItemPool.make(item_id)
+	if it != null:
+		run.add_item(it)
+
+
 func _maybe_capture() -> void:
 	var args := OS.get_cmdline_user_args()
 	var screen := ""
@@ -996,7 +1088,7 @@ func _shot(path: String) -> void:
 func debug_screen_count() -> int:
 	var n := 0
 	for c in get_children():
-		if c is Control:
+		if c is Control and not c.is_in_group("sandbox"):
 			n += 1
 	return n
 
