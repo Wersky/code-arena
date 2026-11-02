@@ -50,6 +50,20 @@ func reset_run() -> void:
 	intro_played = false
 
 
+## 门类型掷骰（2026-11-02 抽出，供体验沙盒强制与回归测试共用）：
+## 40% 战斗 / 30% 事件 / 10% 奖励 / 20% 精英。force 非空时**优先于随机**。
+static func pick_special(roll: float, force: String) -> String:
+	if force != "":
+		return force
+	if roll < 0.20:
+		return "elite"
+	if roll < 0.50:
+		return "event"
+	if roll < 0.60:
+		return "bonus"
+	return ""
+
+
 ## 设定核心 AI 娘
 func set_ai(a: AiData) -> void:
 	ai = a
@@ -65,13 +79,13 @@ func add_card(card_id: String) -> void:
 ## 开一场战斗：卡组洗进抽牌堆、HP 续接上关、敌人数据来自关卡。
 ## 战斗状态机由此返回，arena 拿去驱动 UI。
 func start_battle(level: LevelData, elite: bool = false) -> StsCombat:
-	var cb := StsCombat.new()
-	cb.setup(deck, level.enemy_name, level.enemy_hp,
-			level.enemy_pattern(), hp, run_seed + level.id.hash() + 7717)
-	# 电子木鱼（道具）：赛博功德，战斗开始回 5 HP
+	# 电子木鱼（道具）：**先结算再开战**，否则战斗对象拿到的是旧 HP（2026-11-02 修）
 	for it in items:
 		if not it.broken and it.effect_id == "muyu":
 			hp = mini(MAX_HP, hp + 5)
+	var cb := StsCombat.new()
+	cb.setup(deck, level.enemy_name, level.enemy_hp,
+			level.enemy_pattern(), hp, run_seed + level.id.hash() + 7717)
 	# 精英怪（2026-11-01 门选制）：精英门强制精英；事件效果挂载
 	cb.is_elite = elite
 	cb.enemy_hp = maxi(1, cb.enemy_hp + next_pre_hp)

@@ -195,16 +195,9 @@ func _show_map() -> void:
 	if run.level_index >= _levels.size():
 		_show_result(true)
 		return
-	var roll := run.rng.randf()
-	var special := ""
-	if _force_special != "":
-		special = _force_special
-	if roll < 0.20:
-		special = "elite"
-	elif roll < 0.50:
-		special = "event"
-	elif roll < 0.60:
-		special = "bonus"
+	## 沙盒强制门只作用于「下一门」：消费一次后回到随机
+	var special := RunState.pick_special(run.rng.randf(), _force_special)
+	_force_special = ""
 	var m := MapScene.new()
 	m.setup(run, special)
 	m.battle_entered.connect(_on_battle_door)

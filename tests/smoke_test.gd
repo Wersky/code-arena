@@ -584,6 +584,14 @@ func _test_map_event() -> void:
 	run.reset_run()
 	_eq(run.events_since_battle, 0, "事件冷却开局为 0")
 
+	# 门概率表 + 沙盒强制门优先级（2026-11-02 修：force 曾被随机 roll 覆盖）
+	_eq(RunState.pick_special(0.10, ""), "elite", "门概率：<20% → 精英门")
+	_eq(RunState.pick_special(0.30, ""), "event", "门概率：20~50% → 事件门")
+	_eq(RunState.pick_special(0.55, ""), "bonus", "门概率：50~60% → 奖励门")
+	_eq(RunState.pick_special(0.90, ""), "", "门概率：≥60% → 纯战斗")
+	_eq(RunState.pick_special(0.10, "event"), "event", "强制门覆盖随机（事件）")
+	_eq(RunState.pick_special(0.90, "elite"), "elite", "强制门覆盖随机（精英）")
+
 	# 纯战斗段（50%）：只有战斗门
 	var m := MapScreen.new()
 	m.setup(run, "")
@@ -683,11 +691,13 @@ func _test_map_event() -> void:
 	_eq(run2.next_hand_bonus, 0, "手牌加成一次性消耗")
 	cb7.queue_free() if false else null
 
-	# 电子木鱼：赛博功德（战斗开始回 5 HP）
+	# 电子木鱼：赛博功德（战斗开始回 5 HP；先回血再开战，不能拿旧 HP）
+	run2.hp = 50
 	run2.add_item(StsItemPool.make("muyu"))
 	var hp_before := run2.hp
 	var cb8 := run2.start_battle(LevelPool.get_level("L7"))
-	_eq(cb8.hp, mini(RunState.MAX_HP, hp_before + 5), "电子木鱼：战斗开始回 5 HP")
+	_eq(cb8.hp, mini(RunState.MAX_HP, hp_before + 5), "电子木鱼：开战时 HP 已回 5（50→55）")
+	_eq(run2.hp, mini(RunState.MAX_HP, hp_before + 5), "电子木鱼：局内 HP 同步为 55")
 	cb8.queue_free() if false else null
 
 
