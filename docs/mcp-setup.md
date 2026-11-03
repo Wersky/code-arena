@@ -113,3 +113,63 @@ ZCode `config.json` 的 `mcp.servers` 加同样条目。
 | B 站工具报未登录 / 401 | 重新 `bili_login` 扫码 |
 | 公司代理拦截 | 保留 `NO_PROXY=*` / `no_proxy=*` |
 | 第一次启动慢 | `npx -y tavily-mcp` 首次要下载包，之后走缓存 |
+
+## 7. Godot MCP（本机已装两套）
+
+### 7.1 godot-mcp-flash（无头优先）
+
+24 个工具，零插件、npx 即用。真正贴合本项目「无头验证」纪律的是：
+
+- `validate_script`：用 Godot 的 headless 语法检查器校验单个 `.gd`
+- `get_scene_insights` / `get_node_insights`：纯文本解析 `.tscn` / `.gd`（headless 可用）
+- `get_uid` / `update_project_uids`：Godot 4.4+ UID 读取与引用更新
+- `list_projects` / `get_project_info` / `list_project_files`：项目结构与文件发现
+
+配置（CodeArts 的 `servers` / ZCode 的 `mcp.servers` 同款字段）：
+
+```json
+"godot-flash": {
+  "type": "stdio",
+  "command": "D:/nodejs/npx.cmd",
+  "args": ["godot-mcp-flash"],
+  "env": {
+    "GODOT_PATH": "D:/zcode-work/godot/engine/Godot_v4.7.2-stable_win64_console.exe",
+    "NO_PROXY": "*", "no_proxy": "*"
+  }
+}
+```
+
+**约束**：`launch_editor` / `run_project` / `run_scene` / `capture_screenshot` 会开真实窗口，主人在玩时禁用；日常只用无头工具。
+
+**验证**：`tools/list` 返回 24 个工具（server name `godot-mcp 1.0.0`）。
+
+### 7.2 Godot AI（编辑器内调试）
+
+47 个工具：编辑器/运行时状态、日志、截图、场景树、脚本与节点编辑、信号、UI/材质/动画/粒子/相机配置。
+
+- 插件：`addons/godot_ai/`（v4.4.1，release zip，SHA256 已校验），`project.godot` 的 `[editor_plugins]` 已启用。
+- MCP 配置：
+
+```json
+"godot-ai": {
+  "type": "stdio",
+  "command": "C:/Users/33477/AppData/Local/Programs/Python/Python313/Scripts/uvx.exe",
+  "args": ["--from", "godot-ai", "godot-ai"],
+  "env": { "NO_PROXY": "*", "no_proxy": "*" }
+}
+```
+
+- **前提**：Godot 编辑器必须运行且 Godot AI 插件已启用；首次在编辑器 Godot AI dock 里点 **Configure** 完成客户端授权（v4 走 `godot-ai attach` 认证，裸 HTTP 不行）。
+- **更新**：在 dock 点 **Update**，不要用新版本覆盖解压。
+- **约束**：会开编辑器窗口，只能在主人明确允许时用。
+- **验证**：`tools/list` 返回 47 个工具（server name `Godot AI attach 4.1.3`）。
+
+### 7.3 两个怎么分工
+
+| 场景 | 用哪个 |
+|---|---|
+| 改完脚本先查语法 | godot-flash `validate_script`（无头） |
+| 查 `.tscn`/`.gd` 结构、UID | godot-flash `*_insights` / `get_uid`（无头） |
+| 需要看编辑器画面、读运行日志、截图验收 | godot-ai（需开编辑器，主人允许时） |
+| 跑完整 smoke / 平衡模拟 | 都不用，直接命令行 `--headless` |
+

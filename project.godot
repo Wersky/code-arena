@@ -11,6 +11,10 @@ config/description="2D 肉鸽卡牌：AI 娘执行你排的程序，连段/槽�
 run/main_scene="res://scenes/main.tscn"
 config/features=PackedStringArray("4.7")
 
+[editor_plugins]
+
+enabled=PackedStringArray("res://addons/godot_ai/plugin.cfg")
+
 [autoload]
 
 Sfx="*res://scripts/core/sfx.gd"

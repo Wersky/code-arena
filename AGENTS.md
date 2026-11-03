@@ -34,7 +34,7 @@ Godot 4.7.2 的 2D 肉鸽卡牌。玩家选一位 AI 娘，每回合排 4 张卡
 - 引擎：`D:\zcode-work\godot\engine\Godot_v4.7.2-stable_win64_console.exe`
 - 渲染：`gl_compatibility`；窗口 1600×900；纯鼠标
 - 主场景：`scenes/main.tscn` → `scripts/main.gd` 路由
-- MCP：Tavily（联网检索）+ bilibili（热梗采集），配置见 `docs/mcp-setup.md`（key 只在本地，不入库）
+- MCP：Tavily（联网检索）+ bilibili（热梗采集）+ godot-flash（无头脚本/场景校验）+ godot-ai（编辑器调试，需开编辑器），配置见 `docs/mcp-setup.md`（key 只在本地，不入库）
 - 技能：`.zcode/skills`（154 个，随仓库分发）；CodeArts 自动发现入口 `.github/skills`（junction，跨机器跑 `tools/link_skills.bat`）
 
 ## 多 agent 协作
