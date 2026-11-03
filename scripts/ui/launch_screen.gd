@@ -13,9 +13,9 @@ signal launched(ai_id: String)
 ## 下拉项顺序按主人给的：DeepSeek、Grok、GPT、千问
 const MODELS := [
 	["deepdeek", "DeepSeek", 0],
-	["grock", "Grok", 9],
-	["chatppt", "GPT", 6],
-	["kweno", "千问", 3],
+	["grock", "Grok", 0],
+	["chatppt", "GPT", 0],
+	["kweno", "千问", 0],
 ]
 const MCP_ITEMS := ["文件系统", "浏览器", "终端", "联网搜索"]
 

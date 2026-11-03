@@ -5,12 +5,12 @@ extends RefCounted
 ## 形象资源路径一律使用**虚构名**（ai-deepdeek / ai-kweno / ai-chatppt / ai-grock），
 ## 美术产物的真实原型名由 integrate 任务统一重命名后再接入。
 
-## 每位 AI 娘的解锁门槛（累计过关关数）
+## 每位 AI 娘的解锁门槛（累计过关关数）。主人 2026-11-03 钦定：全部无需通关，初始可选。
 const UNLOCK_AT := {
 	"deepdeek": 0,
-	"kweno": 3,
-	"chatppt": 6,
-	"grock": 9,
+	"kweno": 0,
+	"chatppt": 0,
+	"grock": 0,
 }
 
 ## 锁定态剪影图（不换资源，由 UI 把形象替换成这张纯黑剪影）
@@ -29,27 +29,27 @@ static func all_ais() -> Array[AiData]:
 	))
 	out.append(_make(
 		"kweno", "Kweno", "中文优化", Color(1.000, 0.820, 0.400),
-		"res://assets/art/ai-kweno.png", true,
+		"res://assets/art/ai-kweno.png", false,
 		PackedStringArray([
 			"tas_kw_cjk", "tas_kw_long", "tas_kw_example_pair", "tas_kw_fluent",
 		]),
-		"中文的事，交给中文的模型。", "通过 L3 后加入", "原型：qwen"
+		"中文的事，交给中文的模型。", "初始伙伴", "原型：qwen"
 	))
 	out.append(_make(
 		"chatppt", "ChatPPT", "通用对话", Color(0.937, 0.545, 0.706),
-		"res://assets/art/ai-chatppt.png", true,
+		"res://assets/art/ai-chatppt.png", false,
 		PackedStringArray([
 			"tas_cp_no_example", "tas_cp_structured", "tas_cp_format", "tas_cp_neat",
 		]),
-		"没问题，我按你的格式来。", "通过 L6 后加入", "原型：chatgpt"
+		"没问题，我按你的格式来。", "初始伙伴", "原型：chatgpt"
 	))
 	out.append(_make(
 		"grock", "Grock", "实时联网", Color(0.478, 0.792, 0.443),
-		"res://assets/art/ai-grock.png", true,
+		"res://assets/art/ai-grock.png", false,
 		PackedStringArray([
 			"tas_gr_live", "tas_gr_anchor", "tas_gr_evidence_pair", "tas_gr_fresh",
 		]),
-		"最新消息我刚抓到了，看看。", "通过 L9 后加入", "原型：grok"
+		"最新消息我刚抓到了，看看。", "初始伙伴", "原型：grok"
 	))
 	return out
 
@@ -101,13 +101,7 @@ static func locked_silhouette() -> String:
 
 
 static func _unlock_hint(id: String) -> String:
-	match id:
-		"kweno":
-			return "通过 L3 后加入"
-		"chatppt":
-			return "通过 L6 后加入"
-		"grock":
-			return "通过 L9 后加入"
+
 	return "初始伙伴"
 
 
