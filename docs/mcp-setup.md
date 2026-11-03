@@ -118,7 +118,7 @@ ZCode `config.json` 的 `mcp.servers` 加同样条目。
 
 ### 7.1 godot-mcp-flash（无头优先）
 
-24 个工具，零插件、npx 即用。真正贴合本项目「无头验证」纪律的是：
+25 个工具，零插件。本机已全局安装 `npm install -g godot-mcp-flash`（1.0.1）。真正贴合本项目「无头验证」纪律的是：
 
 - `validate_script`：用 Godot 的 headless 语法检查器校验单个 `.gd`
 - `get_scene_insights` / `get_node_insights`：纯文本解析 `.tscn` / `.gd`（headless 可用）
@@ -128,41 +128,44 @@ ZCode `config.json` 的 `mcp.servers` 加同样条目。
 配置（CodeArts 的 `servers` / ZCode 的 `mcp.servers` 同款字段）：
 
 ```json
-"godot-flash": {
+"godot-mcp-flash": {
   "type": "stdio",
-  "command": "D:/nodejs/npx.cmd",
-  "args": ["godot-mcp-flash"],
+  "command": "D:/npm-global/godot-mcp-flash.cmd",
+  "args": [],
   "env": {
-    "GODOT_PATH": "D:/zcode-work/godot/engine/Godot_v4.7.2-stable_win64_console.exe",
-    "NO_PROXY": "*", "no_proxy": "*"
+    "GODOT_PATH": "D:/zcode-work/godot/engine/Godot_v4.7.2-stable_win64_console.exe"
   }
 }
 ```
 
-**约束**：`launch_editor` / `run_project` / `run_scene` / `capture_screenshot` 会开真实窗口，主人在玩时禁用；日常只用无头工具。
+也可不全局安装，改成 `command: D:/nodejs/npx.cmd` + `args: ["-y", "godot-mcp-flash"]`。
 
-**验证**：`tools/list` 返回 24 个工具（server name `godot-mcp 1.0.0`）。
+**约束**：`launch_editor` / `run_project` / `run_scene` / `capture_screenshot` 会开真实窗口，主人在玩时禁用；日常只用 `validate_script(s)` / `get_project_info` / `list_project_files` / `view_log` / `get_scene_insights` 等无头工具。
+
+**验证**：`tools/list` 返回 25 个工具（server name `godot-mcp 1.0.0`）。
 
 ### 7.2 Godot AI（编辑器内调试）
 
-47 个工具：编辑器/运行时状态、日志、截图、场景树、脚本与节点编辑、信号、UI/材质/动画/粒子/相机配置。
+48 个工具：编辑器/运行时状态、日志、截图、场景树、脚本与节点编辑、信号、UI/材质/动画/粒子/相机配置。
 
-- 插件：`addons/godot_ai/`（v4.4.1，release zip，SHA256 已校验），`project.godot` 的 `[editor_plugins]` 已启用。
-- MCP 配置：
+- Python 包：`uv tool install godot-ai`（4.4.1，可执行在 `C:/Users/33477/.local/bin/godot-ai.exe`，**不在 PATH**）
+- 插件：`addons/godot_ai/`（v4.4.1，`project.godot` 的 `[editor_plugins]` 已启用）
+- 注意：GitHub Release 里 **`godot-ai-v4-plugin.zip` 才是正式插件**；`godot-ai-plugin.zip` 只是 v3→v4 迁移桥
+- MCP 配置（v4 必须用 `attach` 作为 stdio 桥，不能裸起 server）：
 
 ```json
 "godot-ai": {
   "type": "stdio",
-  "command": "C:/Users/33477/AppData/Local/Programs/Python/Python313/Scripts/uvx.exe",
-  "args": ["--from", "godot-ai", "godot-ai"],
-  "env": { "NO_PROXY": "*", "no_proxy": "*" }
+  "command": "C:/Users/33477/.local/bin/godot-ai.exe",
+  "args": ["attach"],
+  "env": { "GODOT_AI_DISABLE_TELEMETRY": "true" }
 }
 ```
 
 - **前提**：Godot 编辑器必须运行且 Godot AI 插件已启用；首次在编辑器 Godot AI dock 里点 **Configure** 完成客户端授权（v4 走 `godot-ai attach` 认证，裸 HTTP 不行）。
 - **更新**：在 dock 点 **Update**，不要用新版本覆盖解压。
 - **约束**：会开编辑器窗口，只能在主人明确允许时用。
-- **验证**：`tools/list` 返回 47 个工具（server name `Godot AI attach 4.1.3`）。
+- **验证**：`tools/list` 返回 48 个工具（server name `Godot AI attach 4.1.3`）。
 
 ### 7.3 两个怎么分工
 
