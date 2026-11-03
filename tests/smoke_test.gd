@@ -47,7 +47,7 @@ func _eq(a, b, what: String) -> void:
 func _test_sts_cards() -> void:
 	print("[卡池]")
 	var ids := StsCardPool.all_ids()
-	_eq(ids.size(), 7, "卡池共 7 张卡（含白米饭、两张 D 指令行与两张觉醒攻击）")
+	_eq(ids.size(), 9, "卡池共 9 张卡（7 张通用 + ChatPPT 专属攻防 2 张）")
 	var ram := StsCardPool.card("fish_ram")
 	_check(ram != null and ram.damage == 6 and ram.cost == 1
 			and ram.kind == StsCard.Kind.ATTACK, "肥鱼铁头撞：1 费攻击 6 伤")
@@ -699,6 +699,45 @@ func _test_map_event() -> void:
 	_eq(cb8.hp, mini(RunState.MAX_HP, hp_before + 5), "电子木鱼：开战时 HP 已回 5（50→55）")
 	_eq(run2.hp, mini(RunState.MAX_HP, hp_before + 5), "电子木鱼：局内 HP 同步为 55")
 	cb8.queue_free() if false else null
+
+	# ── ChatPPT 专属：起始卡组与被动「模板对齐」 ──
+	var cp_deck := StsCardPool.starter_deck_for("chatppt")
+	_eq(cp_deck.size(), 10, "ChatPPT 起始卡组 10 张")
+	var cp_atk := 0
+	var cp_skl := 0
+	for c in cp_deck:
+		if c.id == "cp_format":
+			cp_atk += 1
+		if c.id == "cp_template":
+			cp_skl += 1
+	_eq(cp_atk, 3, "ChatPPT 专属攻击 ×3")
+	_eq(cp_skl, 2, "ChatPPT 专属防御 ×2")
+	_eq(StsCardPool.card_name("cp_format"), "格式化输出", "专属攻击卡名")
+	_eq(StsCardPool.card("cp_format").damage, 6, "专属攻击基础 6")
+	_eq(StsCardPool.card("cp_template").block, 5, "专属防御基础 5")
+	_check(ResourceLoader.exists("res://assets/art/ai-chatppt.png"), "ChatPPT 立绘资源存在")
+	_check(ResourceLoader.exists("res://assets/art/sts-art-cp-format.png"), "ChatPPT 攻击卡面存在")
+	_check(ResourceLoader.exists("res://assets/art/sts-art-cp-template.png"), "ChatPPT 防御卡面存在")
+
+	var cp := StsCombat.new()
+	cp.setup(cp_deck, "沙袋", 999, [{"kind": "attack", "value": 4}], 80, 7)
+	cp.set_ai_id("chatppt")
+	var cp_atk_card := StsCardPool.card("cp_format")
+	var cp_def_card := StsCardPool.card("cp_template")
+	var cp_hand: Array[StsCard] = [cp_atk_card, cp_def_card]
+	cp.hand = cp_hand
+	var cp_ev1 := cp.play_card(cp_atk_card, false, true, false)
+	_eq(int(cp_ev1.get("value", 0)), 10, "ChatPPT 首张攻击：6 + 首位2 + 被动2 = 10")
+	var cp_ev2 := cp.play_card(cp_def_card, false, false, true)
+	_eq(int(cp_ev2.get("value", 0)), 7, "ChatPPT 第二张防御：5 + 末位2（无被动）= 7")
+
+	cp.start_turn()
+	var cp_hand2: Array[StsCard] = [cp_atk_card]
+	cp.hand = cp_hand2
+	var cp_pv := cp.preview_sequence()
+	_eq(int(cp_pv[0]["value"]), 10, "ChatPPT 预览与实战一致（首位 10）")
+	var cp_ev3 := cp.play_card(cp_atk_card, false, true, true)
+	_eq(int(cp_ev3.get("value", 0)), 10, "ChatPPT 新回合首牌重新 +2")
 
 
 func _make_click_event() -> InputEventMouseButton:

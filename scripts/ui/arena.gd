@@ -689,6 +689,7 @@ func _hand_tween(view: StsCardView) -> Tween:
 func _start_battle() -> void:
 	combat = run.start_battle(level)
 	combat.set_refill(StsCombat.refill_for(run.ai.id))
+	combat.set_ai_id(run.ai.id)
 
 	if _enemy_sprite:
 		var art_path := "res://assets/art/enemy-%s.png" % level.id

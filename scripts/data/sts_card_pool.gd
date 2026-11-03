@@ -81,6 +81,27 @@ const CARDS := {
 		"desc": "本次运行换类型不断连段。",
 		"flavor": "多线程，不断线。",
 	},
+	## ChatPPT 专属：通用对话/格式。基础攻击与防御，配合被动「模板对齐」。
+	"cp_format": {
+		"name": "格式化输出",
+		"kind": StsCard.Kind.ATTACK,
+		"cost": 1,
+		"damage": 6,
+		"block": 0,
+		"art": "res://assets/art/sts-art-cp-format.png",
+		"desc": "按模板输出，解决进度 +6。",
+		"flavor": "好的，这是你要的答案。",
+	},
+	"cp_template": {
+		"name": "模板套用",
+		"kind": StsCard.Kind.SKILL,
+		"cost": 1,
+		"damage": 0,
+		"block": 5,
+		"art": "res://assets/art/sts-art-cp-template.png",
+		"desc": "套用模板，护盾 +5。",
+		"flavor": "先对齐格式，再谈内容。",
+	},
 }
 
 const KIND_NAMES := {
@@ -134,6 +155,23 @@ static func starter_deck() -> Array[StsCard]:
 		out.append(card("fish_ram"))
 	for i in STARTER_SKILLS:
 		out.append(card("taunt"))
+	for i in STARTER_RICE:
+		out.append(card("rice"))
+	for i in STARTER_LOOP:
+		out.append(card("loop"))
+	for i in STARTER_PARALLEL:
+		out.append(card("parallel"))
+	return out
+
+## 按核心 AI 娘构建起始卡组。ChatPPT 用自己的攻击/防御替换通用攻防，其余保持不变。
+static func starter_deck_for(ai_id: String) -> Array[StsCard]:
+	if ai_id != "chatppt":
+		return starter_deck()
+	var out: Array[StsCard] = []
+	for i in STARTER_ATTACKS:
+		out.append(card("cp_format"))
+	for i in STARTER_SKILLS:
+		out.append(card("cp_template"))
 	for i in STARTER_RICE:
 		out.append(card("rice"))
 	for i in STARTER_LOOP:

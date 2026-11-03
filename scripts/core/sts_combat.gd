@@ -31,6 +31,10 @@ const REFILL_BY_AI := {"deepdeek": 4}
 const RICE_STIR := 2
 const RICE_AWAKE := 5
 const RICE_BUFF := 1.2
+## ChatPPT 被动「模板对齐」：每回合第一张非指令行卡（攻/防）额外 +2。
+const CHATPPT_FIRST_BONUS := 2
+var ai_id := "deepdeek"
+var _chatppt_bonus_used := false
 var rice_eaten := 0
 var _refill_count := 4
 ## 道具效果（run.start_battle 按持有道具注入）
@@ -83,6 +87,7 @@ func setup(deck: Array[StsCard], e_name: String, e_hp: int,
 		pattern: Array, start_hp: int, seed_i: int, hand_refill: int = 4) -> void:
 	rng.seed = seed_i
 	_refill_count = maxi(1, hand_refill)
+	_chatppt_bonus_used = false
 	rice_eaten = 0              ## 每局重置
 	seq_streak = 0
 	seq_kind = -1
@@ -131,6 +136,7 @@ func _shuffle(arr: Array[StsCard]) -> void:
 func start_turn() -> void:
 	turn += 1
 	block = 0
+	_chatppt_bonus_used = false
 	for c in hand:
 		discard_pile.append(c)
 	hand.clear()
@@ -241,10 +247,17 @@ func play_card(card: StsCard, auto_refill: bool = true,
 	var slot := LEAD_BONUS if is_lead else (FINISH_BONUS if is_finish else 0)
 	var dealt := 0
 	var blk_gain := 0
+	## ChatPPT 被动：本回合第一张数值牌 +2（米饭/复读/并行不消耗）
+	var first_bonus := 0
+	if ai_id == "chatppt" and not _chatppt_bonus_used:
+		first_bonus = CHATPPT_FIRST_BONUS
+		_chatppt_bonus_used = true
 	for i in times:
 		var step := STREAK_STEP * (seq_streak - 1)
 		var v: int = (card.damage if card.kind == StsCard.Kind.ATTACK else card.block) \
 				+ step + slot
+		if i == 0:
+			v += first_bonus
 		if card.kind == StsCard.Kind.ATTACK:
 			v += atk_bonus
 		if is_awake():
@@ -355,6 +368,11 @@ static func refill_for(ai_id: String) -> int:
 	return int(REFILL_BY_AI.get(ai_id, 4))
 
 
+## 设定核心 AI 娘（影响被动：ChatPPT 首牌加成）
+func set_ai_id(id: String) -> void:
+	ai_id = id
+
+
 func set_refill(n: int) -> void:
 	_refill_count = maxi(1, n)
 
@@ -438,6 +456,7 @@ func preview_sequence() -> Array:
 	var out: Array = []
 	var streak := 0
 	var kind := -1
+	var first_bonus_used := false
 	var n := hand.size()
 	for i in n:
 		var c := hand[i]
@@ -459,6 +478,9 @@ func preview_sequence() -> Array:
 		var step := STREAK_STEP * (streak - 1)
 		var slot := LEAD_BONUS if lead else (FINISH_BONUS if finish else 0)
 		var v: int = (c.damage if c.kind == StsCard.Kind.ATTACK else c.block) + step + slot
+		if ai_id == "chatppt" and not first_bonus_used:
+			v += CHATPPT_FIRST_BONUS
+			first_bonus_used = true
 		out.append({"growth": false, "lead": lead, "finish": finish, "streak": streak,
 				"value": v, "kind": c.kind,
 				"buffed": is_awake(), "buffed_value": int(round(float(v) * RICE_BUFF))})

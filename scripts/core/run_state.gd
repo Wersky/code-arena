@@ -64,9 +64,11 @@ static func pick_special(roll: float, force: String) -> String:
 	return ""
 
 
-## 设定核心 AI 娘
+## 设定核心 AI 娘；开局前同步该角色的起始卡组（ChatPPT 有专属攻防卡）。
 func set_ai(a: AiData) -> void:
 	ai = a
+	if a != null:
+		deck = StsCardPool.starter_deck_for(a.id)
 
 
 ## 过关奖励往卡组里加一张
