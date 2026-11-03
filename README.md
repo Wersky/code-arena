@@ -14,8 +14,9 @@
 | 1 | [`AGENTS.md`](AGENTS.md) | 常驻硬规则：不弹窗、无头验证、打包前查进程 |
 | 2 | [`docs/CodeArts-接手文档.md`](docs/CodeArts-接手文档.md) | **当前状态唯一真值**：玩法、架构、命令、缺口、MCP/Skills |
 | 3 | [`docs/CodeArts-技能索引.md`](docs/CodeArts-技能索引.md) | 154 个 Godot 技能，按任务挑着读 |
-| 4 | [`docs/踩坑手册.md`](docs/踩坑手册.md) | 真实踩坑，动手前扫一眼 |
-| 5 | [`docs/05-交接与协作.md`](docs/05-交接与协作.md) | 协作/分支/交接纪律（数字部分已旧） |
+| 4 | [`docs/mcp-setup.md`](docs/mcp-setup.md) | Tavily / B站 MCP 配置（多 agent 共用） |
+| 5 | [`docs/踩坑手册.md`](docs/踩坑手册.md) | 真实踩坑，动手前扫一眼 |
+| 6 | [`docs/05-交接与协作.md`](docs/05-交接与协作.md) | 协作/分支/交接纪律（数字部分已旧） |
 
 > `docs/00~04` 是德州扑克时代的设计存档，已作废，不要照着实现。
 
@@ -42,4 +43,13 @@ tools/export_win.bat                                               # 导出（�
 
 **已是一条可玩的纵向切片：10 关、7 张卡、4 件道具、5 则事件、4 类门、三段成长、燃尽画面、F1 体验沙盒。**
 主要缺口：L2–L10 敌人立绘、跨局 meta 进度、平衡模拟未覆盖道具/事件。
+LLM 接入方案已定稿（AI 对手 + AI 事件引擎 + AI 娘小鲸），见 `圆桌纪要/LLM接入代码擂台.md`。
 详见 [`docs/CodeArts-接手文档.md`](docs/CodeArts-接手文档.md) §8。
+
+---
+
+## 多 agent 协作
+
+- 技能库 `.zcode/skills` 随仓库分发；CodeArts 通过 `.github/skills` 链接自动发现（换机器跑 `tools/link_skills.bat`）。
+- MCP（Tavily 检索 / B站热梗采集）按机器本地配置，见 [`docs/mcp-setup.md`](docs/mcp-setup.md)，**key 不入库**。
+- 任何 agent 先读 `AGENTS.md` + `docs/CodeArts-接手文档.md`；多 agent 按文件认领，提交前 `git pull --rebase`。

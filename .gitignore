@@ -10,6 +10,9 @@
 # 协作工具的本地状态
 .swarmbridge/
 
+# CodeArts 技能发现入口（junction → .zcode/skills，跨机器用 tools/link_skills.bat 重建）
+.github/skills/
+
 # 系统垃圾
 Thumbs.db
 desktop.ini

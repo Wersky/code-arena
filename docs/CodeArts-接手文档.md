@@ -594,10 +594,12 @@ CodeArts 支持从这些目录自动发现 `SKILL.md`：
 ~/.claude/skills
 ```
 
-本仓库**没有**把 154 个技能复制进 `.github/skills`，原因是避免 154 份副本漂移。当前约定是：
+本仓库已建好 `.github/skills` → `.zcode/skills` 的**目录链接（junction）**，CodeArts 打开项目即可自动发现全部 154 个技能，无需复制、不会漂移。
 
-- 需要自动发现时，让主人确认后把源目录链接/复制到 `.github/skills`；
-- 默认按索引按需读取源目录，效果一样，且永远是最新版。
+- `.github/skills/` 已加入 `.gitignore`（不重复存储 20MB 技能库）。
+- 换机器 clone 后，跑一次 `tools/link_skills.bat` 重建链接（管理员权限）。
+- ZCode 原生读 `.zcode/skills`；Claude Code 等可把 `.claude/skills` 链到同一目录。
+- 按索引按需读取同样有效：`docs/CodeArts-技能索引.md`。
 
 ### 7.3 先读这 12 个
 

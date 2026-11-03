@@ -12,7 +12,7 @@ Godot 4.7.2 的 2D 肉鸽卡牌。玩家选一位 AI 娘，每回合排 4 张卡
 ## 开工先读
 
 1. `docs/CodeArts-接手文档.md` —— 当前玩法、架构、命令、缺口，唯一现状真值
-2. `docs/CodeArts-技能索引.md` —— 154 个 Godot 技能，按任务挑着读
+2. `docs/CodeArts-技能索引.md` —— 154 个 Godot 技能，按任务挑着读；源目录 `.zcode/skills`（随仓库分发）
 3. `docs/踩坑手册.md` 最近 10 条 —— 真实踩过的坑
 
 `docs/00-设计方案.md`、`01-新机制设计.md`、`02-前沿方案.md`、`02-梗卡机制设计.md`、`04-基础玩法.md` 是扑克时代存档，只作历史参考。
@@ -34,6 +34,15 @@ Godot 4.7.2 的 2D 肉鸽卡牌。玩家选一位 AI 娘，每回合排 4 张卡
 - 引擎：`D:\zcode-work\godot\engine\Godot_v4.7.2-stable_win64_console.exe`
 - 渲染：`gl_compatibility`；窗口 1600×900；纯鼠标
 - 主场景：`scenes/main.tscn` → `scripts/main.gd` 路由
+- MCP：Tavily（联网检索）+ bilibili（热梗采集），配置见 `docs/mcp-setup.md`（key 只在本地，不入库）
+- 技能：`.zcode/skills`（154 个，随仓库分发）；CodeArts 自动发现入口 `.github/skills`（junction，跨机器跑 `tools/link_skills.bat`）
+
+## 多 agent 协作
+
+- 常驻规则只有这一份 `AGENTS.md`；状态真值只有 `docs/CodeArts-接手文档.md`。任何 agent（CodeArts / ZCode / Claude Code）先读这两份。
+- 技能库 `.zcode/skills` 随仓库分发；CodeArts 走 `.github/skills` 链接自动发现，ZCode 原生读 `.zcode/skills`，其他 agent 可把 `.claude/skills` 链到同一目录。
+- MCP 按机器本地配置（key 不入库），步骤见 `docs/mcp-setup.md`。
+- 多 agent 同时开发按文件认领（core/data 谁改谁负责、ui 改完目检、`docs/进度交接.md` 每轮收尾更新）；提交前先 `git pull --rebase`。
 
 ## 必跑命令
 
