@@ -107,15 +107,13 @@ var _ult_bar_bg: ColorRect = null
 var _ult_label: Label = null
 var _ult_playing := false
 
-# 许愿卡（AI 作画，2026-11-04 圆桌定稿）
+# 许愿卡（AI 作画，2026-11-04 圆桌定稿；2026-11-07 起去掉文字输入，AI 纯看图）
 var _wish_btn: Button = null
 var _wish_panel: PanelContainer = null
-var _wish_input: LineEdit = null
 var _wish_feedback: Label = null
 var _wish_pending_card: StsCard = null
 var _wish_pending_name := ""
 var _wish_canvas: WishCanvas = null
-var _wish_text_block: VBoxContainer = null
 var _wish_mode_vision := false
 ## 截断重试标记：每张卡只重试一次
 var _wish_retried := false
@@ -566,7 +564,7 @@ func _build_wish_ui() -> void:
 	_wish_btn.add_theme_color_override("font_hover_color", Color(0.9, 0.97, 1.0))
 	_wish_btn.add_theme_stylebox_override("normal",
 			UiKit.flat(Color(0.05, 0.07, 0.12, 0.9), UiKit.ACCENT, 2, 6, 0))
-	_wish_btn.tooltip_text = "许愿卡：写下画面，AI 给你画一张专属卡"
+	_wish_btn.tooltip_text = "许愿卡：画点什么，AI 看图给你造一张专属卡"
 	_wish_btn.custom_minimum_size = Vector2(56, 56)
 	_wish_btn.size = Vector2(56, 56)
 	_wish_btn.pressed.connect(_open_wish_panel)
@@ -580,6 +578,12 @@ func _build_wish_ui() -> void:
 	_wish_panel.mouse_filter = Control.MOUSE_FILTER_STOP
 	_wish_panel.size = Vector2(980, 580)
 	add_child(_wish_panel)
+
+	## 背景层：终端代码雨（2026-11-07 主人要求）——PanelContainer 会把它铺满，
+	## 后加的 outer 在它上面；雨自身 IGNORE 输入、面板隐藏时自动停帧
+	var rain := TerminalRain.new()
+	rain.name = "TerminalRainBg"
+	_wish_panel.add_child(rain)
 
 	var outer := HBoxContainer.new()
 	outer.add_theme_constant_override("separation", 16)
@@ -604,27 +608,6 @@ func _build_wish_ui() -> void:
 	_wish_hint_label = UiKit.dim("", UiKit.FS_XS, Color(0.6, 0.85, 1.0))
 	_wish_hint_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	v.add_child(_wish_hint_label)
-
-	_wish_text_block = VBoxContainer.new()
-	_wish_text_block.add_theme_constant_override("separation", 8)
-	v.add_child(_wish_text_block)
-	_wish_input = LineEdit.new()
-	_wish_input.placeholder_text = "写下画面，画好叫你（例：流泪的机械猫）"
-	_wish_input.custom_minimum_size = Vector2(0, 44)
-	_wish_input.add_theme_font_override("font", PixelTheme.font())
-	_wish_input.add_theme_font_size_override("font_size", 20)
-	_wish_input.text_submitted.connect(func(_t: String) -> void: _confirm_wish())
-	_wish_text_block.add_child(_wish_input)
-
-	var palette := HBoxContainer.new()
-	palette.add_theme_constant_override("separation", 8)
-	for ex in ["流泪的机械猫", "收过路费的蘑菇", "带电的数据鲸"]:
-		var b := UiKit.button(ex, UiKit.FS_XS)
-		b.pressed.connect(func() -> void:
-			_wish_input.text = ex
-			_wish_input.grab_focus())
-		palette.add_child(b)
-	_wish_text_block.add_child(palette)
 
 	_wish_canvas = WishCanvas.new()
 	outer.add_child(_wish_canvas)
@@ -867,12 +850,10 @@ func _open_wish_panel() -> void:
 	var note := ""
 	if _wish_mode_vision:
 		_wish_confirm_btn.text = "让 AI 看画创作"
-		note = "在右侧画板画出你想造的东西。左侧可**选填**一句话（画的是什么）——多数模型的看图精度有限，补一句能明显提升还原度。"
-		_wish_text_block.visible = true
+		note = "在右侧画板画出你想造的东西——AI 纯看图创作，画得越具体，还原越高。"
 	else:
-		_wish_confirm_btn.text = "让 AI 创作卡面"
-		note = "写一句画面描述 → AI 会画 SVG 卡面 + 卡牌（当前模型按纯文本处理）。"
-		_wish_text_block.visible = true
+		_wish_confirm_btn.text = "让 AI 看画创作"
+		note = "当前模型不支持看图——换一个视觉模型再来许愿吧。"
 	_wish_canvas.visible = true
 	_wish_canvas_clear_btn.visible = true
 	_wish_undo_btn.visible = true
@@ -881,8 +862,6 @@ func _open_wish_panel() -> void:
 	_wish_feedback.text = "剩余许愿：%d 次" % _wish_remaining()
 	if _wish_mode_vision:
 		_wish_canvas.grab_focus()
-	else:
-		_wish_input.grab_focus()
 
 
 ## 滑杆拖动时的尺寸预览（0.8s 后自动消失）
@@ -967,8 +946,7 @@ var _prefetch_count := 0
 
 func _wish_prefetch_hash() -> String:
 	var uri := _wish_canvas.export_data_uri() if _wish_canvas != null else ""
-	var text := _wish_input.text.strip_edges() if _wish_input != null else ""
-	return ("%s\u001f%s" % [uri, text]).sha256_text()
+	return uri.sha256_text()
 
 
 func _on_wish_stroke_finished() -> void:
@@ -994,13 +972,10 @@ func _do_wish_prefetch() -> void:
 	_prefetch_busy = true
 	_prefetch_count += 1
 	_prefetch_sent_hash = h
-	var text := _wish_input.text.strip_edges()
-	var hint := "这是我画的涂鸦，请照它造一张卡。" if text.is_empty() \
-			else "这是我画的涂鸦，请照它造一张卡（补充：%s）。" % text
 	_llm_client().request("event", [
 		{"role": "system", "content": WishCardFactory.active_prompt()},
 		{"role": "user", "content": [
-			{"type": "text", "text": hint},
+			{"type": "text", "text": "这是我画的涂鸦，请照它造一张卡。"},
 			{"type": "image_url", "image_url": {"url": uri}},
 		]},
 	], _on_wish_prefetch_done, {
@@ -1037,24 +1012,15 @@ func _unhandled_input(event: InputEvent) -> void:
 func _confirm_wish() -> void:
 	if run == null:
 		return
-	if _wish_mode_vision:
-		if _wish_canvas == null or _wish_canvas.is_empty():
-			_wish_feedback.text = "先在白板上画点什么（比如一只蘑菇或一只猫）。"
-			return
-		if _wish_remaining() <= 0:
-			_wish_feedback.text = "本局许愿次数用完了（每 2 关 +1，上限 4）。"
-			return
-		_request_vision_card(_llm_config())
+	if not _wish_mode_vision:
+		_wish_feedback.text = "当前模型不支持看图——换一个视觉模型再来许愿吧。"
 		return
-	var text := _wish_input.text.strip_edges()
-	if text.is_empty():
-		_wish_feedback.text = "先写一句画面描述（它决定这张卡的强度）。"
+	if _wish_canvas == null or _wish_canvas.is_empty():
+		_wish_feedback.text = "先在白板上画点什么（比如一只蘑菇或一只猫）。"
 		return
 	if _wish_remaining() <= 0:
 		_wish_feedback.text = "本局许愿次数用完了（每 2 关 +1，上限 4）。"
 		return
-	## 纯文本模型也走 AI 创作：模型按文字描述返回 SVG（游戏内渲染成卡面）+ 卡牌 JSON。
-	## 涂鸦在纯文本模式下模型看不到，但会先顶上当临时卡面（SVG 到了替换）。
 	_request_vision_card(_llm_config())
 
 
@@ -1071,34 +1037,26 @@ func _request_vision_card(cfg: LLMConfig, is_retry: bool = false) -> void:
 		_on_vision_card_done(hit)
 		return
 	_clear_prefetch()
-	var text := _wish_input.text.strip_edges()
 	var messages: Array = []
-	if _wish_mode_vision:
-		var uri := _wish_canvas.export_data_uri()
-		if uri.is_empty():
-			_wish_feedback.text = "画板导出失败，重画一次试试。"
-			run.wish_used -= 1
-			return
-		var hint := "这是我画的涂鸦，请照它造一张卡。" if text.is_empty() 				else "这是我画的涂鸦，请照它造一张卡（补充：%s）。" % text
-		messages = [
-			{"role": "system", "content": WishCardFactory.active_prompt()
-					+ WishCardFactory.quality_hint(Affection.quality_tier())},
-			{"role": "user", "content": [
-				{"type": "text", "text": hint},
-				{"type": "image_url", "image_url": {"url": uri}},
-			]},
-		]
-	else:
-		messages = [
-			{"role": "system", "content": WishCardFactory.active_prompt()
-					+ WishCardFactory.quality_hint(Affection.quality_tier())},
-			{"role": "user", "content": "我想造一张卡，画面是：%s。请画出来并给我卡牌 JSON。" % text},
-		]
+	var uri := _wish_canvas.export_data_uri()
+	if uri.is_empty():
+		_wish_feedback.text = "画板导出失败，重画一次试试。"
+		run.wish_used -= 1
+		return
+	## 2026-11-07 主人定稿：去掉文字输入，AI 纯看图创作
+	messages = [
+		{"role": "system", "content": WishCardFactory.active_prompt()
+				+ WishCardFactory.quality_hint(Affection.quality_tier())},
+		{"role": "user", "content": [
+			{"type": "text", "text": "这是我画的涂鸦，请照它造一张卡。"},
+			{"type": "image_url", "image_url": {"url": uri}},
+		]},
+	]
 	run.wish_used += 1
 	_wish_feedback.text = "AI 正在创作…（大模型绘图约 30~60 秒）"
 	_wish_confirm_btn.disabled = true
 	if _status_label != null:
-		_status_label.text = "✏ AI 正在创作：%s" % (text if not text.is_empty() else "你的涂鸦")
+		_status_label.text = "✏ AI 正在创作：你的涂鸦"
 	var opts := {
 		## 含思考链余量：4096 时推理模型会把额度全花在 reasoning，SVG 被截断
 		"max_tokens": WishCardFactory.max_tokens_for(Affection.level()) if is_retry \
@@ -1131,10 +1089,7 @@ func _on_vision_card_done(r: Dictionary) -> void:
 	var def := WishCardFactory.parse_ai_card(text)
 	var card: StsCard
 	if def.is_empty():
-		var base_text := _wish_input.text.strip_edges()
-		if base_text.is_empty():
-			base_text = "涂鸦造物"
-		card = WishCardFactory.make(base_text, run.level_index)
+		card = WishCardFactory.make("涂鸦造物", run.level_index)
 	else:
 		card = WishCardFactory.make_from_ai(def, run.level_index, Affection.level())
 	## 效果层：竞技禁用（p95 超限）——查缓存命中，禁用卡不发放
@@ -2861,6 +2816,11 @@ func _rect(img: Image, x: int, y: int, w: int, h: int, col: Color,
 # ─────────────────────────────────────────────────────────
 #  测试钩子
 # ─────────────────────────────────────────────────────────
+func debug_open_wish_panel() -> void:
+	## 视觉验收（--shot=wishpanel）：直接打开许愿画布（纯看图 + 代码雨背景）
+	_open_wish_panel()
+
+
 func debug_play_card(index: int) -> bool:
 	## 出牌方式改成「整手发送」后，这个钩子直接触发一次发送
 	if combat == null or combat.hand.is_empty():

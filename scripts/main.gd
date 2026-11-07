@@ -528,7 +528,7 @@ func _maybe_capture() -> void:
 	if screen in ["menu", "arena", "battle", "intro", "reward", "result",
 			"menuhover", "rig", "rigwalk", "loadrun", "card", "cardtext", "cardcost", "terminal", "termgif",
 			"termdump", "hero", "stairs", "launch", "launch2", "arenalayout", "sendtest", "ricetest",
-			"patchdemo"]:
+			"patchdemo", "wishpanel"]:
 		run.reset_run()
 		if screen == "launch" or screen == "launch2":
 			var sc := _current as LaunchScreen
@@ -690,6 +690,16 @@ func _maybe_capture() -> void:
 			if arena_shot != null:
 				arena_shot.debug_play_card(0)
 				await get_tree().create_timer(0.6).timeout
+		elif screen == "wishpanel":
+			# 许愿画布验收（2026-11-07）：纯看图（无文字输入框）+ 代码雨背景
+			_show_level(_levels[0])
+			# 等进场转场走完（终端进场 ~4s），再开面板
+			await get_tree().create_timer(4.5).timeout
+			var ar_wish := _current as ArenaScreen
+			if ar_wish != null:
+				ar_wish.debug_open_wish_panel()
+				# 再等 0.8s：代码雨落下几帧，画面不是空的
+				await get_tree().create_timer(0.8).timeout
 		else:
 			_show_menu()
 	for _i in 6:
