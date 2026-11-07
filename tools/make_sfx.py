@@ -368,9 +368,67 @@ def build_battle_sfx() -> None:
     save("fx_burnout", normalize(burnout))
 
 
+def build_ult_sfx() -> None:
+    """终结技「深度思考」七音（2026-11-03）：充能/绷紧/挤压/撕开/登场/充满/爆发"""
+    # 充能入场：长上滑电子音（黑洞吸附感）
+    charge = mix(
+        glide(180, 920, 0.5, vol=0.4, duty=0.35),
+        noise(0.5, vol=0.08, decay=0.9),
+    )
+    save("fx_ult_charge", normalize(charge))
+
+    # 绷紧：加速颤音（张力爬升，8 个音越来越密）
+    strain_ev = []
+    t = 0.0
+    for i in range(8):
+        dur = 0.09 - i * 0.008
+        strain_ev.append((t, square(440 if i % 2 == 0 else 560, dur,
+                                    vol=0.4 + i * 0.03)))
+        t += dur * 0.92
+    save("fx_ult_strain", normalize(seq(strain_ev)))
+
+    # 挤压蓄力：短促低"咯"
+    squeeze = mix(
+        square(110, 0.08, vol=0.5, decay=0.7),
+        noise(0.05, vol=0.2, decay=0.6),
+    )
+    save("fx_ult_squeeze", normalize(squeeze))
+
+    # 撕开：两段噪声撕裂 + 方波骤降（纸张崩裂）
+    tear = mix(
+        seq([(0.0, noise(0.12, vol=0.6, decay=0.55)),
+             (0.13, noise(0.09, vol=0.45, decay=0.5))]),
+        glide(900, 120, 0.22, vol=0.35, duty=0.3),
+    )
+    save("fx_ult_tear", normalize(tear))
+
+    # 大肥鱼登场：滑稽 pop 双音 + 上滑哨音（闪亮登场）
+    fish = mix(
+        seq([(0.0, tri(660, 0.07, vol=0.5)),
+             (0.09, tri(990, 0.09, vol=0.5))]),
+        [0.05] + glide(500, 1400, 0.22, vol=0.25, duty=0.5) + [0.0] * 20,
+    )
+    save("fx_ult_fish", normalize(fish))
+
+    # 充满提示：清脆双叮（E6→A6 三角）
+    ready = seq([(0.0, tri(note("E6"), 0.09, vol=0.45)),
+                 (0.1, tri(note("A6"), 0.14, vol=0.45))])
+    save("fx_ult_ready", normalize(ready))
+
+    # 爆发：低频重爆 + 高频闪光泛音
+    burst = mix(
+        noise(0.28, vol=0.6, decay=0.55),
+        glide(160, 40, 0.3, vol=0.5, duty=0.5),
+        seq([(0.02, tri(note("E7"), 0.12, vol=0.3)),
+             (0.1, tri(note("B7"), 0.1, vol=0.24))]),
+    )
+    save("fx_ult_burst", normalize(burst))
+
+
 if __name__ == "__main__":
     random.seed(4242)
     build_sfx()
     build_battle_sfx()
+    build_ult_sfx()
     build_music()
     print("\n全部输出到 assets/audio/{sfx,music}/")

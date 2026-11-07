@@ -23,6 +23,8 @@ const RARITY_COLORS := {
 @export var family: String = ""
 @export var description: String = ""
 @export var effect_id: String = ""
+## 分类（2026-11-04 主人钦定）：skill=AI 自身能力 / mcp=外挂工具服务
+@export var category: String = "skill"
 @export var power: int = 0
 @export var rarity: Rarity = Rarity.COMMON
 @export var min_chapter: int = 1

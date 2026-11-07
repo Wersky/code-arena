@@ -7,6 +7,7 @@ signal battle_entered
 signal event_entered
 signal bonus_entered
 signal elite_entered
+signal shop_entered
 
 var run: RunState = null
 var special := ""   ## "" 纯战斗 ｜ "event" 事件门 ｜ "bonus" 奖励门
@@ -87,6 +88,15 @@ func _ready() -> void:
 		doors.add_child(elite_wrap)
 		var elite_cap := elite_wrap.get_meta("cap") as Label
 		elite_cap.text = "精英怪 · 必掉宝箱"
+
+	# ── 商店之门（10% 掷中才出现）：金币买好感礼物 ──
+	if special == "shop":
+		var shop_wrap := _make_door("res://assets/art/door-shop.png",
+				Color(0.95, 0.75, 0.4), not all_done,
+				func() -> void: shop_entered.emit())
+		doors.add_child(shop_wrap)
+		var shop_cap := shop_wrap.get_meta("cap") as Label
+		shop_cap.text = "Deep Sick 的商店 · 金币买好感礼物"
 
 	# ── 奖励之门（10% 掷中才出现）：宝箱直接开道具 ──
 	if special == "bonus":

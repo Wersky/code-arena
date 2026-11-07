@@ -1,13 +1,15 @@
 # AGENTS.md · 代码擂台 Code Arena
 
 > CodeArts Agent（以及任何接手代理）的**常驻规则**。完整现状读 `docs/CodeArts-接手文档.md`。
-> 校准：2026-11-02 ｜ 引擎：Godot 4.7.2 ｜ 基线：smoke **224 项 0 失败**
+> 校准：2026-11-03 ｜ 引擎：Godot 4.7.2 ｜ 基线：smoke **380 项 0 失败**
 
 ## 项目一句话
 
 Godot 4.7.2 的 2D 肉鸽卡牌。玩家选一位 AI 娘，每回合排 4 张卡的**执行序列**，点发送后按顺序跑完，再自动进敌方回合；靠连段、首尾槽位、白米饭成长打赢 10 关。
 
 **它不是德州扑克。** 扑克牌型 / 筹码 / 倍率 / 花色那一套已经整体退役。旧文档里出现这些词，一律当历史存档，不要照着实现。
+
+**LLM 接入（2026-11-03 落地）**：玩家可在主菜单「AI 接入」或 **F2** 打开设置（Base URL / Key / 协议 / 模型 / 温度 / 总开关），AI 对手只打普通战斗（精英/Boss 锁规则版），AI 事件引擎走「本地预筛候选 → LLM 池内 pick → 本地掷数值」，AI 娘小鲸走 4 钩子气泡。全链路可关闭：关掉总开关即完全回原规则。接口见 `docs/llm-integration.md`。
 
 ## 开工先读
 
@@ -22,11 +24,12 @@ Godot 4.7.2 的 2D 肉鸽卡牌。玩家选一位 AI 娘，每回合排 4 张卡
 1. **绝不启动游戏窗口。** 主人在玩时，任何不带 `--headless` 的 `godot --path .` 都不许跑。验证一律无头。
 2. **打包前先查进程**：`tasklist //FI "IMAGENAME eq code-arena.exe"`。有进程就跳过导出并告诉主人，不要杀进程。
 3. 改过 `class_name` 或新增脚本 → 先跑 `--import`，否则 headless 测试会“假绿”。
-4. 旧机制存档代码与测试（`code_cards.gd`、`meme_cards.gd`、`verify_c4.gd`、`_meme_selftest.gd`）**不要删**，它们必须一直绿。
+4. 旧机制存档代码（`scripts/data/card_data.gd`、`meme_cards.gd`、`scripts/core/scoring.gd`、`ai_taste.gd`）**不要删**；历史上曾有的 `tests/_meme_selftest.gd`（旧记 219 项）与 `tests/verify_c4.gd`（旧记 4 项）**已不在仓库**，不要再引用这些数字或命令，旧机制由 smoke 的存量断言守着。
 5. 不把任何 API key / token 写进仓库。生图 key 在 `D:\zcode-work\pictures\gen.py`；Tavily key 在 CodeArts 用户级 `mcp.json`。
 6. 只改任务相关文件。提交信息用 `<feat|fix|docs|art|balance|test>: <一句话>`。
 7. 分支 `feat/ai-ui-kit`，远程 `origin` 同名分支。未经主人指示不要新建、合并或强推分支。
 8. 结果照实说：没跑就写“未执行”，不要编造哈希、偏移、构建或测试结果。
+9. **交付必须重打包**：任何影响游戏运行的改动验收后，必须重新导出 `dist/code-arena/code-arena.exe`（主人桌面 `Desktop\bat\启动代码擂台.bat` 指向它）。只改源码不重打包 = 主人看到的还是旧版本（2026-11-03 实际踩过）。导出前先查 code-arena 进程；总结里注明 exe 时间。交付 = 源码 + 回归 + exe 三件套。
 
 ## 环境
 
@@ -51,7 +54,7 @@ GODOT="D:/zcode-work/godot/engine/Godot_v4.7.2-stable_win64_console.exe"
 cd /d/zcode-work/godot/projects/prompt-arena
 
 "$GODOT" --headless --path . --import
-"$GODOT" --headless --path . --script res://tests/smoke_test.gd   # 224 项 0 失败
+"$GODOT" --headless --path . --script res://tests/smoke_test.gd   # 380 项 0 失败
 "$GODOT" --headless --path . --script res://tools/sts_sim.gd      # 改数值后必跑
 tools/export_win.bat                                              # 导出（先查进程）
 ```
@@ -60,14 +63,17 @@ tools/export_win.bat                                              # 导出（先
 
 - `scripts/core/sts_combat.gd` —— 纯逻辑状态机（无 UI、无 SceneTree）：队列、连段、槽位、米饭三段、复读/并行、观察者、敌我结算。
 - `scripts/core/run_state.gd` —— 跨关状态：卡组、HP、道具、门概率 `pick_special`、事件冷却、精英宝箱。
-- `scripts/ui/arena.gd` —— 战斗界面与演出（约 1600 行，改前先定位相关函数）。
-- `scripts/main.gd` —— 屏幕路由 + F1 体验沙盒。
+- `scripts/main.gd` —— 屏幕路由 + F1 体验沙盒 + F2 AI 接入设置面板 + AI 事件流（`LLMEventEngine`）。
+- `scripts/ui/arena.gd` —— 战斗界面与演出（约 1900 行，改前先定位相关函数）；AI 对手回合与 AI 娘钩子都在此接线。
 - `scripts/ui/map_screen.gd` / `event_screen.gd` / `reward.gd` / `bonus_screen.gd` / `burnout_screen.gd` —— 门、事件、奖励、宝箱、燃尽。
 - `scripts/data/sts_card_pool.gd`（7 卡）、`sts_item_pool.gd`（4 道具）、`level_pool.gd`（10 关）。
+- `scripts/llm/llm_config.gd` / `llm_client.gd` / `llm_protocol.gd` / `llm_parse.gd` —— LLM 接入四模块（配置/网络/协议/解析，`class_name` 分别为 `LLMConfig`/`LLMClient`/`LLMProtocol`/`LLMParse`）。
+- `scripts/data/llm_opponent_pool.gd` / `llm_event_slots.gd` / `llm_prompts.gd`、`scripts/core/llm_event_engine.gd`、`scripts/ui/ai_banter.gd` —— 五动作池、事件槽位、提示词、事件引擎、AI 娘气泡。
 
 ## 验收
 
-- smoke **224 项 0 失败**；数字少了就是假绿，先 `--import`。
-- 改数值 → `sts_sim.gd` 重跑：排序收益 ≥15%、总胜率 40~65%、L10 ≥25%。
+- smoke **380 项 0 失败**；数字少了就是假绿，先 `--import`。
+- 改数值 → `sts_sim.gd` 重跑：排序收益 ≥15%、总胜率 40~65%、L10 ≥25%；AGGRO 矩阵见 `docs/balance-aggro.md`（3/4 PASS，MARK 差 −3.3pp 未达标）。
+- LLM 相关改动 → 至少覆盖 MockBackend 正常/垃圾/挂起三剧本与 401 短路；不接真网络跑测试。
 - 改 UI → 无头截图或请主人目检；不要自己弹窗。
 - 每个新功能至少补一条 smoke 断言；修 bug 先补回归再修。

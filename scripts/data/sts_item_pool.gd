@@ -4,6 +4,7 @@ extends RefCounted
 
 const ITEMS := {
 	"prompt_opt": {
+		"category": "mcp",   ## 提示词优化器是接入的外部优化工具
 		"name": "提示词优化器",
 		"desc": "所有攻击牌伤害 +2。措辞更精准，打得更痛。",
 		"effect_id": "prompt_opt",
@@ -12,6 +13,7 @@ const ITEMS := {
 		"rarity": 1,
 	},
 	"subagent": {
+		"category": "skill",   ## 多开一个子代理＝自身能力
 		"name": "子代理零件",
 		"desc": "弃牌模式次数 +1（每回合 4 次）。小代理帮你整理队列。",
 		"effect_id": "subagent",
@@ -20,6 +22,7 @@ const ITEMS := {
 		"rarity": 1,
 	},
 	"muyu": {
+		"category": "mcp",   ## 电子木鱼是外挂挂件
 		"name": "电子木鱼",
 		"desc": "战斗开始自动敲一下：赛博功德，恢复 5K Token。",
 		"effect_id": "muyu",
@@ -28,6 +31,7 @@ const ITEMS := {
 		"rarity": 1,
 	},
 	"compress": {
+		"category": "skill",   ## 上下文压缩是上下文管理技能
 		"name": "上下文压缩",
 		"desc": "手牌上限 +1，可用 3 场战斗，之后损坏（下一局自动修好）。",
 		"effect_id": "compress",
@@ -55,6 +59,7 @@ static func make(item_id: String) -> AiItemData:
 	it.display_name = String(d["name"])
 	it.description = String(d["desc"])
 	it.effect_id = String(d["effect_id"])
+	it.category = String(d.get("category", "skill"))
 	it.power = int(d["power"])
 	it.rarity = int(d["rarity"])
 	it.art_path = String(d["art"])

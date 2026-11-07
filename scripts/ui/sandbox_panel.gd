@@ -68,6 +68,7 @@ func build(actions: Dictionary) -> void:
 			["上下文压缩", "item_compress"],
 		]],
 		["演出", [
+			["终结技 · 深度思考", "ult"],
 			["斩击特效", "fx_slash"],
 			["盾框特效", "fx_shield"],
 			["爪击特效", "fx_claw"],

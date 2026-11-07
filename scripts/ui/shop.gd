@@ -8,12 +8,25 @@ const CARD_PRICE := 40
 const ITEM_PRICE := 90
 const REFRESH_PRICE := 12
 
+## 好感度礼物（2026-11-07）：金币结算，买来直接喂 Deep Sick
+const AFFECTION_GOODS := [
+	{"id": "cake", "name": "小蛋糕", "price": 20, "points": 6.0,
+		"desc": "Deep Sick 最爱的奶油甜点，一口一个幸福。"},
+	{"id": "ribbon", "name": "鲸纹蝴蝶结", "price": 45, "points": 15.0,
+		"desc": "系上它，她今天格外开心。"},
+	{"id": "date", "name": "深夜约会券", "desc": "两个人的后台进程，独占一晚。", "points": 40.0, "price": 110},
+]
+
 var run: RunState = null
 var _card_offers: Array[CardData] = []
 var _item_offers: Array[AiItemData] = []
 var _cards_row: HBoxContainer = null
 var _items_row: HBoxContainer = null
 var _money: Label = null
+var _gold: Label = null
+var _affection: Label = null
+var _gifts_row: HBoxContainer = null
+var _gift_offers: Array = []
 var _refresh_btn: Button = null
 var _hint: Label = null
 
@@ -56,6 +69,10 @@ func _ready() -> void:
 	head.add_child(UiKit.title("商店", UiKit.FS_M))
 	_money = UiKit.label("", UiKit.FS_S, UiKit.DANGER)
 	head.add_child(_money)
+	_gold = UiKit.label("", UiKit.FS_S, Color(1.0, 0.82, 0.4))
+	head.add_child(_gold)
+	_affection = UiKit.label("", UiKit.FS_S, Color(0.95, 0.6, 0.75))
+	head.add_child(_affection)
 
 	root.add_child(UiKit.dim("卡牌 —— 扩充你的牌库，让更多牌型成为可能", UiKit.FS_XS))
 	_cards_row = HBoxContainer.new()
@@ -68,6 +85,12 @@ func _ready() -> void:
 	_items_row.add_theme_constant_override("separation", 16)
 	_items_row.alignment = BoxContainer.ALIGNMENT_CENTER
 	root.add_child(_items_row)
+
+	root.add_child(UiKit.dim("好感度礼物 —— 用金币买，喂给 Deep Sick（影响许愿卡品质）", UiKit.FS_XS))
+	_gifts_row = HBoxContainer.new()
+	_gifts_row.add_theme_constant_override("separation", 16)
+	_gifts_row.alignment = BoxContainer.ALIGNMENT_CENTER
+	root.add_child(_gifts_row)
 
 	var foot := HBoxContainer.new()
 	foot.alignment = BoxContainer.ALIGNMENT_CENTER
@@ -95,10 +118,17 @@ func _roll_offers() -> void:
 	_item_offers = []
 	for it in AiItemPool.roll_rewards(run.rng, run.chapter, run.items, 2):
 		_item_offers.append(it)
+	_gift_offers = []
+	for g in AFFECTION_GOODS:
+		_gift_offers.append(g.duplicate())
 
 
 func _refresh() -> void:
 	_money.text = "算力 %d" % run.compute
+	if _gold != null:
+		_gold.text = "💰 金币 %d" % run.gold
+	if _affection != null:
+		_affection.text = "好感 Lv.%d" % Affection.level()
 
 	# 买得起才让点。买不起时按钮置灰并说明原因，避免"点了没反应"
 	_refresh_btn.disabled = run.compute < REFRESH_PRICE
@@ -123,6 +153,11 @@ func _refresh() -> void:
 		c.queue_free()
 	for it in _item_offers:
 		_items_row.add_child(_make_item_offer(it))
+
+	for c in _gifts_row.get_children():
+		c.queue_free()
+	for g in _gift_offers:
+		_gifts_row.add_child(_make_gift_offer(g))
 
 
 func _make_card_offer(card: CardData) -> Control:
@@ -186,6 +221,44 @@ func _make_item_offer(it: AiItemData) -> Control:
 	btn.pressed.connect(_on_buy_item.bind(it))
 	v.add_child(btn)
 	return panel
+
+
+func _make_gift_offer(g: Dictionary) -> Control:
+	var panel := PanelContainer.new()
+	panel.custom_minimum_size = Vector2(230, 200)
+	panel.add_theme_stylebox_override("panel", UiKit.flat(
+			UiKit.PANEL_2, Color(0.95, 0.6, 0.75), 2, 12, 3))
+	var v := VBoxContainer.new()
+	v.add_theme_constant_override("separation", 6)
+	panel.add_child(v)
+	var heart := UiKit.label("♥ %d" % int(g["points"]), UiKit.FS_S, Color(0.95, 0.6, 0.75))
+	heart.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	v.add_child(heart)
+	v.add_child(UiKit.label(String(g["name"]), UiKit.FS_S, Color(0.95, 0.75, 0.85)))
+	var desc := UiKit.label(String(g["desc"]), UiKit.FS_XS, UiKit.TEXT)
+	desc.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	desc.custom_minimum_size = Vector2(205, 0)
+	v.add_child(desc)
+	var spacer := Control.new()
+	spacer.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	v.add_child(spacer)
+	var btn := UiKit.button("购买 %d 金币" % int(g["price"]), 16)
+	btn.disabled = run.gold < int(g["price"])
+	btn.pressed.connect(_on_buy_gift.bind(g))
+	v.add_child(btn)
+	return panel
+
+
+func _on_buy_gift(g: Dictionary) -> void:
+	var price := int(g["price"])
+	if run.gold < price:
+		return
+	run.gold -= price
+	var lv := Affection.add(float(g["points"]))
+	_gift_offers.erase(g)
+	_refresh()
+	_hint.text = "Deep Sick 开心收下了【%s】｜ 好感 Lv.%d" % [String(g["name"]), lv]
+	_hint.add_theme_color_override("font_color", Color(0.95, 0.75, 0.85))
 
 
 func _on_buy_card(card: CardData) -> void:

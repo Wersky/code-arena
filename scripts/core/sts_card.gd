@@ -14,6 +14,14 @@ enum Kind { ATTACK, SKILL }
 @export var damage := 0
 @export var block := 0
 @export var art_path := ""
+## 出牌额外抽牌数（许愿卡超限档用；普通卡恒 0）
+@export var draw := 0
+## 效果程序（EffectDSL 编译后的 AST）。空数组 = 旧行为，零开销。
+@export var effects: Array = []
+## 程序规格版本：0 = 无程序。老卡按旧版本解释器跑，不静默迁移。
+@export var dsl_version := 0
+## 定价档位（1–3；0 = 未定价）。许愿卡出卡时先给保守上界，离线批次跑完查表校正。
+@export var price_tier := 0
 
 
 static func make(card_id: String, card_kind: int, card_cost: int,

@@ -9,6 +9,12 @@ extends Control
 ## 布局基准：画布 1600x900。像素风走 PixelTheme 的字体。
 
 signal launched(ai_id: String)
+## 对话框展开完成（main.gd 用它决定 AI 接入 / Demo 入口何时出现）
+signal dialog_expanded
+## 左下角图标入口
+signal ai_settings_requested
+signal demo_requested
+signal patch_demo_requested
 
 ## 下拉项顺序按主人给的：DeepSeek、Grok、GPT、千问
 const MODELS := [
@@ -28,6 +34,10 @@ var _send_btn: Button
 var _portrait: TextureRect
 var _hint: Label
 var _skill_list: Label
+var _name_plate: Label
+var _skill_title: Button
+var _mcp_title: Button
+var _mcp_box: VBoxContainer
 var _model_idx := 0
 var _expanded := false
 
@@ -83,6 +93,8 @@ func expand() -> void:
 	tw.tween_property(_sidebar, "modulate:a", 1.0, 0.5)
 	tw.tween_property(_sidebar, "position:x", _sidebar.position.x + 250.0, 0.5) \
 		.set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_OUT)
+	_build_icon_entries()
+	dialog_expanded.emit()
 
 
 func _frame(c: Color) -> StyleBoxFlat:
@@ -110,9 +122,9 @@ func _build_dialog() -> void:
 	_dialog.name = "AgentDialog"
 	_dialog.add_theme_stylebox_override("panel",
 			_panel(Color(0.055, 0.075, 0.12), Color(0.22, 0.32, 0.5)))
-	_dialog.custom_minimum_size = Vector2(1080, 230)
-	_dialog.position = Vector2(306, 640)
-	_dialog.size = Vector2(1080, 230)
+	_dialog.custom_minimum_size = Vector2(880, 230)
+	_dialog.position = Vector2(280, 670)
+	_dialog.size = Vector2(880, 230)
 	add_child(_dialog)
 
 	var v := VBoxContainer.new()
@@ -176,41 +188,100 @@ func _build_sidebar() -> void:
 	_sidebar.name = "SidePanel"
 	_sidebar.add_theme_stylebox_override("panel",
 			_panel(Color(0.045, 0.06, 0.10), Color(0.20, 0.28, 0.45)))
-	_sidebar.custom_minimum_size = Vector2(230, 0)
-	_sidebar.position = Vector2(56, 0)
+	_sidebar.custom_minimum_size = Vector2(232, 0)
+	_sidebar.position = Vector2(24, 0)
 	_sidebar.size = Vector2(232, 900)
 	add_child(_sidebar)
 
 	var v := VBoxContainer.new()
 	v.add_theme_constant_override("separation", 6)
 	_sidebar.add_child(v)
-	var t1 := Label.new()
-	t1.text = "▸ 技能"
-	t1.add_theme_font_override("font", PixelTheme.font())
-	t1.add_theme_font_size_override("font_size", 20)
-	t1.add_theme_color_override("font_color", Color(0.6, 0.85, 1.0))
-	v.add_child(t1)
+	# 顶部铭牌：与战斗界面侧栏一致（2026-11-03）
+	_name_plate = UiKit.label(String(MODELS[_model_idx][1]), UiKit.FS_S, UiKit.TEXT)
+	v.add_child(_name_plate)
+	v.add_child(UiKit.rule())
+	# ── 技能（下拉）──
+	_skill_title = Button.new()
+	_skill_title.text = "▸ 技能"
+	_skill_title.flat = true
+	_skill_title.alignment = HORIZONTAL_ALIGNMENT_LEFT
+	_skill_title.add_theme_font_override("font", PixelTheme.font())
+	_skill_title.add_theme_font_size_override("font_size", 20)
+	_skill_title.add_theme_color_override("font_color", Color(0.6, 0.85, 1.0))
+	_skill_title.add_theme_color_override("font_hover_color", Color(0.85, 0.95, 1.0))
+	_skill_title.pressed.connect(_toggle_skill)
+	v.add_child(_skill_title)
 	_skill_list = Label.new()
 	_skill_list.add_theme_font_override("font", PixelTheme.font())
 	_skill_list.add_theme_font_size_override("font_size", 16)
 	_skill_list.add_theme_color_override("font_color", Color(0.72, 0.8, 0.92))
+	_skill_list.visible = false
 	v.add_child(_skill_list)
-	var sp := Control.new()
-	sp.custom_minimum_size = Vector2(0, 14)
-	v.add_child(sp)
-	var t2 := Label.new()
-	t2.text = "▸ MCP"
-	t2.add_theme_font_override("font", PixelTheme.font())
-	t2.add_theme_font_size_override("font_size", 20)
-	t2.add_theme_color_override("font_color", Color(0.6, 0.85, 1.0))
-	v.add_child(t2)
+	v.add_child(UiKit.rule())
+
+	# ── MCP（下拉）──
+	_mcp_title = Button.new()
+	_mcp_title.text = "▸ MCP"
+	_mcp_title.flat = true
+	_mcp_title.alignment = HORIZONTAL_ALIGNMENT_LEFT
+	_mcp_title.add_theme_font_override("font", PixelTheme.font())
+	_mcp_title.add_theme_font_size_override("font_size", 20)
+	_mcp_title.add_theme_color_override("font_color", Color(0.6, 0.85, 1.0))
+	_mcp_title.add_theme_color_override("font_hover_color", Color(0.85, 0.95, 1.0))
+	_mcp_title.pressed.connect(_toggle_mcp)
+	v.add_child(_mcp_title)
+	_mcp_box = VBoxContainer.new()
+	_mcp_box.add_theme_constant_override("separation", 4)
+	_mcp_box.visible = false
+	v.add_child(_mcp_box)
 	for item in MCP_ITEMS:
 		var l := Label.new()
 		l.text = "  · " + item
 		l.add_theme_font_override("font", PixelTheme.font())
 		l.add_theme_font_size_override("font_size", 16)
 		l.add_theme_color_override("font_color", Color(0.72, 0.8, 0.92))
-		v.add_child(l)
+		_mcp_box.add_child(l)
+
+
+func _toggle_skill() -> void:
+	if _skill_list == null:
+		return
+	_skill_list.visible = not _skill_list.visible
+	_skill_title.text = ("▾ 技能" if _skill_list.visible else "▸ 技能")
+
+
+func _toggle_mcp() -> void:
+	if _mcp_box == null:
+		return
+	_mcp_box.visible = not _mcp_box.visible
+	_mcp_title.text = ("▾ MCP" if _mcp_box.visible else "▸ MCP")
+
+
+## 左下角图标入口：绑定在 GUI 层（侧栏之后创建、置顶），跟随对话框展开出现。
+## 位置对齐战斗界面牌堆图标右侧（牌堆 x=36..92, y=750）。
+func _build_icon_entries() -> void:
+	_make_icon_entry("AiSettingsEntry", "res://assets/art/ui-ai-access.png",
+			"模型接入", Vector2(100, 750), ai_settings_requested)
+	_make_icon_entry("LlmDemoEntry", "res://assets/art/ui-demo.png",
+			"demo", Vector2(164, 750), demo_requested)
+	_make_icon_entry("PatchDemoEntry", "res://assets/art/ui-patch-demo.png",
+			"更新演示", Vector2(292, 750), patch_demo_requested)
+
+
+func _make_icon_entry(node_name: String, tex_path: String, tip: String,
+		pos: Vector2, sig: Signal) -> void:
+	var btn := TextureButton.new()
+	btn.name = node_name
+	btn.ignore_texture_size = true
+	btn.stretch_mode = TextureButton.STRETCH_KEEP_ASPECT_CENTERED
+	if ResourceLoader.exists(tex_path):
+		btn.texture_normal = load(tex_path)
+	btn.position = pos
+	btn.size = Vector2(56, 56)
+	btn.tooltip_text = tip
+	btn.pressed.connect(func() -> void: sig.emit())
+	add_child(btn)
+	btn.move_to_front()
 
 
 func _build_portrait() -> void:
@@ -218,8 +289,8 @@ func _build_portrait() -> void:
 	_portrait.name = "ModelPortrait"
 	_portrait.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 	_portrait.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
-	_portrait.position = Vector2(1210, 210)
-	_portrait.size = Vector2(240, 420)
+	_portrait.position = Vector2(1170, 576)
+	_portrait.size = Vector2(406, 304)
 	add_child(_portrait)
 
 
@@ -227,6 +298,8 @@ func _build_portrait() -> void:
 func _apply_model() -> void:
 	var id := String(MODELS[_model_idx][0])
 	var need := int(MODELS[_model_idx][2])
+	if _name_plate != null:
+		_name_plate.text = String(MODELS[_model_idx][1])
 	var ai := AiPool.get_ai(id)
 	var tex := load("res://assets/art/select/%s.png" % id) as Texture2D
 	if tex == null:

@@ -1,0 +1,281 @@
+{
+  "version": 1,
+  "limits": {
+    "max_clauses": 4,
+    "max_ops": 1,
+    "op_budget": 64,
+    "trigger_depth": 1
+  },
+  "triggers": {
+    "on_play": "打出时",
+    "on_draw": "抽到时",
+    "on_turn_start": "回合开始时",
+    "on_turn_end": "回合结束时",
+    "on_kill": "击杀时",
+    "on_damage_dealt": "造成伤害后",
+    "on_damage_taken": "受到伤害后",
+    "on_seq_end": "序列结束时"
+  },
+  "counters": {
+    "same_kind_streak": "本序列同类连击阶数",
+    "cards_played_this_turn": "本回合已出牌数",
+    "hand_size": "当前手牌数",
+    "enemy_status_count": "敌人身上状态数",
+    "turn_number": "当前回合数",
+    "hp_missing_pct": "已损失生命百分比",
+    "block": "当前格挡"
+  },
+  "ops": {
+    "damage": {
+      "label": "伤害",
+      "args": {
+        "amount": {
+          "type": "int",
+          "min": 0,
+          "max": 20,
+          "default": 4
+        }
+      },
+      "writes": [
+        "enemy_hp"
+      ]
+    },
+    "damage_scaled": {
+      "label": "按计数成长伤害",
+      "args": {
+        "amount": {
+          "type": "int",
+          "min": 0,
+          "max": 20,
+          "default": 0
+        },
+        "per": {
+          "type": "enum",
+          "values": [
+            "same_kind_streak",
+            "cards_played_this_turn",
+            "hand_size",
+            "enemy_status_count",
+            "turn_number",
+            "hp_missing_pct",
+            "block"
+          ],
+          "default": "same_kind_streak"
+        },
+        "step": {
+          "type": "int",
+          "min": 1,
+          "max": 5,
+          "default": 2
+        }
+      },
+      "writes": [
+        "enemy_hp"
+      ]
+    },
+    "apply_status": {
+      "label": "施加状态",
+      "args": {
+        "status": {
+          "type": "enum",
+          "values": [
+            "weak",
+            "vulnerable",
+            "poison",
+            "strength",
+            "thorns"
+          ],
+          "default": "weak"
+        },
+        "tier": {
+          "type": "int",
+          "min": 1,
+          "max": 3,
+          "default": 1
+        },
+        "target": {
+          "type": "enum",
+          "values": [
+            "enemy",
+            "self"
+          ],
+          "default": "enemy"
+        }
+      },
+      "writes": [
+        "enemy_status",
+        "player_status"
+      ]
+    },
+    "heal": {
+      "label": "回复生命",
+      "args": {
+        "amount": {
+          "type": "int",
+          "min": 1,
+          "max": 10,
+          "default": 3
+        }
+      },
+      "writes": [
+        "player_hp"
+      ]
+    },
+    "draw": {
+      "label": "抽牌",
+      "args": {
+        "amount": {
+          "type": "int",
+          "min": 1,
+          "max": 2,
+          "default": 1
+        }
+      },
+      "writes": [
+        "deck_order"
+      ]
+    },
+    "discard_random": {
+      "label": "随机弃牌",
+      "args": {
+        "amount": {
+          "type": "int",
+          "min": 1,
+          "max": 2,
+          "default": 1
+        }
+      },
+      "writes": [
+        "deck_order"
+      ]
+    },
+    "multiply_next": {
+      "label": "下一张增幅",
+      "args": {
+        "factor": {
+          "type": "int",
+          "min": 2,
+          "max": 3,
+          "default": 2
+        }
+      },
+      "writes": [
+        "resource"
+      ]
+    },
+    "block": {
+      "label": "获得格挡",
+      "args": {
+        "amount": {
+          "type": "int",
+          "min": 0,
+          "max": 20,
+          "default": 5
+        }
+      },
+      "writes": [
+        "player_block"
+      ]
+    },
+    "duplicate_next": {
+      "label": "下一张执行两次",
+      "args": {},
+      "writes": [
+        "resource"
+      ]
+    },
+    "modify_intent": {
+      "label": "改写敌人意图",
+      "args": {
+        "delta": {
+          "type": "int",
+          "min": -10,
+          "max": 10,
+          "default": -3
+        }
+      },
+      "writes": [
+        "enemy_intent"
+      ]
+    }
+  },
+  "statuses": {
+    "weak": {
+      "label": "降智",
+      "desc": "造成的伤害 −25%",
+      "turns": [
+        1,
+        2,
+        2
+      ],
+      "dmg_out_mult": 0.75,
+      "dim": "global_counter"
+    },
+    "vulnerable": {
+      "label": "上下文污染",
+      "desc": "受到的伤害 +25%",
+      "turns": [
+        1,
+        2,
+        2
+      ],
+      "dmg_in_mult": 1.25,
+      "dim": "global_counter"
+    },
+    "poison": {
+      "label": "内存泄漏",
+      "desc": "每回合结束掉血（无视护盾）",
+      "turns": [
+        3,
+        3,
+        3
+      ],
+      "dot": [
+        2,
+        4,
+        6
+      ],
+      "dim": "persistent"
+    },
+    "strength": {
+      "label": "算力注入",
+      "desc": "攻击牌伤害 +N",
+      "turns": [
+        99,
+        99,
+        99
+      ],
+      "atk_bonus": [
+        1,
+        2,
+        3
+      ],
+      "dim": "persistent"
+    },
+    "thorns": {
+      "label": "防火墙",
+      "desc": "被攻击时反伤 N",
+      "turns": [
+        3,
+        3,
+        3
+      ],
+      "reflect": [
+        2,
+        4,
+        6
+      ],
+      "dim": "global_counter"
+    }
+  },
+  "dimensions": [
+    "enemy_hp",
+    "player_hp",
+    "enemy_block",
+    "player_block",
+    "enemy_status",
+    "player_status",
+    "deck_order",
+    "resource"
+  ]
+}

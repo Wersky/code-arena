@@ -12,6 +12,8 @@ const MAX_HP := 80
 var deck: Array[StsCard] = []
 var items: Array[AiItemData] = []
 var compute: int = 0
+## 金币（2026-11-07 好感度系统）：打完关卡按伤害结算，商店里花
+var gold: int = 0
 var chapter: int = 1
 var level_index: int = 0          # 已通关数量
 var rng := RandomNumberGenerator.new()
@@ -29,6 +31,46 @@ var last_result: Dictionary = {}
 ## 本局的核心 AI 娘。reset_run() 时置空，选定后整局不变。
 var ai: AiData = null
 
+## 许愿卡已用次数（2026-11-04）：额度 = min(2 + 关卡序号/2, 4)
+var wish_used := 0
+## 高费（cost=3）许愿卡的持有上限：试玩档「限获取」的口径
+const MAX_TIER3 := 2
+
+
+## 当前牌组里 cost=3 的许愿卡数量
+func tier3_count() -> int:
+	var n := 0
+	for c in deck:
+		if c.price_tier >= 3:
+			n += 1
+	return n
+
+
+## 这张卡还能不能再拿：cost=3 的卡限量，其余不限
+func can_acquire(card: StsCard) -> bool:
+	if card == null:
+		return false
+	if card.price_tier < 3:
+		return true
+	return tier3_count() < MAX_TIER3
+
+
+## 试玩档校正：只信缓存命中（samples>0），临时价不动；返回校正的卡数
+func reprice_deck() -> int:
+	var changed := 0
+	for c in deck:
+		if c.effects.is_empty():
+			continue
+		var r := EffectPricing.price_cached(c, level_index, EffectPricing.SAMPLES, false)
+		if int(r.get("samples", 0)) <= 0:
+			continue
+		var tier := int(r["cost"])
+		if tier != c.price_tier:
+			c.price_tier = tier
+			c.cost = clampi(tier, 1, 3)
+			changed += 1
+	return changed
+
 ## 事件冷却（2026-11-01 门选制）：每打完一场战斗可进 1 次事件门
 var events_since_battle := 0
 func _init() -> void:
@@ -41,6 +83,7 @@ func reset_run() -> void:
 	deck = StsCardPool.starter_deck()
 	items.clear()
 	compute = 0
+	gold = 0
 	chapter = 1
 	level_index = 0
 	hp = MAX_HP
@@ -50,17 +93,19 @@ func reset_run() -> void:
 	intro_played = false
 
 
-## 门类型掷骰（2026-11-02 抽出，供体验沙盒强制与回归测试共用）：
-## 40% 战斗 / 30% 事件 / 10% 奖励 / 20% 精英。force 非空时**优先于随机**。
+## 门类型掷骰（2026-11-02 抽出，2026-11-07 加商店门）：
+## 35% 战斗 / 25% 事件 / 10% 奖励 / 20% 精英 / 10% 商店。force 非空时**优先于随机**。
 static func pick_special(roll: float, force: String) -> String:
 	if force != "":
 		return force
 	if roll < 0.20:
 		return "elite"
-	if roll < 0.50:
+	if roll < 0.45:
 		return "event"
-	if roll < 0.60:
+	if roll < 0.55:
 		return "bonus"
+	if roll < 0.65:
+		return "shop"
 	return ""
 
 
@@ -81,6 +126,8 @@ func add_card(card_id: String) -> void:
 ## 开一场战斗：卡组洗进抽牌堆、HP 续接上关、敌人数据来自关卡。
 ## 战斗状态机由此返回，arena 拿去驱动 UI。
 func start_battle(level: LevelData, elite: bool = false) -> StsCombat:
+	## 试玩档校正：离线批次跑完后，把缓存里的真价套回许愿卡（2026-11-06）
+	reprice_deck()
 	# 电子木鱼（道具）：**先结算再开战**，否则战斗对象拿到的是旧 HP（2026-11-02 修）
 	for it in items:
 		if not it.broken and it.effect_id == "muyu":
@@ -110,16 +157,46 @@ func start_battle(level: LevelData, elite: bool = false) -> StsCombat:
 	return cb
 
 
+## 金币公式（2026-11-07 主人钦定：对数增长）——
+## 前段伤害每点值钱，后段数值涨得快，金币增速放缓：
+##   gold = GOLD_BASE · ln(1 + dmg / GOLD_DIV)
+## 实测：dmg100→18 / 500→31 / 1000→46 / 2000→55 / 4000→65
+const GOLD_BASE := 14.0
+const GOLD_DIV := 40.0
+static func gold_for_damage(dmg: int) -> int:
+	return int(round(GOLD_BASE * log(1.0 + float(maxi(0, dmg)) / GOLD_DIV)))
+
+
+## 本场结算的增量（arena 结算画面读）
+var last_gold_gain := 0
+var last_affection_gain := 0.0
+
+
+## 喂白米饭 = 投喂 Deep Sick：本场吃下的每碗饭都涨好感（2026-11-07）
+func _settle_affection(cb: StsCombat) -> float:
+	var pts := float(cb.rice_eaten) * Affection.RICE_POINTS
+	if pts > 0.0:
+		Affection.add(pts)
+		last_affection_gain += pts
+	return pts
+
+
 ## 战斗胜利：结算入账 + 小额回血
 func win_battle(cb: StsCombat, level: LevelData) -> int:
 	score += cb.damage_dealt
 	hp = mini(MAX_HP, cb.hp + StsCombat.HEAL_ON_WIN)
+	_settle_affection(cb)
+	last_gold_gain = gold_for_damage(cb.damage_dealt)
+	gold += last_gold_gain
 	return award_compute(level)
 
 
-## 战斗失败：结算入账
+## 战斗失败：结算入账（喂饭的好感照算——饭是真吃了）
 func lose_battle(cb: StsCombat) -> void:
 	score += cb.damage_dealt
+	_settle_affection(cb)
+	last_gold_gain = gold_for_damage(cb.damage_dealt) / 2
+	gold += last_gold_gain
 
 
 func add_item(item: AiItemData) -> void:

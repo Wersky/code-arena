@@ -16,6 +16,8 @@ class_name ArenaScreen
 signal level_cleared(final_score: int)
 signal level_failed(final_score: int)
 signal advance_requested
+## LLM 决策先到 / 3s 超时到（内部信号：_run_enemy_turn 靠它继续推进，二者只赢一次）
+signal ai_decision_ready
 
 const CARD_W := 150.0
 const CARD_H := 226.0
@@ -69,6 +71,10 @@ var _hovered: StsCardView = null
 # 左侧竖栏（玩家状态）
 var _rail: PanelContainer = null
 var _rail_box: VBoxContainer = null
+var _skill_title: Button = null
+var _skill_list_box: VBoxContainer = null
+var _mcp_title: Button = null
+var _mcp_box: VBoxContainer = null
 
 # 右上敌人 HUD
 var _enemy_name_label: Label = null
@@ -76,6 +82,7 @@ var _enemy_hp_label: Label = null
 var _enemy_fill: ColorRect = null
 var _enemy_hp_host: Control = null
 var _enemy_block_label: Label = null
+var _enemy_status_label: Label = null
 var _intent_label: Label = null
 
 # 舞台敌人
@@ -92,10 +99,49 @@ var _dialog: PanelContainer = null   ## 底部对话框底板（手牌 + 操作�
 var _companion: AiCompanion = null
 var _discard_mode := false
 var _discard_btn: Button = null
+
+# 终结技「深度思考」（DeepSeek 专属，2026-11-03）
+var _ult_btn: TextureButton = null
+var _ult_bar: ColorRect = null
+var _ult_bar_bg: ColorRect = null
+var _ult_label: Label = null
+var _ult_playing := false
+
+# 许愿卡（AI 作画，2026-11-04 圆桌定稿）
+var _wish_btn: Button = null
+var _wish_panel: PanelContainer = null
+var _wish_input: LineEdit = null
+var _wish_feedback: Label = null
+var _wish_pending_card: StsCard = null
+var _wish_pending_name := ""
+var _wish_canvas: WishCanvas = null
+var _wish_text_block: VBoxContainer = null
+var _wish_mode_vision := false
+## 截断重试标记：每张卡只重试一次
+var _wish_retried := false
+var _wish_confirm_btn: Button = null
+var _wish_hint_label: Label = null
+var _wish_canvas_clear_btn: Button = null
+var _wish_undo_btn: Button = null
+var _wish_eraser_btn: TextureButton = null
+var _wish_picker_btn: TextureButton = null
+var _wish_size_slider: HSlider = null
+var _wish_size_label: Label = null
+var _wish_hue_slider: HSlider = null
+var _wish_sv_rect: TextureRect = null
+var _wish_color_swatch: Panel = null
+## 调色盘当前 HSV（0..1）
+var _wish_hue := 0.6
+var _wish_sat := 0.2
+var _wish_val := 0.15
+var _wish_size_preview_gen := 0
+
 var _elite := false   ## 精英战斗（门选制：精英门必为精英）
 var _rice_label: Label = null
 ## Token 额度标签（主人钦定：额度 = 生命值，AI 娘头顶显示）
 var _token_label: Label = null
+## 效果层：玩家状态条（降智/中毒等）
+var _player_status_label: Label = null
 ## 牌堆/弃牌堆图标与查看面板（2026-11-01 主人钦定：右栏左下两图标，点开看列表）
 var _pile_draw_icon: TextureRect = null
 var _pile_discard_icon: TextureRect = null
@@ -112,12 +158,30 @@ var _discards_left := DISCARD_LIMIT_PER_TURN
 func _discard_limit() -> int:
 	return DISCARD_LIMIT_PER_TURN + (1 if run != null and run.has_effect("subagent") else 0)
 
+
+## 本回合还能不能弃（剩 > 0）。2026-11-05 修：旧判定 `< 上限` 导致只能弃 1 张。
+func _can_discard() -> bool:
+	return _discards_left > 0
+
 # 特效层
 var _fx_enabled := true
 var _fx_root: Control = null
 var _fx_flash: ColorRect = null
 ## 观察者反应（E）：最近一条（落到状态栏显示，debug_console_log 读取）
 var _observer_note := ""
+
+# ── LLM 接入（battle-integration · 2026-11-03）──────────
+## AI 对手：AI 开启 && 普通战斗（非精英/Boss）才走 LLM 决策；其余一律原规则零差异。
+## AI 娘：AIBanter 四钩子，provider 异步不阻塞、失败落本地兜底。
+var ai_timeout := 3.0            ## 决策预算：请求发出当帧起算（ignore_time_scale）
+var _llm_cfg: LLMConfig = null
+var _llm: LLMClient = null
+var _banter: AIBanter = null
+var _ai_done := false            ## 本次决策是否已定（回调与超时只赢一次）
+var _ai_action := ""
+var _ai_reason := ""
+var _ai_source := ""
+var _ai_think: Label = null      ## 敌人头顶「思考中…」气泡
 
 # 覆盖层（结算弹窗）
 var _overlay: PanelContainer = null
@@ -135,6 +199,10 @@ func setup(run_state: RunState, lv: LevelData, elite: bool = false) -> void:
 	_elite = elite
 
 
+## 视觉验收：--wish-demo 时自动打开许愿面板
+var auto_open_wish := false
+
+
 func _ready() -> void:
 	# 全程同一首（主人 2026-10-30：进战斗也用 bgm_gemini2，不切曲）
 	SfxNode.music("bgm_gemini2")
@@ -143,6 +211,8 @@ func _ready() -> void:
 	await get_tree().process_frame
 	_layout()
 	_start_battle()
+	if auto_open_wish:
+		_open_wish_panel()
 
 
 # ─────────────────────────────────────────────────────────
@@ -192,22 +262,88 @@ func _build_rail() -> void:
 	_rail_box = VBoxContainer.new()
 	_rail_box.name = "RailBox"
 	_rail_box.add_theme_constant_override("separation", 8)
-	_rail_box.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_rail_box.mouse_filter = Control.MOUSE_FILTER_PASS
 	_rail.add_child(_rail_box)
 
 	var ai_name := run.ai.display_name if run.ai != null else "AI"
 	_rail_box.add_child(UiKit.title_bar(ai_name, 0.0, HORIZONTAL_ALIGNMENT_LEFT, UiKit.TEXT))
 	_rail_box.add_child(UiKit.rule())
 
-	_rail_box.add_child(UiKit.label("▸ 技能", UiKit.FS_S, Color(0.6, 0.85, 1.0)))
+	# 技能 / MCP 下拉（2026-11-03 主人要求，与启动界面一致）
+	_skill_title = _dropdown_title("▸ 技能")
+	_skill_title.pressed.connect(_toggle_skill_list)
+	_rail_box.add_child(_skill_title)
+	_skill_list_box = VBoxContainer.new()
+	_skill_list_box.add_theme_constant_override("separation", 2)
+	_skill_list_box.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_skill_list_box.visible = false
 	if run.ai != null:
 		for sk in run.ai.taste_rules:
-			_rail_box.add_child(UiKit.dim("  · " + sk, UiKit.FS_XS))
+			_skill_list_box.add_child(UiKit.dim("  · " + sk, UiKit.FS_XS))
+	_rail_box.add_child(_skill_list_box)
 
 	_rail_box.add_child(UiKit.rule())
-	_rail_box.add_child(UiKit.label("▸ MCP", UiKit.FS_S, Color(0.6, 0.85, 1.0)))
+	_mcp_title = _dropdown_title("▸ MCP")
+	_mcp_title.pressed.connect(_toggle_mcp_list)
+	_rail_box.add_child(_mcp_title)
+	_mcp_box = VBoxContainer.new()
+	_mcp_box.add_theme_constant_override("separation", 2)
+	_mcp_box.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_mcp_box.visible = false
 	for item in LaunchScreen.MCP_ITEMS:
-		_rail_box.add_child(UiKit.dim("  · " + item, UiKit.FS_XS))
+		_mcp_box.add_child(UiKit.dim("  · " + item, UiKit.FS_XS))
+	_rail_box.add_child(_mcp_box)
+	_refresh_item_lists()
+
+
+## 道具按 Skill / MCP 两类挂进左侧下拉（2026-11-04 主人钦定）：
+## skill = AI 自身能力（子代理零件/上下文压缩）；mcp = 外挂工具（提示词优化器/电子木鱼）。
+func _refresh_item_lists() -> void:
+	if _skill_list_box == null or _mcp_box == null or run == null:
+		return
+	for box in [_skill_list_box, _mcp_box]:
+		for c in box.get_children():
+			if bool(c.get_meta("item_row", false)):
+				box.remove_child(c)
+				c.queue_free()
+	for it in run.items:
+		var target := _skill_list_box if it.category == "skill" else _mcp_box
+		var col := Color(0.42, 0.45, 0.52) if it.broken else Color(0.62, 0.88, 1.0)
+		var state := "已损坏"
+		if not it.broken:
+			state = ("耐久 %d" % it.charges) if it.charges > 0 else "常驻"
+		var l := UiKit.dim("  ▸ %s（%s）" % [it.display_name, state], UiKit.FS_XS, col)
+		l.set_meta("item_row", true)
+		l.tooltip_text = it.description
+		target.add_child(l)
+
+
+## 侧栏下拉标题按钮（扁平、左对齐、可点）
+func _dropdown_title(text: String) -> Button:
+	var b := Button.new()
+	b.text = text
+	b.flat = true
+	b.alignment = HORIZONTAL_ALIGNMENT_LEFT
+	b.add_theme_font_override("font", PixelTheme.font())
+	b.add_theme_font_size_override("font_size", UiKit.FS_S)
+	b.add_theme_color_override("font_color", Color(0.6, 0.85, 1.0))
+	b.add_theme_color_override("font_hover_color", Color(0.85, 0.95, 1.0))
+	b.mouse_filter = Control.MOUSE_FILTER_STOP
+	return b
+
+
+func _toggle_skill_list() -> void:
+	if _skill_list_box == null:
+		return
+	_skill_list_box.visible = not _skill_list_box.visible
+	_skill_title.text = ("▾ 技能" if _skill_list_box.visible else "▸ 技能")
+
+
+func _toggle_mcp_list() -> void:
+	if _mcp_box == null:
+		return
+	_mcp_box.visible = not _mcp_box.visible
+	_mcp_title.text = ("▾ MCP" if _mcp_box.visible else "▸ MCP")
 
 
 ## 右上敌人 HUD
@@ -248,6 +384,13 @@ func _build_right_hud() -> void:
 	_enemy_block_label = UiKit.label("", UiKit.FS_XS, Color(0.31, 0.64, 0.88))
 	_enemy_block_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
 	right.add_child(_enemy_block_label)
+
+	_enemy_status_label = UiKit.label("", UiKit.FS_XS, Color(0.95, 0.62, 0.35))
+	_enemy_status_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+	_enemy_status_label.clip_text = true
+	_enemy_status_label.add_theme_stylebox_override("normal", _status_badge_style(
+			Color(0.36, 0.20, 0.08, 0.88)))
+	right.add_child(_enemy_status_label)
 
 	_intent_label = UiKit.label("", UiKit.FS_S, UiKit.GOLD)
 	_intent_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
@@ -360,10 +503,838 @@ func _build_companion() -> void:
 	_token_label.name = "TokenLabel"
 	_token_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	add_child(_token_label)
+	## 效果层：玩家状态条（降智/中毒等），空时隐藏
+	_player_status_label = UiKit.label("", UiKit.FS_XS, Color(0.55, 0.85, 1.0))
+	_player_status_label.name = "PlayerStatusLabel"
+	_player_status_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_player_status_label.clip_text = true
+	_player_status_label.add_theme_stylebox_override("normal", _status_badge_style(
+			Color(0.08, 0.22, 0.30, 0.88)))
+	add_child(_player_status_label)
 	_rice_label.name = "RiceLabel"
 	_rice_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	add_child(_rice_label)
 	_build_pile_ui()
+	_build_ult_ui()
+	_build_wish_ui()
+
+
+## 工具侧栏小图标（生图素材，40px 显示）
+func _wish_tool_icon(path: String) -> TextureRect:
+	var r := TextureRect.new()
+	if ResourceLoader.exists(path):
+		r.texture = load(path)
+	r.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	r.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+	r.custom_minimum_size = Vector2(40, 40)
+	r.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	return r
+
+
+## 醒目提示条（屏幕中央偏上，2.6 秒淡出）——许愿卡完成等关键事件用
+func _toast(text: String, col: Color = Color(0.62, 0.95, 1.0)) -> void:
+	var panel := PanelContainer.new()
+	panel.add_theme_stylebox_override("panel",
+			UiKit.flat(Color(0.04, 0.07, 0.12, 0.95), UiKit.ACCENT, 2, UiKit.SP_2, 0))
+	panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	var l := UiKit.label(text, UiKit.FS_S, col)
+	l.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	panel.add_child(l)
+	add_child(panel)
+	panel.reset_size()
+	var vp_toast := get_viewport_rect().size
+	panel.position = Vector2((vp_toast.x - panel.size.x) * 0.5, vp_toast.y * 0.22)
+	panel.modulate.a = 0.0
+	panel.z_index = 90
+	var tw := create_tween()
+	tw.tween_property(panel, "modulate:a", 1.0, 0.15)
+	tw.tween_interval(2.2)
+	tw.tween_property(panel, "modulate:a", 0.0, 0.35)
+	tw.tween_callback(panel.queue_free)
+
+
+## 许愿卡入口（左下角，终结技按钮上方）：写下画面 → AI 作画 → 15 秒像素保险丝
+## → 成图后无缝替换，卡进牌组（2026-11-04 圆桌定稿）。
+func _build_wish_ui() -> void:
+	_wish_btn = Button.new()
+	_wish_btn.name = "WishButton"
+	_wish_btn.text = "愿"
+	_wish_btn.flat = true
+	_wish_btn.add_theme_font_override("font", PixelTheme.font())
+	_wish_btn.add_theme_font_size_override("font_size", 22)
+	_wish_btn.add_theme_color_override("font_color", Color(0.55, 0.85, 1.0))
+	_wish_btn.add_theme_color_override("font_hover_color", Color(0.9, 0.97, 1.0))
+	_wish_btn.add_theme_stylebox_override("normal",
+			UiKit.flat(Color(0.05, 0.07, 0.12, 0.9), UiKit.ACCENT, 2, 6, 0))
+	_wish_btn.tooltip_text = "许愿卡：写下画面，AI 给你画一张专属卡"
+	_wish_btn.custom_minimum_size = Vector2(56, 56)
+	_wish_btn.size = Vector2(56, 56)
+	_wish_btn.pressed.connect(_open_wish_panel)
+	add_child(_wish_btn)
+
+	_wish_panel = PanelContainer.new()
+	_wish_panel.name = "WishPanel"
+	_wish_panel.add_theme_stylebox_override("panel",
+			UiKit.flat(Color(0.05, 0.07, 0.12), UiKit.ACCENT, 2, UiKit.SP_3, UiKit.EL_2))
+	_wish_panel.visible = false
+	_wish_panel.mouse_filter = Control.MOUSE_FILTER_STOP
+	_wish_panel.size = Vector2(980, 580)
+	add_child(_wish_panel)
+
+	var outer := HBoxContainer.new()
+	outer.add_theme_constant_override("separation", 16)
+	_wish_panel.add_child(outer)
+
+	var v := VBoxContainer.new()
+	v.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	v.add_theme_constant_override("separation", 10)
+	outer.add_child(v)
+	var title_row := HBoxContainer.new()
+	title_row.add_theme_constant_override("separation", 8)
+	var ttl := UiKit.label("许愿卡 · 让 AI 给你画一张", UiKit.FS_S, Color(0.55, 0.85, 1.0))
+	ttl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	title_row.add_child(ttl)
+	var close_btn := UiKit.button("✕ 关闭", UiKit.FS_XS)
+	close_btn.custom_minimum_size = Vector2(84, 32)
+	close_btn.tooltip_text = "关闭许愿面板（Esc）"
+	close_btn.pressed.connect(_close_wish_panel)
+	title_row.add_child(close_btn)
+	v.add_child(title_row)
+
+	_wish_hint_label = UiKit.dim("", UiKit.FS_XS, Color(0.6, 0.85, 1.0))
+	_wish_hint_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	v.add_child(_wish_hint_label)
+
+	_wish_text_block = VBoxContainer.new()
+	_wish_text_block.add_theme_constant_override("separation", 8)
+	v.add_child(_wish_text_block)
+	_wish_input = LineEdit.new()
+	_wish_input.placeholder_text = "写下画面，画好叫你（例：流泪的机械猫）"
+	_wish_input.custom_minimum_size = Vector2(0, 44)
+	_wish_input.add_theme_font_override("font", PixelTheme.font())
+	_wish_input.add_theme_font_size_override("font_size", 20)
+	_wish_input.text_submitted.connect(func(_t: String) -> void: _confirm_wish())
+	_wish_text_block.add_child(_wish_input)
+
+	var palette := HBoxContainer.new()
+	palette.add_theme_constant_override("separation", 8)
+	for ex in ["流泪的机械猫", "收过路费的蘑菇", "带电的数据鲸"]:
+		var b := UiKit.button(ex, UiKit.FS_XS)
+		b.pressed.connect(func() -> void:
+			_wish_input.text = ex
+			_wish_input.grab_focus())
+		palette.add_child(b)
+	_wish_text_block.add_child(palette)
+
+	_wish_canvas = WishCanvas.new()
+	outer.add_child(_wish_canvas)
+	_wish_canvas.stroke_finished.connect(_on_wish_stroke_finished)
+	_wish_canvas.color_picked.connect(func(col: Color) -> void:
+		_wish_canvas.brush_color = col
+		_wish_canvas.tool = "brush"
+		if _wish_picker_btn != null:
+			_wish_picker_btn.button_pressed = false
+		_wish_sync_color_ui(col))
+
+	## 工具侧栏（2026-11-05 主人要求：画笔大小 / 画笔格式 / 颜色，图标全部用生图）
+	var tools := VBoxContainer.new()
+	tools.custom_minimum_size = Vector2(88, 0)
+	tools.add_theme_constant_override("separation", 6)
+	outer.add_child(tools)
+	# —— 画笔大小：1–100 滑杆（拖动时画布中心显示黑点预览）——
+	var size_head := HBoxContainer.new()
+	size_head.add_theme_constant_override("separation", 4)
+	size_head.add_child(_wish_tool_icon("res://assets/art/ui-brush-size.png"))
+	_wish_size_label = UiKit.label("24", UiKit.FS_XS, UiKit.TEXT_DIM)
+	size_head.add_child(_wish_size_label)
+	tools.add_child(size_head)
+
+	_wish_size_slider = HSlider.new()
+	_wish_size_slider.min_value = WishCanvas.SIZE_MIN
+	_wish_size_slider.max_value = WishCanvas.SIZE_MAX
+	_wish_size_slider.step = 1
+	_wish_size_slider.value = _wish_canvas.brush_size
+	_wish_size_slider.custom_minimum_size = Vector2(84, 18)
+	_wish_size_slider.value_changed.connect(func(v: float) -> void:
+		if _wish_canvas != null:
+			_wish_canvas.brush_size = v
+			_wish_show_size_preview(v)
+		if _wish_size_label != null:
+			_wish_size_label.text = "%d" % int(round(v)))
+	tools.add_child(_wish_size_slider)
+
+	# —— 画笔形状 ——
+	var style_row := HBoxContainer.new()
+	style_row.add_theme_constant_override("separation", 4)
+	var style_btns: Array[TextureButton] = []
+	for si in 2:
+		var mode: String = ["round", "square"][si]
+		var sb := TextureButton.new()
+		sb.ignore_texture_size = true
+		sb.stretch_mode = TextureButton.STRETCH_KEEP_ASPECT_CENTERED
+		sb.custom_minimum_size = Vector2(34, 34)
+		sb.texture_normal = load("res://assets/art/ui-brush-%s.png" % mode)
+		sb.tooltip_text = "圆头笔刷" if mode == "round" else "方头笔刷"
+		var m := mode
+		var sidx := si
+		sb.pressed.connect(func() -> void:
+			_wish_canvas.brush_style = m
+			for k in style_btns.size():
+				style_btns[k].modulate = Color.WHITE if k == sidx else Color(0.5, 0.55, 0.62))
+		style_row.add_child(sb)
+		style_btns.append(sb)
+	tools.add_child(style_row)
+
+	# —— 橡皮（图标开关 + 独立 S/M/L）——
+	_wish_eraser_btn = TextureButton.new()
+	_wish_eraser_btn.toggle_mode = true
+	_wish_eraser_btn.ignore_texture_size = true
+	_wish_eraser_btn.stretch_mode = TextureButton.STRETCH_KEEP_ASPECT_CENTERED
+	_wish_eraser_btn.custom_minimum_size = Vector2(34, 34)
+	_wish_eraser_btn.texture_normal = load("res://assets/art/ui-eraser.png")
+	_wish_eraser_btn.tooltip_text = "橡皮擦（大小用下面 S/M/L）"
+	_wish_eraser_btn.toggled.connect(func(on: bool) -> void:
+		if _wish_canvas == null:
+			return
+		if on:
+			_wish_canvas.tool = "eraser"
+			if _wish_picker_btn != null:
+				_wish_picker_btn.button_pressed = false
+		elif _wish_canvas.tool == "eraser":
+			_wish_canvas.tool = "brush")
+	tools.add_child(_wish_eraser_btn)
+
+	var er_size_row := HBoxContainer.new()
+	er_size_row.add_theme_constant_override("separation", 4)
+	var er_btns: Array[Button] = []
+	for i in 3:
+		var esz: float = [10.0, 24.0, 48.0][i]
+		var eb := UiKit.button(["S", "M", "L"][i], UiKit.FS_XS)
+		eb.custom_minimum_size = Vector2(26, 26)
+		eb.tooltip_text = "橡皮大小 %s" % ["小", "中", "大"][i]
+		var eidx := i
+		eb.pressed.connect(func() -> void:
+			_wish_canvas.eraser_size = esz
+			if _wish_canvas.tool != "eraser":
+				_wish_eraser_btn.button_pressed = true
+			for k in er_btns.size():
+				er_btns[k].modulate = Color.WHITE if k == eidx else Color(0.5, 0.55, 0.62))
+		er_size_row.add_child(eb)
+		er_btns.append(eb)
+	tools.add_child(er_size_row)
+
+	# —— 吸管（采色笔）——
+	_wish_picker_btn = TextureButton.new()
+	_wish_picker_btn.toggle_mode = true
+	_wish_picker_btn.ignore_texture_size = true
+	_wish_picker_btn.stretch_mode = TextureButton.STRETCH_KEEP_ASPECT_CENTERED
+	_wish_picker_btn.custom_minimum_size = Vector2(34, 34)
+	_wish_picker_btn.texture_normal = load("res://assets/art/ui-eyedropper.png")
+	_wish_picker_btn.tooltip_text = "采色笔：点画布取色"
+	_wish_picker_btn.toggled.connect(func(on: bool) -> void:
+		if _wish_canvas == null:
+			return
+		if on:
+			_wish_canvas.tool = "picker"
+			if _wish_eraser_btn != null:
+				_wish_eraser_btn.button_pressed = false
+		elif _wish_canvas.tool == "picker":
+			_wish_canvas.tool = "brush")
+	tools.add_child(_wish_picker_btn)
+
+	# —— 调色盘：色相条 + 饱和度/明度方块 + 快捷色 ——
+	tools.add_child(_wish_tool_icon("res://assets/art/ui-palette.png"))
+	_wish_hue_slider = HSlider.new()
+	_wish_hue_slider.min_value = 0
+	_wish_hue_slider.max_value = 360
+	_wish_hue_slider.step = 1
+	_wish_hue_slider.custom_minimum_size = Vector2(84, 16)
+	_wish_hue_slider.tooltip_text = "色相"
+	_wish_hue_slider.value_changed.connect(func(v: float) -> void:
+		_wish_hue = clampf(v / 360.0, 0.0, 1.0)
+		_wish_refresh_sv()
+		_wish_apply_sv_color())
+	tools.add_child(_wish_hue_slider)
+
+	_wish_sv_rect = TextureRect.new()
+	_wish_sv_rect.custom_minimum_size = Vector2(80, 80)
+	_wish_sv_rect.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	_wish_sv_rect.stretch_mode = TextureRect.STRETCH_SCALE
+	_wish_sv_rect.mouse_filter = Control.MOUSE_FILTER_STOP
+	_wish_sv_rect.tooltip_text = "饱和度 × 明度（按住拖动选色）"
+	_wish_sv_rect.gui_input.connect(_on_sv_gui_input)
+	tools.add_child(_wish_sv_rect)
+
+	_wish_color_swatch = Panel.new()
+	_wish_color_swatch.custom_minimum_size = Vector2(80, 18)
+	_wish_color_swatch.tooltip_text = "当前画笔颜色"
+	tools.add_child(_wish_color_swatch)
+
+	var color_grid := GridContainer.new()
+	color_grid.columns = 3
+	color_grid.add_theme_constant_override("h_separation", 4)
+	color_grid.add_theme_constant_override("v_separation", 4)
+	var palette_cols := [Color(0.12, 0.13, 0.16), Color(0.98, 0.98, 0.96),
+			Color(0.55, 0.85, 1.0), Color(0.35, 0.55, 0.95),
+			Color(1.0, 0.82, 0.35), Color(0.95, 0.42, 0.45)]
+	var color_btns: Array[Button] = []
+	for ci in palette_cols.size():
+		var col: Color = palette_cols[ci]
+		var cb := Button.new()
+		cb.custom_minimum_size = Vector2(24, 24)
+		cb.add_theme_stylebox_override("normal", UiKit.flat(col, Color(0.2, 0.28, 0.45), 2, 0))
+		cb.add_theme_stylebox_override("hover", UiKit.flat(col, Color(0.9, 0.97, 1.0), 2, 0))
+		cb.add_theme_stylebox_override("pressed", UiKit.flat(col, Color(0.9, 0.97, 1.0), 3, 0))
+		cb.tooltip_text = "画笔颜色"
+		var c2 := ci
+		cb.pressed.connect(func() -> void:
+			_wish_canvas.brush_color = col
+			_wish_sync_color_ui(col)
+			for k in color_btns.size():
+				color_btns[k].modulate = Color.WHITE if k == c2 else Color(0.72, 0.76, 0.82))
+		color_grid.add_child(cb)
+		color_btns.append(cb)
+	tools.add_child(color_grid)
+
+	# 默认选中：圆头 + 中号橡皮 + 黑
+	style_btns[0].modulate = Color.WHITE
+	style_btns[1].modulate = Color(0.5, 0.55, 0.62)
+	er_btns[1].modulate = Color.WHITE
+	er_btns[0].modulate = Color(0.5, 0.55, 0.62)
+	er_btns[2].modulate = Color(0.5, 0.55, 0.62)
+	for k in color_btns.size():
+		color_btns[k].modulate = Color.WHITE if k == 0 else Color(0.72, 0.76, 0.82)
+	_wish_sync_color_ui(_wish_canvas.brush_color)
+
+	## 画板编辑行：撤销 / 清空（橡皮与吸管已移到右侧工具栏）
+	var edit_row := HBoxContainer.new()
+	edit_row.add_theme_constant_override("separation", 8)
+	_wish_undo_btn = UiKit.button("撤销", UiKit.FS_XS)
+	_wish_undo_btn.custom_minimum_size = Vector2(96, 36)
+	_wish_undo_btn.pressed.connect(func() -> void:
+		if _wish_canvas != null:
+			_wish_canvas.undo())
+	edit_row.add_child(_wish_undo_btn)
+	_wish_canvas_clear_btn = UiKit.button("清空画板", UiKit.FS_XS)
+	_wish_canvas_clear_btn.custom_minimum_size = Vector2(128, 36)
+	_wish_canvas_clear_btn.pressed.connect(func() -> void:
+		if _wish_canvas != null:
+			_wish_canvas.clear()
+			_wish_canvas.tool = "brush"
+			_wish_canvas.preview_size = 0.0
+			_wish_eraser_btn.button_pressed = false
+			if _wish_picker_btn != null:
+				_wish_picker_btn.button_pressed = false)
+	edit_row.add_child(_wish_canvas_clear_btn)
+	v.add_child(edit_row)
+
+	_wish_feedback = UiKit.dim("", UiKit.FS_XS, Color(0.6, 0.85, 1.0))
+	_wish_feedback.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	v.add_child(_wish_feedback)
+
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", 10)
+	_wish_confirm_btn = UiKit.button("让 AI 画", UiKit.FS_S, true)
+	_wish_confirm_btn.custom_minimum_size = Vector2(0, 44)
+	_wish_confirm_btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_wish_confirm_btn.pressed.connect(_confirm_wish)
+	row.add_child(_wish_confirm_btn)
+	var cancel := UiKit.button("取消", UiKit.FS_S)
+	cancel.custom_minimum_size = Vector2(120, 44)
+	cancel.pressed.connect(_close_wish_panel)
+	row.add_child(cancel)
+	v.add_child(row)
+
+
+func _wish_remaining() -> int:
+	if run == null:
+		return 0
+	var cap := mini(2 + int(run.level_index / 2), 4)
+	return maxi(0, cap - run.wish_used)
+
+
+func _open_wish_panel() -> void:
+	_wish_retried = false
+	if _wish_panel == null:
+		return
+	_wish_panel.visible = true
+	_wish_panel.size = Vector2(980, 580)
+	var vp := get_viewport_rect().size
+	_wish_panel.position = (vp - _wish_panel.size) * 0.5
+	_wish_panel.move_to_front()
+	var cfg := _llm_config()
+	_wish_mode_vision = cfg.model_supports_vision()
+	var note := ""
+	if _wish_mode_vision:
+		_wish_confirm_btn.text = "让 AI 看画创作"
+		note = "在右侧画板画出你想造的东西。左侧可**选填**一句话（画的是什么）——多数模型的看图精度有限，补一句能明显提升还原度。"
+		_wish_text_block.visible = true
+	else:
+		_wish_confirm_btn.text = "让 AI 创作卡面"
+		note = "写一句画面描述 → AI 会画 SVG 卡面 + 卡牌（当前模型按纯文本处理）。"
+		_wish_text_block.visible = true
+	_wish_canvas.visible = true
+	_wish_canvas_clear_btn.visible = true
+	_wish_undo_btn.visible = true
+	_wish_eraser_btn.visible = true
+	_wish_hint_label.text = note
+	_wish_feedback.text = "剩余许愿：%d 次" % _wish_remaining()
+	if _wish_mode_vision:
+		_wish_canvas.grab_focus()
+	else:
+		_wish_input.grab_focus()
+
+
+## 滑杆拖动时的尺寸预览（0.8s 后自动消失）
+func _wish_show_size_preview(v: float) -> void:
+	if _wish_canvas == null:
+		return
+	_wish_size_preview_gen += 1
+	var gen := _wish_size_preview_gen
+	_wish_canvas.preview_size = v
+	var t := get_tree().create_timer(0.8, true, false, true)
+	t.timeout.connect(func() -> void:
+		if gen == _wish_size_preview_gen and _wish_canvas != null:
+			_wish_canvas.preview_size = 0.0)
+
+
+## 重绘饱和度/明度方块（跟随当前色相）
+func _wish_refresh_sv() -> void:
+	if _wish_sv_rect == null:
+		return
+	var n := 64
+	var img := Image.create_empty(n, n, false, Image.FORMAT_RGBA8)
+	for y in n:
+		for x in n:
+			var sat := float(x) / float(n - 1)
+			var val := 1.0 - float(y) / float(n - 1)
+			img.set_pixel(x, y, Color.from_hsv(_wish_hue, sat, val))
+	_wish_sv_rect.texture = ImageTexture.create_from_image(img)
+
+
+func _on_sv_gui_input(event: InputEvent) -> void:
+	var dragging := event is InputEventMouseMotion 			and ((event as InputEventMouseMotion).button_mask & MOUSE_BUTTON_MASK_LEFT) != 0
+	var clicking := event is InputEventMouseButton 			and (event as InputEventMouseButton).pressed
+	if not (dragging or clicking):
+		return
+	var local := _wish_sv_rect.get_local_mouse_position()
+	_wish_sat = clampf(local.x / maxf(1.0, _wish_sv_rect.size.x), 0.0, 1.0)
+	_wish_val = 1.0 - clampf(local.y / maxf(1.0, _wish_sv_rect.size.y), 0.0, 1.0)
+	_wish_apply_sv_color()
+
+
+func _wish_apply_sv_color() -> void:
+	var col := Color.from_hsv(_wish_hue, _wish_sat, _wish_val)
+	if _wish_canvas != null:
+		_wish_canvas.brush_color = col
+	_wish_update_swatch(col)
+
+
+## 由已有颜色反推 HSV 并同步 UI（吸管/快捷色用）
+func _wish_sync_color_ui(col: Color) -> void:
+	_wish_hue = col.h
+	_wish_sat = col.s
+	_wish_val = col.v
+	if _wish_hue_slider != null:
+		_wish_hue_slider.set_value_no_signal(_wish_hue * 360.0)
+	_wish_refresh_sv()
+	_wish_update_swatch(col)
+
+
+func _wish_update_swatch(col: Color) -> void:
+	if _wish_color_swatch != null:
+		_wish_color_swatch.add_theme_stylebox_override("panel",
+				UiKit.flat(col, Color(0.9, 0.97, 1.0), 1, 0))
+
+
+func _close_wish_panel() -> void:
+	if _wish_panel != null:
+		_wish_panel.visible = false
+	_clear_prefetch()
+
+
+## ── 许愿预取（圆桌延迟规则 #5，方案 B 2026-11-06）──────────────
+## 抬笔后 1.5s 静默发一次请求；玩家点「发送」时若画布+文字没变，直接用预取结果，
+## **零等待**。每个面板会话最多预取 2 次（防烧 token）；确认时若预取还在路上，就正常发。
+const PREFETCH_DEBOUNCE := 1.5
+const PREFETCH_MAX := 6
+var _prefetch_busy := false
+var _prefetch_result: Dictionary = {}
+var _prefetch_done_hash := ""      ## 已完成预取对应的 画布+文字 hash
+var _prefetch_sent_hash := ""      ## 已发出的请求 hash（防重复发）
+var _prefetch_count := 0
+
+
+func _wish_prefetch_hash() -> String:
+	var uri := _wish_canvas.export_data_uri() if _wish_canvas != null else ""
+	var text := _wish_input.text.strip_edges() if _wish_input != null else ""
+	return ("%s\u001f%s" % [uri, text]).sha256_text()
+
+
+func _on_wish_stroke_finished() -> void:
+	if not _wish_panel.visible or not _wish_mode_vision:
+		return
+	if _prefetch_busy or _prefetch_count >= PREFETCH_MAX:
+		return
+	var t := get_tree().create_timer(PREFETCH_DEBOUNCE, true, false, true)
+	t.timeout.connect(_do_wish_prefetch)
+
+
+func _do_wish_prefetch() -> void:
+	if not _wish_panel.visible or not _wish_mode_vision:
+		return
+	if _prefetch_busy or _prefetch_count >= PREFETCH_MAX:
+		return
+	var h := _wish_prefetch_hash()
+	if h == _prefetch_sent_hash or h == _prefetch_done_hash:
+		return
+	var uri := _wish_canvas.export_data_uri()
+	if uri.is_empty():
+		return
+	_prefetch_busy = true
+	_prefetch_count += 1
+	_prefetch_sent_hash = h
+	var text := _wish_input.text.strip_edges()
+	var hint := "这是我画的涂鸦，请照它造一张卡。" if text.is_empty() \
+			else "这是我画的涂鸦，请照它造一张卡（补充：%s）。" % text
+	_llm_client().request("event", [
+		{"role": "system", "content": WishCardFactory.active_prompt()},
+		{"role": "user", "content": [
+			{"type": "text", "text": hint},
+			{"type": "image_url", "image_url": {"url": uri}},
+		]},
+	], _on_wish_prefetch_done, {
+		"max_tokens": WishCardFactory.WISH_MAX_TOKENS,
+		"timeout_s": LLMConfig.wish_timeout_for(_llm_config().model),
+	})
+
+
+func _on_wish_prefetch_done(r: Dictionary) -> void:
+	_prefetch_busy = false
+	if bool(r.get("ok", false)):
+		_prefetch_result = r
+		_prefetch_done_hash = _prefetch_sent_hash
+	else:
+		_prefetch_done_hash = ""
+
+
+func _clear_prefetch() -> void:
+	_prefetch_busy = false
+	_prefetch_result = {}
+	_prefetch_done_hash = ""
+	_prefetch_sent_hash = ""
+	_prefetch_count = 0
+
+
+func _unhandled_input(event: InputEvent) -> void:
+	## Esc 关闭许愿面板（2026-11-05 主人要求画图 GUI 可关闭）
+	if _wish_panel != null and _wish_panel.visible 			and event.is_action_pressed("ui_cancel"):
+		_close_wish_panel()
+		get_viewport().set_input_as_handled()
+
+
+## 确认许愿：造卡（像素草图先顶上）→ 异步生图 → 成图替换
+func _confirm_wish() -> void:
+	if run == null:
+		return
+	if _wish_mode_vision:
+		if _wish_canvas == null or _wish_canvas.is_empty():
+			_wish_feedback.text = "先在白板上画点什么（比如一只蘑菇或一只猫）。"
+			return
+		if _wish_remaining() <= 0:
+			_wish_feedback.text = "本局许愿次数用完了（每 2 关 +1，上限 4）。"
+			return
+		_request_vision_card(_llm_config())
+		return
+	var text := _wish_input.text.strip_edges()
+	if text.is_empty():
+		_wish_feedback.text = "先写一句画面描述（它决定这张卡的强度）。"
+		return
+	if _wish_remaining() <= 0:
+		_wish_feedback.text = "本局许愿次数用完了（每 2 关 +1，上限 4）。"
+		return
+	## 纯文本模型也走 AI 创作：模型按文字描述返回 SVG（游戏内渲染成卡面）+ 卡牌 JSON。
+	## 涂鸦在纯文本模式下模型看不到，但会先顶上当临时卡面（SVG 到了替换）。
+	_request_vision_card(_llm_config())
+
+
+## 涂鸦/文字造卡：发给**通用大模型**，模型用自己的绘图能力返回 SVG
+## （游戏内 ThorVG 渲染成卡面）+ 卡牌 JSON（本地钳制数值）。不用专门的生图模型。
+## 视觉模型带涂鸦输入；纯文本模型只发文字（它按描述画 SVG）。
+func _request_vision_card(cfg: LLMConfig, is_retry: bool = false) -> void:
+	## 预取命中：画布+文字没变 → 直接用预取结果，等待时间≈0
+	if _wish_mode_vision and not _prefetch_busy and not _prefetch_result.is_empty() \
+			and _wish_prefetch_hash() == _prefetch_done_hash:
+		var hit := _prefetch_result
+		_clear_prefetch()
+		run.wish_used += 1
+		_on_vision_card_done(hit)
+		return
+	_clear_prefetch()
+	var text := _wish_input.text.strip_edges()
+	var messages: Array = []
+	if _wish_mode_vision:
+		var uri := _wish_canvas.export_data_uri()
+		if uri.is_empty():
+			_wish_feedback.text = "画板导出失败，重画一次试试。"
+			run.wish_used -= 1
+			return
+		var hint := "这是我画的涂鸦，请照它造一张卡。" if text.is_empty() 				else "这是我画的涂鸦，请照它造一张卡（补充：%s）。" % text
+		messages = [
+			{"role": "system", "content": WishCardFactory.active_prompt()
+					+ WishCardFactory.quality_hint(Affection.quality_tier())},
+			{"role": "user", "content": [
+				{"type": "text", "text": hint},
+				{"type": "image_url", "image_url": {"url": uri}},
+			]},
+		]
+	else:
+		messages = [
+			{"role": "system", "content": WishCardFactory.active_prompt()
+					+ WishCardFactory.quality_hint(Affection.quality_tier())},
+			{"role": "user", "content": "我想造一张卡，画面是：%s。请画出来并给我卡牌 JSON。" % text},
+		]
+	run.wish_used += 1
+	_wish_feedback.text = "AI 正在创作…（大模型绘图约 30~60 秒）"
+	_wish_confirm_btn.disabled = true
+	if _status_label != null:
+		_status_label.text = "✏ AI 正在创作：%s" % (text if not text.is_empty() else "你的涂鸦")
+	var opts := {
+		## 含思考链余量：4096 时推理模型会把额度全花在 reasoning，SVG 被截断
+		"max_tokens": WishCardFactory.max_tokens_for(Affection.level()) if is_retry \
+			else WishCardFactory.WISH_MAX_TOKENS_RETRY,
+		## 超时按模型分档：grok 通道实测 109–123s，统一 90s 会截断
+		"timeout_s": LLMConfig.wish_timeout_for(cfg.model),
+	}
+	_llm_client().request("event", messages, _on_vision_card_done, opts)
+
+
+func _on_vision_card_done(r: Dictionary) -> void:
+	_wish_confirm_btn.disabled = false
+	## 截断修复：SVG 有头无尾 = 被 max_tokens 截断，重试一次给更大预算
+	var raw := String(r.get("text", ""))
+	if not _wish_retried and bool(r.get("ok", false)) 			and raw.contains("<svg") and not raw.contains("</svg>"):
+		_wish_retried = true
+		_wish_feedback.text = "上一次被截断了，正在用更大预算重画…"
+		_request_vision_card(_llm_config(), true)
+		return
+	_wish_retried = false
+	if not bool(r.get("ok", false)):
+		_wish_feedback.text = "创作失败（%s）：稍后再试或换个描述。" % String(r.get("reason", "?"))
+		return
+	var text := String(r.get("text", ""))
+	var svg := String(r.get("svg", ""))
+	var bitmap := String(r.get("image", ""))
+	if svg.is_empty() and not bitmap.is_empty():
+		svg = "BITMAP:" + bitmap          ## 模型直接回了位图，走位图路径
+	## 卡牌机制：AI 的 JSON；没给就用文字词表折算兜底
+	var def := WishCardFactory.parse_ai_card(text)
+	var card: StsCard
+	if def.is_empty():
+		var base_text := _wish_input.text.strip_edges()
+		if base_text.is_empty():
+			base_text = "涂鸦造物"
+		card = WishCardFactory.make(base_text, run.level_index)
+	else:
+		card = WishCardFactory.make_from_ai(def, run.level_index, Affection.level())
+	## 效果层：竞技禁用（p95 超限）——查缓存命中，禁用卡不发放
+	var pr_now := EffectPricing.price_cached(card, run.level_index,
+			EffectPricing.SAMPLES, false)
+	if bool(pr_now.get("banned", false)):
+		run.wish_used = maxi(0, run.wish_used - 1)
+		_toast("这张卡被判「竞技禁用」（p95 超限），暂不发放，许愿额度已退回")
+		_close_wish_panel()
+		return
+	## 效果层：高费卡限量（试玩档「限获取」）——超过上限则退回许愿额度
+	if not run.can_acquire(card):
+		run.wish_used = maxi(0, run.wish_used - 1)
+		_toast("这张卡超模且已达持有上限（cost 3 最多 %d 张），许愿额度已退回"
+				% RunState.MAX_TIER3)
+		_close_wish_panel()
+		return
+	run.deck.append(card)
+	## 当前战斗立刻到手牌（手牌未满时）——画完就能看见、就能打；
+	## 手牌已满则进抽牌堆（下一抽即得）。两种都同步牌堆数字。
+	var got_in_hand := false
+	if combat != null and combat.over == StsCombat.Result.RUNNING:
+		if combat.hand.size() < combat.hand_size():
+			combat.hand.append(card)
+			_rebuild_hand()
+			got_in_hand = true
+		else:
+			combat.draw_pile.append(card)
+		_update_pile_counts()
+	_wish_pending_card = card
+	_wish_pending_name = StsCardPool.card_name(card.id)
+	_close_wish_panel()
+	SfxNode.play("ui_click")
+	_toast("🖍 新卡已入手：%s（%s）" % [_wish_pending_name,
+			"已到手牌" if got_in_hand else "已进抽牌堆，下一抽即得"])
+	## 卡面四路：face token（程序化）> SVG > 位图 > 像素草图兜底
+	var face := WishCardFactory.parse_ai_face(def)
+	if not face.is_empty():
+		var fpath := ImageGenClient.CACHE_DIR.path_join(
+				"wish_face_%s.png" % _wish_pending_card.id.sha256_text().substr(0, 12))
+		if not CardFace.render_png(face, fpath).is_empty():
+			_wish_pending_card.art_path = fpath
+			_toast("🎨 AI 画好了：%s" % _wish_pending_name)
+		else:
+			_fallback_sketch()
+	elif svg.begins_with("BITMAP:"):
+		_set_card_bitmap(_wish_pending_card, svg.substr(7))
+	elif not svg.is_empty():
+		var out := ImageGenClient.CACHE_DIR.path_join(
+				"wish_svg_%s.png" % _wish_pending_card.id.sha256_text().substr(0, 12))
+		if WishCardFactory.render_svg_png(svg, out):
+			_wish_pending_card.art_path = out
+			_toast("🎨 AI 画好了：%s" % _wish_pending_name)
+		else:
+			_fallback_sketch()
+	else:
+		_fallback_sketch()
+	if _status_label != null:
+		_status_label.text = "🎨 卡牌创作完成：%s（已进牌组）" % _wish_pending_name
+	_wish_pending_card = null
+
+
+func _set_card_bitmap(card: StsCard, uri: String) -> void:
+	## 模型直接返回位图（data URI）：解码存盘挂卡面
+	var png_path := ImageGenClient.CACHE_DIR.path_join(
+			"wish_bm_%s.png" % card.id.sha256_text().substr(0, 12))
+	if uri.begins_with("data:") and uri.contains("base64,"):
+		var bin := Marshalls.base64_to_raw(uri.substr(uri.find("base64,") + 7))
+		var img := Image.new()
+		if img.load_png_from_buffer(bin) == OK:
+			DirAccess.make_dir_recursive_absolute(ProjectSettings.globalize_path(ImageGenClient.CACHE_DIR))
+			if img.save_png(png_path) == OK:
+				card.art_path = png_path
+				_toast("🎨 AI 画好了：%s" % _wish_pending_name)
+				return
+	_fallback_sketch()
+
+
+func _fallback_sketch() -> void:
+	## AI 没画出可用的图：像素草图兜底（玩家的卡不落空）
+	if _wish_pending_card == null:
+		return
+	var ph := WishCardFactory.placeholder_png(_wish_pending_name, _wish_pending_card.id)
+	if not ph.is_empty():
+		_wish_pending_card.art_path = ph
+	_float_text(Vector2(size.x * 0.5, 180.0),
+			"AI 没画出图，先用像素草图顶上", Color(1.0, 0.8, 0.5), UiKit.FS_XS)
+
+
+func _on_wish_image_done(ok: bool, path: String, reason: String) -> void:
+	if ok and not path.is_empty() and _wish_pending_card != null:
+		_wish_pending_card.art_path = path     ## 无缝替换成 AI 图
+		_float_text(Vector2(size.x * 0.5, 150.0),
+				"愿望已绘制：%s" % _wish_pending_name, Color(0.6, 0.95, 1.0), UiKit.FS_S)
+		if _status_label != null:
+			_status_label.text = "🎨 愿望已绘制：%s（已进牌组）" % _wish_pending_name
+		SfxNode.play("fx_ult_ready")
+	elif not ok:
+		_float_text(Vector2(size.x * 0.5, 180.0),
+				"AI 没画成（%s），像素草图先顶上" % reason,
+				Color(1.0, 0.75, 0.5), UiKit.FS_XS)
+		if _status_label != null:
+			_status_label.text = "✏ AI 没画成（%s），用像素草图顶上" % reason
+	_wish_pending_card = null
+
+
+## 终结技「深度思考」入口（左下角，牌堆图标上方）：
+## 得意鲸鱼脸当按钮贴图——充能不满灰暗，满了亮起脉冲；下挂充能条。
+func _build_ult_ui() -> void:
+	_ult_btn = TextureButton.new()
+	_ult_btn.name = "UltButton"
+	_ult_btn.ignore_texture_size = true
+	_ult_btn.stretch_mode = TextureButton.STRETCH_KEEP_ASPECT_CENTERED
+	_ult_btn.texture_filter = CanvasItem.TEXTURE_FILTER_LINEAR
+	if ResourceLoader.exists("res://assets/art/ult-dafish.png"):
+		_ult_btn.texture_normal = load("res://assets/art/ult-dafish.png")
+	_ult_btn.custom_minimum_size = Vector2(56, 56)
+	_ult_btn.size = Vector2(56, 56)
+	_ult_btn.tooltip_text = "深度思考（充能 %d/%d，满了点我）" % [0, StsCombat.ULT_MAX]
+	_ult_btn.modulate = Color(0.42, 0.46, 0.55, 0.8)     # 未充能：灰暗
+	_ult_btn.disabled = true
+	_ult_btn.pressed.connect(_cast_ult)
+	add_child(_ult_btn)
+
+	_ult_bar_bg = ColorRect.new()
+	_ult_bar_bg.color = UiKit.LINE.darkened(0.45)
+	_ult_bar_bg.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	add_child(_ult_bar_bg)
+	_ult_bar = ColorRect.new()
+	_ult_bar.color = Color(0.45, 0.88, 1.0)
+	_ult_bar.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	add_child(_ult_bar)
+	_ult_label = UiKit.label("", UiKit.FS_XS, UiKit.TEXT_DIM)
+	_ult_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	add_child(_ult_label)
+
+
+func _update_ult_ui() -> void:
+	if _ult_btn == null or combat == null:
+		return
+	var ready := combat.can_cast_ult()
+	var pct := clampf(float(combat.ult_charge) / float(StsCombat.ULT_MAX), 0.0, 1.0)
+	_ult_bar_bg.size = Vector2(56, 5)
+	_ult_bar.size = Vector2(56.0 * pct, 5)
+	_ult_label.text = "%d%%" % roundi(pct * 100.0)
+	_ult_btn.disabled = not ready or _ult_playing
+	if ready and not _ult_playing:
+		_ult_btn.modulate = Color.WHITE
+		_ult_btn.tooltip_text = "深度思考！点我释放（无视格挡 %d）" % StsCombat.ULT_DAMAGE
+		if _ult_btn.get_meta("pulsing", false) == false:
+			_ult_btn.set_meta("pulsing", true)
+			var tw := _ult_btn.create_tween().set_loops()
+			tw.tween_property(_ult_btn, "modulate", Color(1.35, 1.35, 1.15), 0.4)
+			tw.tween_property(_ult_btn, "modulate", Color.WHITE, 0.4)
+	else:
+		_ult_btn.set_meta("pulsing", false)
+		_ult_btn.modulate = Color(0.42, 0.46, 0.55, 0.8)
+		_ult_btn.tooltip_text = "深度思考（充能 %d/%d）" % [combat.ult_charge, StsCombat.ULT_MAX]
+
+
+## 终结技充满的瞬间：一声提示 + 按钮亮起脉冲
+func _on_ult_ready(ready: bool) -> void:
+	if ready:
+		SfxNode.play("fx_ult_ready")
+	_update_ult_ui()
+
+
+## 释放终结技：锁操作 → 全屏演出 → hit_moment 时结算 + 震屏 → 收尾衔接。
+func _cast_ult() -> void:
+	if _ult_playing or _busy or combat == null or not combat.can_cast_ult():
+		return
+	_ult_playing = true
+	_update_ult_ui()
+	_send_btn.disabled = true
+	_end_turn_button.disabled = true
+	var cine := UltCinematic.new()
+	cine.name = "UltCinematic"
+	add_child(cine)
+	cine.hit_moment.connect(func() -> void:
+		var dealt := combat.cast_ult()
+		# 受击演出：红闪 + 纵向抖动 + 大额飘字（与普攻同款，主人钦定的手感）
+		if _enemy_sprite != null and _fx_enabled:
+			var tw := _enemy_sprite.create_tween()
+			tw.tween_property(_enemy_sprite, "modulate", Color(1.6, 1.6, 2.2), 0.06)
+			tw.tween_property(_enemy_sprite, "modulate", Color(2.2, 0.8, 0.8), 0.08)
+			tw.tween_property(_enemy_sprite, "modulate", Color.WHITE, 0.2)
+			_enemy_shake_vertical(6, 16.0)
+		_float_text(_enemy_root.position + Vector2(_enemy_root.size.x * 0.5, 24.0),
+				"推理 %d" % dealt, Color(0.55, 0.9, 1.0), UiKit.FS_L)
+		_refresh_hud()
+		_shake(10.0, 0.3))
+	cine.finished.connect(func() -> void:
+		_ult_playing = false
+		_update_ult_ui()
+		if combat.over == StsCombat.Result.WIN:
+			await get_tree().create_timer(0.3).timeout
+			_finish_battle(true)
+		elif combat.over == StsCombat.Result.RUNNING:
+			_send_btn.disabled = false
+			_end_turn_button.disabled = false)
 
 
 ## 牌堆/弃牌堆图标（左下角，竖排：上牌堆下弃牌）+ 查看面板（卡牌网格，置顶）
@@ -439,7 +1410,10 @@ func _toggle_pile_panel(mode: int) -> void:
 		return
 	_pile_panel_mode = mode
 	var pile := combat.draw_pile if mode == 0 else combat.discard_pile
-	var grid := _pile_panel.get_node("PileGrid") as GridContainer
+	## grid 挂在 ScrollContainer 里（滚轮翻看），不能 get_node 直接子级——会 Nil 闪退
+	var grid := _pile_panel.find_child("PileGrid", true, false) as GridContainer
+	if grid == null:
+		return
 	for c in grid.get_children():
 		c.queue_free()
 	var sorted := pile.duplicate()
@@ -603,6 +1577,9 @@ func _layout() -> void:
 	if _token_label:
 		_token_label.position = Vector2(AI_X + 8.0, H - 378.0)
 		_token_label.size = Vector2(W - AI_X - PAD - 8.0, 24.0)
+	if _player_status_label:
+		_player_status_label.position = Vector2(AI_X + 8.0, H - 402.0)
+		_player_status_label.size = Vector2(W - AI_X - PAD - 8.0, 22.0)
 	# 牌堆/弃牌堆图标：左侧栏底部空档（主人 2026-11-01 圈选位置），上牌堆下弃牌
 	if _pile_draw_icon != null:
 		_pile_draw_icon.position = Vector2(36.0, H - 150.0)
@@ -611,9 +1588,25 @@ func _layout() -> void:
 		_pile_discard_icon.size = Vector2(56, 56)
 		_pile_draw_count.position = Vector2(98.0, H - 134.0)
 		_pile_discard_count.position = Vector2(98.0, H - 60.0)
+	# 终结技按钮：牌堆图标上方（充能条在按钮下沿、百分比在右侧）
+	if _ult_btn != null:
+		_ult_btn.position = Vector2(36.0, H - 228.0)
+		_ult_btn.size = Vector2(56, 56)
+		_ult_bar_bg.position = Vector2(36.0, H - 168.0)
+		_ult_bar.position = Vector2(36.0, H - 168.0)
+		_ult_label.position = Vector2(98.0, H - 174.0)
+	# 许愿卡按钮：终结技按钮上方
+	if _wish_btn != null:
+		_wish_btn.position = Vector2(36.0, H - 306.0)
+		_wish_btn.size = Vector2(56, 56)
+	if _wish_panel != null:
+		# 用当前画布尺寸居中（不要用固定 1600 基准：隐藏桌面/DPI 下 size 会变）
+		_wish_panel.position = (size - _wish_panel.size) * 0.5
 	if _pile_panel != null:
-		_pile_panel.position = Vector2(W * 0.5 - 290.0, H * 0.5 - 330.0)
+		## 用逻辑视口居中（高 DPI 下 size 可能是物理像素，固定基准会让面板跑出屏幕）
 		_pile_panel.size = Vector2(580, 660)
+		var vp_pile := get_viewport_rect().size
+		_pile_panel.position = (vp_pile - _pile_panel.size) * 0.5
 
 	if _overlay:
 		_overlay.position = Vector2(W * 0.5 - 280.0, H * 0.5 - 170.0)
@@ -690,6 +1683,14 @@ func _start_battle() -> void:
 	combat = run.start_battle(level)
 	combat.set_refill(StsCombat.refill_for(run.ai.id))
 	combat.set_ai_id(run.ai.id)
+	if not combat.ult_ready_changed.is_connected(_on_ult_ready):
+		combat.ult_ready_changed.connect(_on_ult_ready)
+	_update_ult_ui()
+	# AI 事件引擎 CHAIN_HEAD：本场首张牌从第 2 阶起步（标记只在 run meta，读后清）
+	var chain_head := LLMEventEngine.chain_head_pending(run)
+	if chain_head > 0:
+		combat.seq_streak = 1
+		run.set_meta(&"llm_event_chain_head", 0)
 
 	if _enemy_sprite:
 		var art_path := "res://assets/art/enemy-%s.png" % level.id
@@ -741,6 +1742,9 @@ func _start_battle() -> void:
 
 	_rebuild_hand()
 	_refresh_hud()
+	_refresh_llm_config()
+	_refresh_item_lists()      ## 道具耐久每场开战扣 1，侧栏同步
+	_setup_banter()
 
 	# 进场转场：仅开始游戏后的第一场战斗播（2026-10-31 主人钦定：
 	# 每场战斗打完不再进终端/加载，直接开打）。无头环境跳过。
@@ -1057,7 +2061,6 @@ func _reveal_from_intro() -> void:
 
 ## 合成整卡贴图（框 + 立绘）给 3D 转场用；按卡 id 缓存
 ## 卡框素材 750x1130 = 游戏内 150x226 的 5 倍，画窗坐标按这个倍数换算
-const FRAME_SCALE := 5
 var _card_tex_cache: Dictionary = {}
 
 
@@ -1072,36 +2075,20 @@ func _fit_cover(img: Image, target: Vector2i) -> Image:
 	return img.get_region(Rect2i(x, y, target.x, target.y))
 
 func _card_full_texture(card: StsCard) -> ImageTexture:
+	## 卡面改版后（2026-11-06）：正面就是立绘本身，大图预览直接放大立绘
 	if _card_tex_cache.has(card.id):
 		return _card_tex_cache[card.id]
-	var frame_path := String(StsCardView.FRAME_PATHS.get(card.kind,
-			StsCardView.FRAME_PATHS[StsCard.Kind.ATTACK]))
 	var img: Image = null
-	if ResourceLoader.exists(frame_path):
-		var ft: Resource = load(frame_path)
-		if ft is Texture2D:
-			img = (ft as Texture2D).get_image()
-	if img == null:
-		img = Image.create_empty(750, 1130, false, Image.FORMAT_RGBA8)
-		img.fill(UiKit.PANEL)
-	# 框图导入后可能是 RGB8、立绘是 RGBA8——blit_rect 要求同格式，先统一转 RGBA8
-	if img.get_format() != Image.FORMAT_RGBA8:
-		img.convert(Image.FORMAT_RGBA8)
 	if card.art_path != "" and ResourceLoader.exists(card.art_path):
 		var at: Resource = load(card.art_path)
 		if at is Texture2D:
-			var art := (at as Texture2D).get_image()
-			if art.get_format() != Image.FORMAT_RGBA8:
-				art.convert(Image.FORMAT_RGBA8)
-			# 画窗：与 2D 卡面共用 StsCardView.ART_RECT（显示坐标），换算到 750x1130 原生分辨率。
-			# 原来是 0,130 + 750x700（铺满全宽），立绘会压出框边。
-			var win := Rect2i(
-					int(StsCardView.ART_RECT.position.x) * FRAME_SCALE,
-					int(StsCardView.ART_RECT.position.y) * FRAME_SCALE,
-					int(StsCardView.ART_RECT.size.x) * FRAME_SCALE,
-					int(StsCardView.ART_RECT.size.y) * FRAME_SCALE)
-			art = _fit_cover(art, win.size)
-			img.blit_rect(art, Rect2i(Vector2i.ZERO, art.get_size()), win.position)
+			img = (at as Texture2D).get_image()
+	if img == null:
+		img = Image.create_empty(750, 1130, false, Image.FORMAT_RGBA8)
+		img.fill(UiKit.PANEL)
+	if img.get_format() != Image.FORMAT_RGBA8:
+		img.convert(Image.FORMAT_RGBA8)
+	img.resize(750, 1130, Image.INTERPOLATE_LANCZOS)
 	var tex := ImageTexture.create_from_image(img)
 	_card_tex_cache[card.id] = tex
 	return tex
@@ -1168,6 +2155,34 @@ func _update_seq_preview() -> void:
 		v.set_seq_value(info)
 
 
+## 状态徽章底色（圆角 + 半透明，让状态条看起来像徽章而不是裸文字）
+func _status_badge_style(bg: Color) -> StyleBoxFlat:
+	var sb := StyleBoxFlat.new()
+	sb.bg_color = bg
+	sb.set_corner_radius_all(4)
+	sb.content_margin_left = 7.0
+	sb.content_margin_right = 7.0
+	sb.content_margin_top = 2.0
+	sb.content_margin_bottom = 2.0
+	return sb
+
+
+## 状态条文本：「降智2 · 中毒3」；永久状态（回合数 ≥90）不带数字
+func _status_text(box: Dictionary) -> String:
+	if box.is_empty():
+		return ""
+	var parts: Array[String] = []
+	for id in box.keys():
+		var st: Dictionary = box[id]
+		var label := String(EffectSpec.STATUSES.get(String(id), {}).get("label", String(id)))
+		var turns := int(st.get("turns", 0))
+		if turns >= 90:
+			parts.append(label)
+		else:
+			parts.append("%s%d" % [label, turns])
+	return " · ".join(parts)
+
+
 func _refresh_hud() -> void:
 	if combat == null:
 		return
@@ -1175,11 +2190,17 @@ func _refresh_hud() -> void:
 	var er := clampf(float(combat.enemy_hp) / float(maxi(1, combat.enemy_max_hp)), 0.0, 1.0)
 	_enemy_fill.size = Vector2(ENEMY_W * er, 10.0)
 	_enemy_block_label.text = "格挡 %d" % combat.enemy_block if combat.enemy_block > 0 else ""
-	_intent_label.text = _intent_text()
+	if _enemy_status_label != null:
+		_enemy_status_label.text = _status_text(combat.e_status)
+	if _player_status_label != null:
+		_player_status_label.text = _status_text(combat.p_status)
+	_intent_label.text = "⚡%d/%d ｜ %s" % [combat.energy, StsCombat.ENERGY_PER_TURN,
+			_intent_text()]
 	var piles := get_node_or_null("BottomSide/PileCounts") as Label
 	if piles != null:
 		piles.text = "抽 %d ｜ 弃 %d" % [combat.draw_pile.size(), combat.discard_pile.size()]
 	_update_pile_counts()
+	_update_ult_ui()
 	if _token_label != null and run != null:
 		_token_label.text = "Token 额度 %dK/%dK" % [run.hp, RunState.MAX_HP]
 
@@ -1209,9 +2230,9 @@ func _on_card_clicked(view: StsCardView) -> void:
 		return
 	# 弃牌模式：点谁弃谁，弃 1 抽 1（从牌堆）；每回合有次数上限
 	if _discard_mode:
-		if _discards_left < _discard_limit():
+		if not _can_discard():
 			_status_label.text = "本回合弃牌次数用完（上限 %d 张），先结束回合。" \
-					% DISCARD_LIMIT_PER_TURN
+					% _discard_limit()
 			return
 		if combat.discard_card(card):
 			_discards_left -= 1
@@ -1257,7 +2278,9 @@ func _on_send_pressed() -> void:
 	# hand[0] 就是最左那张：一张张打出，打完才补（play_card 传 auto_refill=false，
 	# 否则中途一打空就补，永远打不完）
 	var seq_n := combat.hand.size()
-	while not combat.hand.is_empty() and combat.over == StsCombat.Result.RUNNING:
+	## 能量不足就停下：剩下的牌留在手里，下回合再打
+	while not combat.hand.is_empty() and combat.over == StsCombat.Result.RUNNING \
+			and combat.can_play(combat.hand[0]):
 		var card := combat.hand[0]
 		var view := _view_of(card)
 		if view != null:
@@ -1272,6 +2295,9 @@ func _on_send_pressed() -> void:
 		# 数值反馈：攻击 → 敌人闪红飘伤害（带连段/复读标记）；防御 → 格挡飘字；
 		# 白米饭 → 成长进度；吃满那碗 → 睡醒提示
 		var kind := String(ev.get("kind", ""))
+		# AI 娘连段喝彩：每张牌结算恰调一次（AIBanter 内部按 ≥3 阶/2 次/隔 2 回合过滤）
+		if kind == "attack" and _banter != null:
+			_banter.on_streak(int(ev.get("streak", 1)), combat.turn)
 		if kind == "rice":
 			_float_text(Vector2(size.x * 0.5, size.y - CARD_H - 90.0),
 					"吃掉白米饭 %d/%d" % [int(ev.get("value", 0)), StsCombat.RICE_AWAKE],
@@ -1361,7 +2387,8 @@ func _update_rice_hud() -> void:
 				combat.rice_eaten, StsCombat.RICE_AWAKE]
 			_rice_label.add_theme_color_override("font_color", Color(0.6, 1.0, 0.75))
 		else:
-			_rice_label.text = "白米饭 %d/%d" % [combat.rice_eaten, StsCombat.RICE_AWAKE]
+			_rice_label.text = "白米饭 %d/%d ｜ 好感 Lv.%d" % [combat.rice_eaten,
+				StsCombat.RICE_AWAKE, Affection.level()]
 	if _companion != null:
 		if awake:
 			_companion.set_stage("stand")
@@ -1533,7 +2560,12 @@ func _run_enemy_turn() -> void:
 	if _fx_enabled:
 		await get_tree().create_timer(0.25).timeout
 
-	var events := combat.end_turn()
+	var events: Array[Dictionary]
+	if _ai_enemy_enabled():
+		# AI 对手：LLM 先出词，超时/解析烂 → apply_ai_action 内部 local_choose 兜底
+		events = await _ai_enemy_turn()
+	else:
+		events = combat.end_turn()
 	for e in events:
 		var kind := String(e.get("kind", ""))
 		if kind == "enemy_attack":
@@ -1559,6 +2591,37 @@ func _run_enemy_turn() -> void:
 				_float_text(_enemy_root.position + Vector2(_enemy_root.size.x * 0.5, 44.0),
 						"+%d 防" % int(e.get("value", 0)), Color(0.31, 0.64, 0.88), UiKit.FS_M)
 				await get_tree().create_timer(0.3).timeout
+		elif kind == "enemy_charge":
+			if _fx_enabled:
+				# 紫色蓄力光环（不动原防御/攻击演出节奏，只加同族特效）
+				_spawn_fx("res://assets/art/fx-shield.png",
+						_enemy_root.position + _enemy_root.size * 0.5 - Vector2(110, 110),
+						Vector2(220, 220), 0.0, "pop", Color(0.80, 0.58, 1.0), 0.6)
+				SfxNode.play("fx_edef")
+				_float_text(_enemy_root.position + Vector2(_enemy_root.size.x * 0.5, 44.0),
+						"+%d 蓄力" % int(e.get("value", 0)), Color(0.80, 0.58, 1.0), UiKit.FS_M)
+				await get_tree().create_timer(0.3).timeout
+		elif kind == "enemy_mark":
+			if _fx_enabled:
+				var mode := String(e.get("mark_mode", ""))
+				SfxNode.play("hand_small")
+				_float_text(_enemy_root.position + Vector2(_enemy_root.size.x * 0.5, 44.0),
+						"标记 %s" % mode, Color(1.0, 0.55, 0.32), UiKit.FS_M)
+				await get_tree().create_timer(0.3).timeout
+			if _banter != null:
+				_banter.notify_enemy_line(_enemy_line_of(e))
+		elif kind == "enemy_taunt":
+			if _fx_enabled:
+				SfxNode.play("hand_big")
+				_float_text(_enemy_root.position + Vector2(_enemy_root.size.x * 0.5, 44.0),
+						"首位加成吞噬！", Color(0.85, 0.55, 1.0), UiKit.FS_M)
+				await get_tree().create_timer(0.3).timeout
+			if _banter != null:
+				_banter.notify_enemy_line(_enemy_line_of(e))
+
+	# AI 娘：受击后看一眼额度（AIBanter 内部去重，首次 <30% 只播一次）
+	if _banter != null and combat.over == StsCombat.Result.RUNNING:
+		_banter.on_hp_changed(combat.hp, combat.max_hp)
 
 	# 观察者反应（E）：一行日志，不弹窗。（2026-10-30 简化改版拆掉了控制台，
 	# 这里存进 _observer_note 并在回合交接时缀到状态栏；debug_console_log 可读）
@@ -1614,26 +2677,29 @@ func _enemy_attack_fx(raw: int, dealt: int, blocked: int) -> void:
 # ─────────────────────────────────────────────────────────
 func _finish_battle(win: bool) -> void:
 	_busy = false
+	if _banter != null:
+		_banter.stop_battle()
 	if win:
 		SfxNode.play("win")
 		var gain := run.win_battle(combat, level)
 		if combat.is_elite:
 			var it := run.grant_elite_chest()
 			if it != null:
+				_refresh_item_lists()   ## 宝箱道具按 Skill/MCP 进侧栏
 				_overlay_body.text += "
 📦 精英宝箱：获得【%s】！" % it.display_name
 		_overlay_title.text = "胜利"
-		_overlay_body.text = "问题【%s】已解决！\n本战输出 %d 伤害额度 ｜ 剩余额度 %dK（恢复 %dK）\n算力 +%d ｜ 下一步：往卡组里加一张牌。" % [
+		_overlay_body.text = "问题【%s】已解决！\n本战输出 %d 伤害额度 ｜ 剩余额度 %dK（恢复 %dK）\n算力 +%d ｜ 金币 +%d ｜ Deep Sick 好感 +%d\n下一步：往卡组里加一张牌。" % [
 			level.enemy_name, combat.damage_dealt, run.hp,
-			StsCombat.HEAL_ON_WIN, gain]
+			StsCombat.HEAL_ON_WIN, gain, run.last_gold_gain, int(run.last_affection_gain)]
 		_pop_overlay()
 		level_cleared.emit(run.score)
 	else:
 		SfxNode.play("lose")
 		run.lose_battle(combat)
 		_overlay_title.text = "战败"
-		_overlay_body.text = "额度耗尽，被【%s】压制（剩余故障强度 %d/%d）。\n提示：熔断保护能隔离故障、防止额度流失——\n看准敌人的「攻击 N」意图再开防。" % [
-			level.enemy_name, combat.hp, combat.max_hp]
+		_overlay_body.text = "额度耗尽，被【%s】压制（剩余故障强度 %d/%d）。\n金币 +%d ｜ Deep Sick 好感 +%d（饭没白喂）\n提示：熔断保护能隔离故障、防止额度流失——\n看准敌人的「攻击 N」意图再开防。" % [
+			level.enemy_name, combat.hp, combat.max_hp, run.last_gold_gain, int(run.last_affection_gain)]
 		_pop_overlay()
 		level_failed.emit(run.score)
 
@@ -1851,6 +2917,15 @@ func debug_fx_demo(kind: String) -> void:
 				SfxNode.play("fx_slash")
 
 
+## 沙盒 F1：直接充满并释放终结技（免攒能量，反复看演出）
+func debug_ult_demo() -> void:
+	if combat == null or _ult_playing or combat.over != StsCombat.Result.RUNNING:
+		return
+	combat.ult_charge = StsCombat.ULT_MAX
+	_update_ult_ui()
+	_cast_ult()
+
+
 func debug_feed_rice(n: int) -> void:
 	if combat == null:
 		return
@@ -1900,5 +2975,246 @@ func debug_status_text() -> String:
 	return _status_label.text if _status_label != null else ""
 
 
+## 效果层状态条（玩家|敌人），供冒烟断言
+func debug_effect_status_text() -> String:
+	var p := _player_status_label.text if _player_status_label != null else ""
+	var e := _enemy_status_label.text if _enemy_status_label != null else ""
+	return "%s|%s" % [p, e]
+
+
 func debug_console_log() -> String:
 	return _observer_note
+
+
+# ─────────────────────────────────────────────────────────
+#  LLM 接入：AI 对手 + AI 娘小鲸（battle-integration · 2026-11-03）
+# ─────────────────────────────────────────────────────────
+func _refresh_llm_config() -> LLMConfig:
+	_llm_cfg = LLMConfig.load_from_disk()
+	if _llm != null:
+		_llm.setup(_llm_cfg)
+	return _llm_cfg
+
+
+func _llm_config() -> LLMConfig:
+	if _llm_cfg == null:
+		_llm_cfg = LLMConfig.load_from_disk()
+	return _llm_cfg
+
+
+func _llm_client() -> LLMClient:
+	if _llm != null:
+		return _llm
+	_llm = LLMClient.new()
+	_llm.name = "LLMClient"
+	add_child(_llm)
+	_llm.setup(_llm_config())
+	return _llm
+
+
+## AI 对手只在「AI 开启 + 普通战斗」生效；精英/Boss/关闭时完全走原 end_turn。
+func _ai_enemy_enabled() -> bool:
+	if combat == null or combat.over != StsCombat.Result.RUNNING:
+		return false
+	if _elite or (level != null and level.is_boss):
+		return false
+	var cfg := _llm_config()
+	if not cfg.ai_opponent:
+		return false          ## 主人 2026-11-05：敌人默认走本地规则，省 token
+	return cfg.is_enabled()
+
+
+## 一场战斗内稳定的 resolve_id：同槽位 + 同候选池哈希 → 迟到结果下回合直接复用。
+func _ai_resolve_id() -> int:
+	var li := 0 if run == null else int(run.level_index)
+	return 17000 + li * 100
+
+
+## AI 娘：挂 AIBanter（锚点=右侧 AI 娘），每场开一次。
+func _setup_banter() -> void:
+	if _banter == null:
+		_banter = AIBanter.new()
+		_banter.name = "AIBanter"
+		add_child(_banter)
+	_banter.setup(_companion, _banter_provider)
+	_banter.battle_started()
+
+
+## AI 娘台词 provider：必须立刻返回；异步 reply(text)。
+## 失败/未接 AI → reply("")，AIBanter 播本地兜底，不阻塞演出。
+func _banter_provider(job: Dictionary, reply: Callable) -> void:
+	if not _llm_config().is_enabled():
+		reply.call("")
+		return
+	var messages := [
+		{"role": "system", "content": LLMPrompts.for_scene("dialog")},
+		{"role": "user", "content": _banter_context_text(job)},
+	]
+	_llm_client().request("dialog", messages, func(r: Dictionary) -> void:
+		if bool(r.get("ok", false)):
+			reply.call(LLMParse.parse_dialogue(String(r.get("text", "")), AIBanter.MAX_CHARS))
+		else:
+			reply.call("")
+	, {"timeout_s": ai_timeout})
+
+
+func _banter_context_text(job: Dictionary) -> String:
+	var hook := String(job.get("hook", ""))
+	var ctx: Dictionary = job.get("context", {})
+	match hook:
+		AIBanter.H_OPENING:
+			return "战斗刚开始，说一句开场。"
+		AIBanter.H_CHEER:
+			return "玩家刚打出 %d 阶连段（第 %d 回合），夸他一句。" % [
+					int(ctx.get("streak", 0)), int(ctx.get("turn", 0))]
+		AIBanter.H_DANGER:
+			return "玩家 HP %d/%d，跌破 30%%，关心一句。" % [
+					int(ctx.get("hp", 0)), int(ctx.get("max_hp", 0))]
+		AIBanter.H_RETORT:
+			return "敌人刚刚说：「%s」。回怼它。" % String(ctx.get("enemy_line", ""))
+	return "说一句短台词。"
+
+
+## 一次 AI 敌方决策：请求 + 思考气泡 + 3s 计时（当帧起算），先到者接演。
+## apply_ai_action 内部自走完整敌方回合（含 start_turn），这里不再调 end_turn。
+func _ai_enemy_turn() -> Array[Dictionary]:
+	var legal := LLMOpponentPool.legal_actions(combat)
+	var pool_hash := ",".join(_packed(legal))
+	var snap := combat.ai_state_snapshot()
+	var messages := [
+		{"role": "system", "content": LLMPrompts.for_scene("observer")},
+		{"role": "user", "content": _observer_snapshot_text(snap, legal)},
+	]
+	_ai_done = false
+	_ai_action = ""
+	_ai_reason = ""
+	_ai_source = ""
+	_show_ai_thinking(true)
+	_llm_client().request("observer", messages, _on_ai_observer_done, {
+		"resolve_id": _ai_resolve_id(),
+		"pool_hash": pool_hash,
+		"timeout_s": ai_timeout,
+	})
+	# 3s 预算：请求发出当帧起算；ignore_time_scale 防 hitstop 拖表
+	var timer := get_tree().create_timer(ai_timeout, true, false, true)
+	timer.timeout.connect(_on_ai_deadline)
+	if not _ai_done:
+		await ai_decision_ready
+	_show_ai_thinking(false)
+	if not _ai_reason.is_empty():
+		_enemy_speak(_ai_reason)
+	# 空/非法动作由 apply_ai_action 静默落 local_choose，台词照播
+	return combat.apply_ai_action(_ai_action, _ai_reason)
+
+
+func _on_ai_observer_done(r: Dictionary) -> void:
+	if _ai_done:
+		return
+	_ai_done = true
+	if bool(r.get("ok", false)):
+		var parsed := LLMParse.parse_action(String(r.get("text", "")))
+		_ai_action = String(parsed.get("action", ""))
+		_ai_reason = String(parsed.get("line", ""))
+		_ai_source = String(parsed.get("source", "null"))
+	else:
+		_ai_action = ""
+		_ai_reason = ""
+		_ai_source = String(r.get("reason", "fail"))
+	ai_decision_ready.emit()
+
+
+func _on_ai_deadline() -> void:
+	if _ai_done:
+		return
+	_ai_done = true
+	_ai_action = ""
+	_ai_reason = ""
+	_ai_source = "timeout"
+	ai_decision_ready.emit()
+
+
+func _observer_snapshot_text(snap: Dictionary, legal: Array) -> String:
+	var mark := ""
+	if bool(snap.get("mark_active", false)):
+		mark = " 标记%s剩%d回合" % [
+				String(snap.get("mark_mode", "")), int(snap.get("mark_turns_left", 0))]
+	return "敌HP %d/%d 玩家HP %d/%d 回合%d 上回合 攻击×%d 发育×%d 连段阶%d%s 可用 %s" % [
+		int(snap.get("enemy_hp", 0)), int(snap.get("enemy_max_hp", 1)),
+		int(snap.get("player_hp", 0)), int(snap.get("player_max_hp", 1)),
+		int(snap.get("turn", 0)),
+		int(snap.get("attacks_last_turn", 0)), int(snap.get("grows_last_turn", 0)),
+		int(snap.get("max_streak_last_turn", 0)), mark,
+		", ".join(_packed(legal))]
+
+
+func _packed(arr: Array) -> PackedStringArray:
+	var out := PackedStringArray()
+	for v in arr:
+		out.append(String(v))
+	return out
+
+
+## 敌人头顶「思考中…」气泡：纯演出，不锁输入。
+func _show_ai_thinking(on: bool) -> void:
+	if not _fx_enabled or _enemy_root == null or _fx_root == null:
+		return
+	if _ai_think == null:
+		_ai_think = UiKit.label("观察者 · 思考中…", UiKit.FS_XS, Color(1.0, 0.78, 0.45))
+		_ai_think.add_theme_constant_override("outline_size", 4)
+		_ai_think.add_theme_color_override("font_outline_color", Color(0, 0, 0, 0.9))
+		_ai_think.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		_ai_think.visible = false
+		_fx_root.add_child(_ai_think)
+	if on:
+		_ai_think.position = _enemy_root.position \
+				+ Vector2(_enemy_root.size.x * 0.5 - 72.0, -16.0)
+	_ai_think.visible = on
+
+
+## 敌人台词飘字（≤26 字，不弹窗不锁输入）
+func _enemy_speak(line: String) -> void:
+	var text := line.strip_edges()
+	if text.is_empty() or _enemy_root == null:
+		return
+	if text.length() > 26:
+		text = text.substr(0, 26)
+	_float_text(_enemy_root.position + Vector2(_enemy_root.size.x * 0.5 - 90.0, -8.0),
+			text, Color(1.0, 0.72, 0.38), UiKit.FS_M)
+
+
+func _enemy_line_of(e: Dictionary) -> String:
+	var line := String(e.get("reason", "")).strip_edges()
+	if line.is_empty():
+		line = LLMOpponentPool.action_ui_name(String(e.get("ai_action", "")))
+	return line
+
+
+func _exit_tree() -> void:
+	if _llm != null:
+		_llm.shutdown()
+
+
+# ── 测试用（battle-integration 验收）──────────────────────
+func debug_ai_enabled() -> bool:
+	return _ai_enemy_enabled()
+
+
+func debug_ai_last() -> Dictionary:
+	return {"action": _ai_action, "reason": _ai_reason, "source": _ai_source}
+
+
+func debug_llm_client() -> LLMClient:
+	return _llm_client()
+
+
+func debug_banter() -> AIBanter:
+	return _banter
+
+
+## 测试/后续 GUI 热切换用：直接注入配置与假后端（不改盘上文件）
+func debug_set_llm(cfg: LLMConfig, backend = null) -> void:
+	_llm_cfg = cfg
+	var c := _llm_client()
+	c.setup(cfg)
+	if backend != null:
+		c.set_backend(backend)

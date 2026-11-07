@@ -130,12 +130,25 @@ static func card(card_id: String) -> StsCard:
 			int(d["damage"]), int(d["block"]), String(d["art"]))
 
 
+## 许愿卡元数据（2026-11-04）：id → {name, desc}
+## 这些卡不在静态 CARDS 表里（运行时生成），名字/描述由 AI 给、本地落登记。
+static var _wish_meta: Dictionary = {}
+
+
+static func register_wish_meta(card_id: String, cname: String, cdesc: String) -> void:
+	_wish_meta[card_id] = {"name": cname, "desc": cdesc}
+
+
 static func card_name(card_id: String) -> String:
+	if _wish_meta.has(card_id):
+		return String((_wish_meta[card_id] as Dictionary).get("name", card_id))
 	var d: Dictionary = CARDS.get(card_id, {})
 	return String(d.get("name", card_id))
 
 
 static func desc(card_id: String) -> String:
+	if _wish_meta.has(card_id):
+		return String((_wish_meta[card_id] as Dictionary).get("desc", ""))
 	var d: Dictionary = CARDS.get(card_id, {})
 	return String(d.get("desc", ""))
 

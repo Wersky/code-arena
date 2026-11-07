@@ -26,6 +26,28 @@ func _initialize() -> void:
 	await _test_battle_intro()
 	await _test_map_event()
 	await _test_screen_router()
+	_test_effect_dsl()
+	_test_dsl_spec_file()
+	_test_effect_combat()
+	_test_pricing()
+	_test_combo()
+	_test_energy_system()
+	await _test_wish_canvas_colors()
+	await _test_wish_canvas_edit()
+	await _test_card_flip()
+	await _test_patch_demo()
+	_test_affection_system()
+	await _test_shop_gifts()
+	_test_wish_budget()
+	await _test_prefetch_state()
+	_test_llm_config()
+	_test_llm_protocol()
+	_test_llm_parse()
+	_test_llm_opponent()
+	_test_llm_event()
+	await _test_llm_client()
+	await _test_llm_banter()
+	await _test_llm_arena()
 	print("\n==== %d 项检查，%d 项失败 ====" % [_checks, _fails])
 	quit(1 if _fails > 0 else 0)
 
@@ -533,6 +555,32 @@ func _test_screen_router() -> void:
 	_check(sb != null and sb.get_child_count() > 0, "沙盒面板有内容")
 	_eq(main.debug_screen_count(), 1, "沙盒面板不计入界面数")
 
+	# 本次改动 Demo：启动界面图标入口 + 下拉（2026-11-03）
+	var demo_entry: Node = main._current.find_child("LlmDemoEntry", true, false)
+	_check(demo_entry == null, "图标入口初始不存在（未展开对话框）")
+	main._current.expand()
+	await process_frame
+	demo_entry = main._current.find_child("LlmDemoEntry", true, false)
+	_check(demo_entry != null, "对话框展开后 Demo 图标入口出现")
+	_check(demo_entry is TextureButton and String((demo_entry as TextureButton).tooltip_text) == "demo", "Demo 图标 tooltip = demo")
+	var ai_entry: Node = main._current.find_child("AiSettingsEntry", true, false)
+	_check(ai_entry is TextureButton and String((ai_entry as TextureButton).tooltip_text) == "模型接入", "模型接入图标 tooltip 正确")
+	_check(main._current._skill_list.visible == false and main._current._mcp_box.visible == false, "技能/MCP 默认收起")
+	main._current._toggle_skill()
+	await process_frame
+	_check(main._current._skill_list.visible, "点击技能标题展开列表")
+	var demo_page := LLMDemoScreen.new()
+	_host.add_child(demo_page)
+	await process_frame
+	_check(demo_page.get_child_count() > 0, "Demo 页已构建")
+	demo_page._switch_tab(1)
+	await process_frame
+	_check(demo_page._combat != null, "Demo 真对战可初始化")
+	demo_page._switch_tab(2)
+	await process_frame
+	_check(demo_page._event_run != null, "Demo 事件引擎可初始化")
+	demo_page.queue_free()
+
 	for screen in ["arena", "reward", "map", "event", "menu", "result"]:
 		main.debug_show(screen)
 		await process_frame
@@ -587,8 +635,9 @@ func _test_map_event() -> void:
 	# 门概率表 + 沙盒强制门优先级（2026-11-02 修：force 曾被随机 roll 覆盖）
 	_eq(RunState.pick_special(0.10, ""), "elite", "门概率：<20% → 精英门")
 	_eq(RunState.pick_special(0.30, ""), "event", "门概率：20~50% → 事件门")
-	_eq(RunState.pick_special(0.55, ""), "bonus", "门概率：50~60% → 奖励门")
-	_eq(RunState.pick_special(0.90, ""), "", "门概率：≥60% → 纯战斗")
+	_eq(RunState.pick_special(0.50, ""), "bonus", "门概率：45~55% → 奖励门")
+	_eq(RunState.pick_special(0.60, ""), "shop", "门概率：55~65% → 商店门")
+	_eq(RunState.pick_special(0.90, ""), "", "门概率：≥65% → 纯战斗")
 	_eq(RunState.pick_special(0.10, "event"), "event", "强制门覆盖随机（事件）")
 	_eq(RunState.pick_special(0.90, "elite"), "elite", "强制门覆盖随机（精英）")
 
@@ -719,6 +768,18 @@ func _test_map_event() -> void:
 	_check(ResourceLoader.exists("res://assets/art/sts-art-cp-format.png"), "ChatPPT 攻击卡面存在")
 	_check(ResourceLoader.exists("res://assets/art/sts-art-cp-template.png"), "ChatPPT 防御卡面存在")
 
+	# 全部 AI 初始可选（主人 2026-11-03 钦定：无需通关解锁）
+	_eq(AiPool.unlocked_ids(0).size(), 4, "0 关时 4 位 AI 全部解锁")
+	var cp_select := AiPool.ai_list_for_select(0)
+	var cp_locked := 0
+	for a in cp_select:
+		if a.locked:
+			cp_locked += 1
+	_eq(cp_locked, 0, "选人列表 0 关时无锁定项")
+	_eq(int(LaunchScreen.MODELS[1][2]), 0, "启动界面 Grok 无需通关")
+	_eq(int(LaunchScreen.MODELS[2][2]), 0, "启动界面 GPT 无需通关")
+	_eq(int(LaunchScreen.MODELS[3][2]), 0, "启动界面千问无需通关")
+
 	var cp := StsCombat.new()
 	cp.setup(cp_deck, "沙袋", 999, [{"kind": "attack", "value": 4}], 80, 7)
 	cp.set_ai_id("chatppt")
@@ -746,3 +807,904 @@ func _make_click_event() -> InputEventMouseButton:
 	ev.pressed = true
 	ev.position = Vector2(100, 100)
 	return ev
+
+
+# ═════════════════════════════════════════════════════════
+#  LLM 接入层（llm-core / opponent-rules / event-engine / banter / battle）
+# ═════════════════════════════════════════════════════════
+func _llm_test_cfg() -> LLMConfig:
+	var cfg := LLMConfig.new()
+	cfg.enabled = true
+	cfg.base_url = "https://api.example.com"
+	cfg.api_key = "sk-test"
+	cfg.protocol = "openai"
+	cfg.model = "test-model"
+	return cfg
+
+
+func _test_llm_config() -> void:
+	print("[LLMConfig]")
+	var secret := "sk-测试-key/1234567890"
+	var blob := LLMConfig.obfuscate(secret)
+	_check(blob.begins_with("b64:") and not blob.contains("sk-"), "Key 落盘 b64 前缀且无明文")
+	_eq(LLMConfig.deobfuscate(blob), secret, "Key XOR+base64 混淆往返（含中文）")
+
+	var cfg := LLMConfig.new()
+	cfg.enabled = true
+	cfg.base_url = "https://api.example.com/v1/"
+	cfg.api_key = secret
+	cfg.protocol = "chat_completions"
+	cfg.model = "gemini-2.0-flash"
+	var path := "user://llm_config_smoke.cfg"
+	_eq(cfg.save(path), OK, "配置 save 返回 OK")
+	var back := LLMConfig.load_from_disk(path)
+	_check(back.enabled and back.api_key == secret and back.protocol == "chat_completions"
+			and back.model == "gemini-2.0-flash", "配置存读往返（含 Key 混淆）")
+	DirAccess.remove_absolute(ProjectSettings.globalize_path(path))
+	_check(back.is_enabled(), "is_enabled：三要素齐")
+	_check(absf(back.temp_for("observer") - 0.3) < 0.001, "温度分治 observer=0.3")
+	_check(absf(back.temp_for("event") - 0.5) < 0.001, "温度分治 event=0.5")
+	_check(absf(back.temp_for("dialog") - 0.8) < 0.001, "温度分治 dialog=0.8")
+	_check(absf(back.temp_for("unknown") - 0.5) < 0.001, "未知 scene_tag 回落 0.5")
+
+	# ZCode provider 导入（goat 分组）
+	var zp := "user://zcode_provider_smoke.json"
+	var fake := {
+		"config": {"providerConfigRules": {"providerRules": [
+			{"providerId": "goat-claude", "providerName": "goat-claude", "enabled": true,
+			 "config": {"access": {"type": "api-key", "apiKey": "user_testsmoke1234"},
+				"api": {"type": "anthropic-messages", "baseUrl": "https://api.example.com/provider/v1"},
+				"personalModelIds": ["claude-haiku-5-5", "claude-sonnet-5-5"]}},
+		]}}
+	}
+	var zf := FileAccess.open(zp, FileAccess.WRITE)
+	zf.store_string(JSON.stringify(fake))
+	zf.close()
+	var imp := LLMConfig.import_zcode_provider("goat-claude", ProjectSettings.globalize_path(zp))
+	_check(bool(imp.get("ok", false)), "ZCode provider 导入成功")
+	_eq(String(imp.get("protocol", "")), "anthropic", "导入协议映射 anthropic-messages → anthropic")
+	_eq(String(imp.get("model", "")), "claude-haiku-5-5", "导入取第一个模型")
+	_eq(String(imp.get("base_url", "")), "https://api.example.com/provider/v1", "导入 base URL")
+	_check(String(imp.get("key_tail", "")).ends_with("1234"), "导入 Key 尾部脱敏")
+	var miss := LLMConfig.import_zcode_provider("nope", ProjectSettings.globalize_path(zp))
+	_check(not bool(miss.get("ok", true)), "不存在的 provider 返回失败")
+	DirAccess.remove_absolute(ProjectSettings.globalize_path(zp))
+
+
+func _test_llm_protocol() -> void:
+	print("[LLMProtocol]")
+	_eq(LLMProtocol.normalize_base("openai", "https://api.openai.com/v1/"),
+			"https://api.openai.com", "base URL 去尾斜杠与 /v1")
+	_eq(LLMProtocol.chat_url("openai", "https://api.openai.com/v1", "gpt-4o"),
+			"https://api.openai.com/v1/chat/completions", "openai URL 不出现 /v1/v1")
+	_eq(LLMProtocol.chat_url("deepseek", "https://api.deepseek.com/", "deepseek-chat"),
+			"https://api.deepseek.com/v1/chat/completions", "deepseek URL")
+	_eq(LLMProtocol.chat_url("gemini", "https://generativelanguage.googleapis.com/",
+			"gemini-2.0-flash", "K1"),
+			"https://generativelanguage.googleapis.com/v1/chat/completions",
+			"gemini 归并为 chat_completions URL")
+	_eq(LLMProtocol.chat_url("anthropic", "https://api.anthropic.com", "claude-3"),
+			"https://api.anthropic.com/v1/messages", "anthropic URL")
+	_eq(LLMProtocol.models_url("anthropic", "https://api.anthropic.com"), "",
+			"anthropic 无模型列表端点")
+	var ah := LLMProtocol.headers("anthropic", "sk-ant")
+	_check(ah.has("x-api-key: sk-ant") and ah.has("anthropic-version: 2023-06-01"),
+			"anthropic 头：x-api-key + anthropic-version")
+	var abody: Dictionary = JSON.parse_string(LLMProtocol.build_body("anthropic", "claude-3",
+			[{"role": "system", "content": "s"}, {"role": "user", "content": "u"}], 0.3))
+	_eq(int(abody.get("max_tokens", 0)), LLMProtocol.DEFAULT_MAX_TOKENS, "anthropic max_tokens 必填")
+	_eq(LLMProtocol.parse_models("openai", '{"data":[{"id":"a"},{"id":"b"},{"id":"a"}]}'),
+			["a", "b"], "/models 解析 data[].id 去重")
+	_eq(LLMProtocol.parse_models("gemini", '{"models":[{"name":"models/gemini-1.5"}]}'),
+			["gemini-1.5"], "/models 解析 models[].name 剥前缀")
+	_eq(LLMProtocol.extract_text("openai", '{"choices":[{"message":{"content":"你好"}}]}'),
+			"你好", "回复正文提取 openai")
+
+
+func _test_llm_parse() -> void:
+	print("[LLMParse]")
+	_eq(String(LLMParse.parse_action('{"action":"taunt","line":"来啊"}')["action"]),
+			"TAUNT", "动作层① JSON")
+	_eq(String(LLMParse.parse_action("ATTACK\n\n检测到非法连击")["action"]),
+			"ATTACK", "动作层② 首行动作词")
+	_eq(String(LLMParse.parse_action("这波先防御一下，再考虑蓄力。")["action"]),
+			"DEFEND", "动作层③ 中文关键词")
+	var nul := LLMParse.parse_action("今天天气不错，我们去吃白饭吧。")
+	_check(not bool(nul["ok"]) and not String(nul["line"]).is_empty(),
+			"动作层④ null 但台词保留")
+	var ev := LLMParse.parse_event('{"pick":2,"reason":"省下的时间多吃两口白饭"}', 3)
+	_check(bool(ev["ok"]) and int(ev["pick"]) == 2, "事件三关全过")
+	_check(not bool(LLMParse.parse_event("随便选一个吧", 3)["ok"]), "事件关1：非 JSON 失败")
+	_check(not bool(LLMParse.parse_event('{"pick":5,"reason":"x"}', 3)["ok"]), "事件关3：越界失败")
+	_eq(LLMParse.parse_dialogue("```\n「白饭要趁热。」\n```"), "白饭要趁热。",
+			"台词剥围栏与引号")
+
+
+func _test_llm_opponent() -> void:
+	print("[LLMOpponentPool]")
+	var d := {
+		"attacks_last_turn": 2, "grow_streak": 2,
+		"defend_ready": true, "charge_ready": true,
+		"mark_ready": true, "taunt_ready": true, "taunt_unlocked": true,
+	}
+	var legal := LLMOpponentPool.legal_actions(d)
+	_eq(legal.size(), 5, "五动作全部合法（白名单 5 个）")
+	for a in ["ATTACK", "DEFEND", "CHARGE", "MARK", "TAUNT"]:
+		_check(LLMOpponentPool.is_legal(a, d), "is_legal %s" % a)
+	_eq(LLMOpponentPool.local_choose(d), "DEFEND", "本地兜底：上回合≥2攻先防御")
+	_eq(LLMOpponentPool.normalize_action("攻击"), "ATTACK", "中文别名归一")
+	_check(not LLMOpponentPool.is_legal("MARK:XXX", d), "非法标记模式拒绝")
+	_check(not LLMOpponentPool.action_ui_name("MARK:AGGRO").is_empty(), "动作 UI 名可读")
+
+
+func _test_llm_event() -> void:
+	print("[LLMEvent]")
+	var run := RunState.new()
+	run.reset_run()
+	LLMEventEngine.reset_run(run)
+	_eq(LLMEventEngine.budget_left(run), LLMEventSlots.MAX_EVENTS_PER_RUN, "事件预算初始 2")
+	_check(LLMEventEngine.can_trigger(run), "开局允许 AI 事件")
+	var cands := LLMEventEngine.build_candidates(run, run.rng)
+	_check(cands.size() >= 2 and cands.size() <= 3, "候选池 2~3 个（本地预筛）")
+	_check(not String((cands[0] as Dictionary).get("id", "")).is_empty(), "候选带机械槽位 ID")
+	var res := LLMEventEngine.apply_pick(run, cands, 1)
+	_check(bool(res.get("ok", false)), "apply_pick 落地本地数值")
+	_eq(LLMEventEngine.event_count(run), 1, "事件计数 +1")
+	_eq(LLMEventEngine.budget_left(run), 1, "预算 -1")
+	_check(not bool(LLMEventEngine.apply_pick(run, [], 1).get("ok", true)), "空池拒绝落地")
+	var net := LLMEventEngine.total_net(run)
+	_check(net >= LLMEventSlots.EVENT_NET_MIN and net <= LLMEventSlots.EVENT_NET_MAX,
+			"单事件净值钳 [−8,+6]（实 %d）" % net)
+
+
+func _test_llm_client() -> void:
+	print("[LLMClient · Mock]")
+	# ① 正常剧本
+	var c1 := LLMClient.new()
+	c1.name = "SmokeLLM1"
+	_host.add_child(c1)
+	c1.setup(_llm_test_cfg())
+	var m1 := LLMClient.MockBackend.new("normal")
+	c1.set_backend(m1)
+	var got1: Array = []
+	c1.request("observer", [{"role": "user", "content": "x"}],
+			func(r: Dictionary) -> void: got1.append(r))
+	await create_timer(0.15).timeout
+	_check(got1.size() == 1 and bool(got1[0]["ok"])
+			and String(got1[0]["text"]).begins_with("ATTACK"), "正常剧本回包")
+	_eq(m1.requests, 1, "正常剧本后端 1 次")
+	c1.shutdown()
+	c1.queue_free()
+
+	# ② 垃圾剧本（客户端原样返回；解析层兜底）
+	var c2 := LLMClient.new()
+	c2.name = "SmokeLLM2"
+	_host.add_child(c2)
+	c2.setup(_llm_test_cfg())
+	var m2 := LLMClient.MockBackend.new("garbage")
+	c2.set_backend(m2)
+	var got2: Array = []
+	c2.request("observer", [{"role": "user", "content": "x"}],
+			func(r: Dictionary) -> void: got2.append(r))
+	await create_timer(0.15).timeout
+	_check(got2.size() == 1 and bool(got2[0]["ok"]), "垃圾剧本仍回包")
+	var gp := LLMParse.parse_action(String(got2[0].get("text", "")))
+	_check(not bool(gp["ok"]) and not String(gp["line"]).is_empty(),
+			"垃圾输出→动作兜底、台词保留")
+	c2.shutdown()
+	c2.queue_free()
+
+	# ③ 挂起剧本 + 超时兜底（默认 3s；测试用 0.2s 快进）
+	_check(absf(LLMClient.DEFAULT_TIMEOUT_S - 3.0) < 0.001, "默认决策预算 3.0s")
+	var c3 := LLMClient.new()
+	c3.name = "SmokeLLM3"
+	_host.add_child(c3)
+	c3.setup(_llm_test_cfg())
+	c3.set_backend(LLMClient.MockBackend.new("hang"))
+	var got3: Array = []
+	var t0 := Time.get_ticks_msec()
+	c3.request("observer", [{"role": "user", "content": "x"}],
+			func(r: Dictionary) -> void: got3.append(r), {"timeout_s": 0.2})
+	await create_timer(0.6).timeout
+	var dt := float(Time.get_ticks_msec() - t0) / 1000.0
+	_check(got3.size() == 1 and String(got3[0]["reason"]) == "timeout", "挂起剧本→超时兜底")
+	_check(dt < 0.9, "超时兜底未拖住（%.2fs < 0.9s）" % dt)
+	c3.shutdown()
+	c3.queue_free()
+
+	# ④ 401 熔断：当回合兜底，第二请求短路
+	var c4 := LLMClient.new()
+	c4.name = "SmokeLLM4"
+	_host.add_child(c4)
+	c4.setup(_llm_test_cfg())
+	var m4 := LLMClient.MockBackend.new("status")
+	m4.status_code = 401
+	c4.set_backend(m4)
+	var got4: Array = []
+	c4.request("observer", [{"role": "user", "content": "a"}],
+			func(r: Dictionary) -> void: got4.append(r))
+	await create_timer(0.15).timeout
+	_check(got4.size() == 1 and String(got4[0]["reason"]) == "http_401", "401 当回合兜底")
+	c4.request("observer", [{"role": "user", "content": "b"}],
+			func(r: Dictionary) -> void: got4.append(r))
+	await create_timer(0.15).timeout
+	_check(got4.size() == 2 and String(got4[1]["reason"]) == "circuit_open", "401 后续请求短路")
+	_eq(m4.requests, 1, "熔断后不再打后端")
+	c4.shutdown()
+	c4.queue_free()
+
+	# ⑤ 并发峰值 ≤2
+	var c5 := LLMClient.new()
+	c5.name = "SmokeLLM5"
+	_host.add_child(c5)
+	c5.setup(_llm_test_cfg())
+	var m5 := LLMClient.MockBackend.new("normal")
+	m5.delay_s = 0.12
+	c5.set_backend(m5)
+	var done5: Array = []
+	for i in 3:
+		c5.request("event", [{"role": "user", "content": "q%d" % i}],
+				func(r: Dictionary) -> void: done5.append(r))
+	await create_timer(0.05).timeout
+	_eq(c5.active_count(), 2, "并发在飞 == 2")
+	_eq(c5.pending_count(), 1, "第 3 个排队")
+	await create_timer(0.7).timeout
+	_check(c5.peak_active <= 2, "并发峰值 ≤2（实 %d）" % c5.peak_active)
+	_eq(done5.size(), 3, "3 个请求全部回调")
+	c5.shutdown()
+	c5.queue_free()
+
+	# ⑥ 迟到缓存：超时后回来的结果，下回合同 rid+pool 直接复用
+	var c6 := LLMClient.new()
+	c6.name = "SmokeLLM6"
+	_host.add_child(c6)
+	c6.setup(_llm_test_cfg())
+	var m6 := LLMClient.MockBackend.new("normal")
+	m6.reply = "LATE-TEXT"
+	m6.delay_s = 0.35
+	c6.set_backend(m6)
+	var got6: Array = []
+	c6.request("event", [{"role": "user", "content": "x"}],
+			func(r: Dictionary) -> void: got6.append(r),
+			{"timeout_s": 0.1, "resolve_id": 90210, "pool_hash": "ph-smoke"})
+	await create_timer(0.2).timeout
+	_eq(String(got6[0]["reason"]) if got6.size() > 0 else "none", "timeout",
+			"迟到场景先超时兜底")
+	await create_timer(0.45).timeout
+	_check(c6.has_late_result(90210, "ph-smoke"), "迟到结果入缓存")
+	c6.request("event", [{"role": "user", "content": "y"}],
+			func(r: Dictionary) -> void: got6.append(r),
+			{"timeout_s": 1.0, "resolve_id": 90210, "pool_hash": "ph-smoke"})
+	await create_timer(0.12).timeout
+	var last: Dictionary = got6[got6.size() - 1]
+	_check(bool(last["ok"]) and bool(last["from_cache"]) and String(last["text"]) == "LATE-TEXT",
+			"同 rid+pool 复用迟到缓存")
+	_eq(m6.requests, 1, "缓存复用不再发请求")
+	c6.shutdown()
+	c6.queue_free()
+	await process_frame
+
+
+func _test_llm_banter() -> void:
+	print("[AIBanter]")
+	var b := AIBanter.new()
+	b.name = "SmokeBanter"
+	_host.add_child(b)
+	await process_frame
+	b.setup(null, Callable())
+	b.bubble_hold = 0.01
+	b.fade_sec = 0.01
+	b.retort_delay = 0.01
+	b.battle_started()
+	await create_timer(0.3).timeout
+	_eq(b.debug_spoken(AIBanter.H_OPENING).size(), 1, "开场问候 1 次/场")
+	b.on_streak(3, 1)
+	b.on_streak(3, 1)
+	b.on_streak(4, 4)
+	b.on_streak(5, 9)
+	await create_timer(0.9).timeout
+	_eq(b.debug_spoken(AIBanter.H_CHEER).size(), 2, "连段喝彩：2 次/场上限且间隔≥2 回合")
+	b.on_hp_changed(20, 80)
+	b.on_hp_changed(10, 80)
+	await create_timer(0.4).timeout
+	_eq(b.debug_spoken(AIBanter.H_DANGER).size(), 1, "濒危关心 1 次/场")
+	b.notify_enemy_line("检测到非法连击，已加入回收队列")
+	b.notify_enemy_line("上下文已丢失，你谁啊")
+	b.notify_enemy_line("第三条不该播")
+	await create_timer(0.9).timeout
+	_eq(b.debug_spoken(AIBanter.H_RETORT).size(), 2, "回怼敌人：2 次/场上限")
+	_check(AIBanter.MAX_CHARS == 50, "台词上限 50 字")
+	b.stop_battle()
+	b.queue_free()
+	await process_frame
+
+
+func _wait_arena_turn(a: ArenaScreen, target: int, secs := 2.0) -> bool:
+	var t0 := Time.get_ticks_msec()
+	while a.combat != null and a.combat.turn < target:
+		if Time.get_ticks_msec() - t0 > int(secs * 1000.0):
+			return false
+		await create_timer(0.02).timeout
+	return a.combat != null and a.combat.turn >= target
+
+
+func _test_llm_arena() -> void:
+	print("[LLM · arena 接线]")
+	var run := RunState.new()
+	run.reset_run()
+	run.set_ai(AiPool.get_ai("deepdeek"))
+	var a := ArenaScreen.new()
+	a.name = "SmokeArenaLLM"
+	a.setup(run, LevelPool.get_level("L1"))
+	_host.add_child(a)
+	await process_frame
+	await process_frame
+	_check(not a.debug_ai_enabled(), "AI 关闭：arena 默认走原规则")
+	_check(a.debug_banter() != null and String(a.debug_banter().name) == "AIBanter",
+			"AIBanter 已接线")
+	_check(absf(a.ai_timeout - 3.0) < 0.001, "arena 决策预算默认 3s")
+
+	var mock := LLMClient.MockBackend.new("normal")
+	mock.reply = "ATTACK\n\n饭吃饱了，正好上路"
+	a.ai_timeout = 1.0
+	var ai_cfg := _llm_test_cfg()
+	ai_cfg.ai_opponent = true          ## 2026-11-05 起敌人默认关，显式打开才测 AI 路径
+	a.debug_set_llm(ai_cfg, mock)
+	a.debug_banter().set_provider(Callable())
+	_check(a.debug_ai_enabled(), "AI 开启 + 普通战斗 → 启用")
+	var hp0 := a.combat.hp
+	a.debug_end_turn()
+	var advanced := await _wait_arena_turn(a, 2)
+	_check(advanced, "AI 模式：敌方回合推进")
+	_eq(String(a.debug_ai_last().get("source", "")), "line", "AI 动作解析命中")
+	_eq(String(a.debug_ai_last().get("action", "")), "ATTACK", "AI 选中 ATTACK")
+	_eq(a.combat.hp, hp0 - 7, "AI 路径只结算一次（与规则同值 -7，未双调 end_turn）")
+	a.queue_free()
+	await process_frame
+
+	var run_boss := RunState.new()
+	run_boss.reset_run()
+	run_boss.set_ai(AiPool.get_ai("deepdeek"))
+	var b := ArenaScreen.new()
+	b.name = "SmokeArenaBoss"
+	b.setup(run_boss, LevelPool.get_level("L10"))
+	_host.add_child(b)
+	await process_frame
+	await process_frame
+	b.debug_set_llm(_llm_test_cfg())
+	_check(not b.debug_ai_enabled(), "Boss 战锁规则版（不用 AI）")
+	b.queue_free()
+	await process_frame
+
+
+# ══════════════════════════════════════════════════════
+#  效果层回归（2026-11-06 重建：文件曾被回滚，这里一次性补回）
+# ══════════════════════════════════════════════════════
+
+func _fx_card(program: Array, dmg := 5) -> StsCard:
+	var c := StsCard.make("fx_test", StsCard.Kind.ATTACK, 1, dmg, 0, "")
+	c.effects = EffectDSL.compile(program)["clauses"]
+	c.dsl_version = 1
+	return c
+
+
+func _fx_combat(cards: Array, enemy_hp := 100, pattern: Array = []) -> StsCombat:
+	var cb := StsCombat.new()
+	var deck: Array[StsCard] = []
+	for c in cards:
+		deck.append(c)
+	if pattern.is_empty():
+		pattern = [{"kind": "attack", "value": 8}]
+	cb.setup(deck, "fx", enemy_hp, pattern, 80, 7, 1, 1)
+	return cb
+
+
+func _test_effect_dsl() -> void:
+	print("[效果 DSL]")
+	_eq(EffectSpec.VERSION, 1, "规格版本 = 1")
+	_eq(EffectSpec.OPS.size(), 10, "开放 10 个 op")
+	_eq(EffectSpec.TRIGGERS.size(), 8, "开放 8 个触发器")
+	var good := [{"when": "on_play", "then": [
+		{"do": "damage", "amount": 6},
+		{"do": "damage_scaled", "per": "same_kind_streak", "step": 2}]}]
+	var c := EffectDSL.compile(good)
+	_check(bool(c["ok"]), "合法程序编译通过")
+	_eq(int(c["ops"]), 1, "只保留 1 个 op（一张卡一个新特色）")
+	_check((EffectDSL.writeset(c["clauses"]) as Dictionary).has("enemy_hp"), "写集含 enemy_hp")
+	_check(EffectDSL.describe(c["clauses"]).contains("造成"), "人话描述可读")
+	var bad := [
+		{"when": "on_play", "then": [{"do": "not_an_op"}, {"do": "damage", "amount": 999}]},
+		{"when": "nope", "then": [{"do": "damage", "amount": 3}]}]
+	var cb := EffectDSL.compile(bad)
+	_eq(int(cb["ops"]), 1, "未知 op/触发器被丢弃")
+	_eq(int((cb["clauses"] as Array)[0]["then"][0]["amount"]), 20, "超限数值钳到 20")
+	var many := []
+	for i in 5:
+		many.append({"when": "on_play", "then": [{"do": "damage", "amount": 1}]})
+	_eq((EffectDSL.compile(many)["clauses"] as Array).size(), 1,
+			"op 上限 1：多余 clause 被丢")
+	var flood := []
+	for i in 100:
+		flood.append({"when": "on_play", "then": [{"do": "damage", "amount": 1}]})
+	_eq(EffectRuntime.eval(flood, "on_play", {"turn": 1}).size(), 64, "运行期 op 预算 64")
+	_check(not bool(EffectDSL.compile("garbage")["ok"]), "非数组程序 ok=false")
+
+
+func _test_dsl_spec_file() -> void:
+	print("[DSL 规格文件]")
+	var path := "res://scripts/core/dsl_spec.json"
+	_check(FileAccess.file_exists(path), "dsl_spec.json 已落盘")
+	var d = JSON.parse_string(FileAccess.get_file_as_string(path))
+	_check(d is Dictionary, "可解析为 JSON 对象")
+	if not (d is Dictionary):
+		return
+	_eq(int(d.get("version", -1)), EffectSpec.VERSION, "version 与代码一致")
+	var lim: Dictionary = d.get("limits", {})
+	_check(lim.has("max_clauses") and lim.has("op_budget"), "limits 字段完整")
+	_eq((d.get("ops", {}) as Dictionary).size(), EffectSpec.OPS.size(), "ops 数量一致")
+	_eq((d.get("triggers", {}) as Dictionary).size(), EffectSpec.TRIGGERS.size(), "triggers 数量一致")
+
+
+func _test_effect_combat() -> void:
+	print("[效果层·战斗]")
+	var plain := StsCard.make("plain", StsCard.Kind.ATTACK, 1, 5, 0, "")
+	var c0 := _fx_combat([plain])
+	var hp0 := c0.enemy_hp
+	c0.play_card(c0.hand[0], false)
+	_eq(hp0 - c0.enemy_hp, 5, "无 effects 的卡伤害不变")
+	var c2 := _fx_combat([plain])
+	c2._add_status("weak", 1, "enemy")
+	var ev2 := c2.end_turn()
+	var atk_ev := {}
+	for e in ev2:
+		if String(e.get("kind", "")) == "enemy_attack":
+			atk_ev = e
+	_eq(int(atk_ev.get("value", 0)), 6, "降智后敌人攻击 8 → 6")
+	var c3 := _fx_combat([plain])
+	c3._add_status("vulnerable", 1, "enemy")
+	var hp3 := c3.enemy_hp
+	c3.play_card(c3.hand[0], false)
+	_eq(hp3 - c3.enemy_hp, 6, "易伤后 5 点变 6")
+	var c5 := _fx_combat([plain])
+	c5._add_status("poison", 1, "enemy")
+	c5.enemy_block = 10
+	var hp5 := c5.enemy_hp
+	c5.end_turn()
+	_eq(hp5 - c5.enemy_hp, 2, "中毒无视护盾掉 2")
+	var heal_card := _fx_card([{"when": "on_play", "then": [{"do": "heal", "amount": 5}]}], 0)
+	var c9 := _fx_combat([heal_card])
+	c9.hp = 50
+	c9.play_card(c9.hand[0], false)
+	_eq(c9.hp, 55, "heal 回复 5")
+	var blk_card := _fx_card([{"when": "on_play", "then": [{"do": "block", "amount": 6}]}], 0)
+	var c16 := _fx_combat([blk_card])
+	c16.play_card(c16.hand[0], false)
+	_eq(c16.block, 6, "block 给 6 格挡")
+	var ondraw := _fx_card([{"when": "on_draw", "then": [
+		{"do": "apply_status", "status": "strength", "tier": 1, "target": "self"}]}], 0)
+	var c13 := _fx_combat([ondraw])
+	_check(c13.p_status.has("strength"), "on_draw 触发")
+	var onturn := _fx_card([{"when": "on_turn_start", "then": [
+		{"do": "apply_status", "status": "thorns", "tier": 1, "target": "self"}]}], 0)
+	var c14 := _fx_combat([onturn])
+	_check(c14.p_status.has("thorns"), "on_turn_start 触发")
+	var onkill := _fx_card([{"when": "on_kill", "then": [
+		{"do": "apply_status", "status": "vulnerable", "tier": 1, "target": "enemy"}]}], 0)
+	var killer := StsCard.make("killer", StsCard.Kind.ATTACK, 1, 50, 0, "")
+	var c15 := _fx_combat([onkill, killer], 10)
+	c15.hand.clear()
+	c15.draw_pile.clear()
+	c15.discard_pile.clear()
+	c15.hand.append(killer)
+	c15.draw_pile.append(onkill)
+	c15.play_card(killer, false)
+	_check(c15.e_status.has("vulnerable"), "on_kill 触发")
+
+
+func _test_pricing() -> void:
+	print("[定价]")
+	var plain := StsCard.make("p_plain", StsCard.Kind.ATTACK, 1, 6, 0, "")
+	var r1 := EffectPricing.price(plain, 1, 40)
+	_check(bool(r1["ok"]), "定价 ok")
+	_check(int(r1["cost"]) >= 1 and int(r1["cost"]) <= 3, "cost 1–3")
+	_eq(r1["cost"], EffectPricing.price(plain, 1, 40)["cost"], "同卡两次一致")
+	_check(r1.has("p95") and r1.has("banned"), "返回 p95/banned")
+	EffectPricing.clear_cache()
+	var c1 := EffectPricing.price_cached(plain, 1, 20)
+	var c2 := EffectPricing.price_cached(plain, 1, 20)
+	_check(not bool(c1["cached"]) and bool(c2["cached"]), "缓存 miss → hit")
+	_eq(int(EffectPricing.price_cached(plain, 2, 20, false)["cost"]), 3, "未命中给保守上界")
+	var bad_ver := StsCard.make("bad_ver", StsCard.Kind.ATTACK, 1, 5, 0, "")
+	bad_ver.dsl_version = 99
+	bad_ver.effects = EffectDSL.compile([{"when": "on_play", "then": [
+		{"do": "damage", "amount": 5}]}])["clauses"]
+	_check(not bool(EffectPricing.price(bad_ver, 1, 10)["ok"]), "未知版本被拒")
+	_check(bool(EffectPricing.check_termination_gate(0, 30)["ok"]), "终止性闸门通过")
+	_check(not bool(EffectPricing.check_termination_gate(1, 30)["ok"]), "状态重复被拒")
+	_check(bool(EffectPricing.check_decision_gate(18.0)["ok"]), "额外点击 18 通过")
+	_check(not bool(EffectPricing.check_decision_gate(22.0)["ok"]), "额外点击 22 被拒")
+	var ref := EffectPricing._run_deck_verbose(StsCardPool.starter_deck(), 1, 60)
+	var wr := float((ref["summary"] as Dictionary)["win_rate"])
+	_check(wr >= 0.35 and wr <= 0.65, "参考擂台胜率在分辨带（%.2f）" % wr)
+
+
+func _test_combo() -> void:
+	print("[组合审计]")
+	var a := _fx_card([{"when": "on_turn_end", "then": [
+		{"do": "apply_status", "status": "poison", "tier": 1, "target": "enemy"}]}])
+	var b := _fx_card([{"when": "on_turn_end", "then": [
+		{"do": "apply_status", "status": "poison", "tier": 2, "target": "enemy"}]}])
+	var r := EffectCombo.audit([a, b] as Array[StsCard], 1, 20)
+	_check((r["pairs"] as Array).size() >= 1, "共享状态维度进候选")
+	_check((r["dims"] as Dictionary).has("enemy_status"), "维度并集含 enemy_status")
+	_eq(EffectCombo.classify(30.0), "block", "classify: ≥阈值 block")
+	_eq(EffectCombo.classify(5.0), "verify", "classify: 正交互 verify")
+	_eq(EffectCombo.classify(1.0), "clean", "classify: 低于地板 clean")
+	_eq(EffectCombo.classify_triple(20.0), "block", "三阶阈值")
+	_eq(EffectCombo.classify_quad(25.0), "block", "四阶阈值")
+	var c := _fx_card([{"when": "on_play", "then": [{"do": "damage", "amount": 8}]}])
+	var r3 := EffectCombo.audit([a, b, c] as Array[StsCard], 1, 12)
+	_eq((r3["triples"] as Array).size(), 1, "三张卡生成 1 个三元组")
+
+
+func _test_energy_system() -> void:
+	print("[算力]")
+	var free1 := StsCard.make("en1", StsCard.Kind.ATTACK, 1, 5, 0, "")
+	var c2 := StsCard.make("en2", StsCard.Kind.ATTACK, 2, 5, 0, "")
+	var c3 := StsCard.make("en3", StsCard.Kind.ATTACK, 3, 5, 0, "")
+	var cb := StsCombat.new()
+	var deck: Array[StsCard] = [free1, c2, c3]
+	cb.setup(deck, "e", 200, [{"kind": "attack", "value": 8}], 80, 1, 4, 1)
+	_eq(cb.energy, StsCombat.ENERGY_PER_TURN, "开局算力 3")
+	cb.hand.clear()
+	cb.hand.append(free1)
+	cb.play_card(free1, false)
+	_eq(cb.energy, StsCombat.ENERGY_PER_TURN, "cost1 免费")
+	cb.hand.clear()
+	cb.hand.append(c2)
+	cb.play_card(c2, false)
+	_eq(cb.energy, StsCombat.ENERGY_PER_TURN - 2, "cost2 扣 2")
+	cb.hand.clear()
+	cb.hand.append(c3)
+	_check(not cb.can_play(c3), "算力不足 cost3 不可打")
+	cb.start_turn()
+	_eq(cb.energy, StsCombat.ENERGY_PER_TURN, "新回合回满")
+
+
+## 2026-11-06 bug 回归：换画笔不能污染已画笔迹
+func _test_wish_canvas_colors() -> void:
+	print("[涂鸦板·画笔隔离]")
+	var cv := WishCanvas.new()
+	_host.add_child(cv)
+	await process_frame
+	cv.size = Vector2(320, 320)
+	cv.brush_color = Color(0, 1, 0)
+	cv.brush_size = 20.0
+	cv._strokes.append({"pts": PackedVector2Array([Vector2(50, 60), Vector2(120, 60)]),
+			"size": 12.0, "style": "round", "color": Color(1, 0, 0)})
+	cv._strokes.append({"pts": PackedVector2Array([Vector2(50, 140), Vector2(120, 140)]),
+			"size": 12.0, "style": "square", "color": Color(0, 0, 1)})
+	var img := Image.create_empty(256, 256, false, Image.FORMAT_RGB8)
+	cv._raster_to(img, 256)
+	var red := 0
+	var blue := 0
+	var green := 0
+	for y in 256:
+		for x in 256:
+			var c := img.get_pixel(x, y)
+			if c.r > 0.6 and c.g < 0.3 and c.b < 0.3:
+				red += 1
+			elif c.b > 0.6 and c.r < 0.3:
+				blue += 1
+			elif c.g > 0.6 and c.r < 0.3:
+				green += 1
+	_check(red > 20, "第一笔保留红色（%d px）" % red)
+	_check(blue > 20, "第二笔保留蓝色（%d px）" % blue)
+	_eq(green, 0, "切换画笔颜色不污染已有笔迹")
+	cv.queue_free()
+	await process_frame
+
+
+## 2026-11-06 bug 回归：许愿请求的 token/思考预算
+func _test_wish_budget() -> void:
+	print("[许愿预算]")
+	_check(WishCardFactory.WISH_MAX_TOKENS >= 16384, "主请求预算 ≥16384（画图不省 token）")
+	_check(WishCardFactory.WISH_MAX_TOKENS_RETRY > WishCardFactory.WISH_MAX_TOKENS,
+			"重试预算更大")
+
+
+func _test_prefetch_state() -> void:
+	print("[许愿预取]")
+	var run := RunState.new()
+	run.reset_run()
+	run.set_ai(AiPool.get_ai("deepdeek"))
+	var arena := ArenaScreen.new()
+	arena.setup(run, LevelPool.get_level("L1"))
+	_host.add_child(arena)
+	await process_frame
+	arena._clear_prefetch()
+	_check(arena._prefetch_result.is_empty() and not arena._prefetch_busy, "预取初始干净")
+	_eq(arena._prefetch_count, 0, "计数归零")
+	_eq(arena._wish_prefetch_hash(), arena._wish_prefetch_hash(), "hash 稳定")
+
+	## 弃牌次数：上限内可以连续弃（2026-11-06 修反向判断：旧代码弃 1 张后就锁死）
+	arena._discards_left = arena._discard_limit()
+	## 工具栏新控件（2026-11-06：滑杆尺寸 / 橡皮图标 / 吸管 / 全色采色区）
+	_check(arena._wish_size_slider != null and arena._wish_size_slider.max_value >= 99.0,
+			"画笔尺寸滑杆存在且到 100")
+	_check(arena._wish_eraser_btn != null, "橡皮图标按钮存在")
+	_check(arena._wish_picker_btn != null, "吸管图标按钮存在")
+	_check(arena._wish_sv_rect != null and arena._wish_sv_rect.texture != null,
+			"饱和度/明度方块已生成")
+	_check(arena._wish_hue_slider != null, "色相滑杆存在")
+	_check(arena._discard_limit() >= 3, "弃牌上限至少 3 张")
+	_check(arena._can_discard(), "满次数时可弃")
+	arena._discards_left -= 1
+	_check(arena._can_discard(), "弃 1 张后仍可弃（旧 bug 在这里断）")
+	arena._discards_left -= 1
+	_check(arena._can_discard(), "弃 2 张后仍可弃")
+	arena._discards_left = 0
+	_check(not arena._can_discard(), "用完后不可弃")
+	arena.queue_free()
+	await process_frame
+
+
+## 2026-11-06：撤销 / 橡皮回归
+func _test_wish_canvas_edit() -> void:
+	print("[涂鸦板·撤销与橡皮]")
+	var cv := WishCanvas.new()
+	_host.add_child(cv)
+	await process_frame
+	cv.size = Vector2(320, 320)
+
+	# 撤销：逐笔回退，空栈返回 false
+	cv.clear()
+	cv._strokes.append({"pts": PackedVector2Array([Vector2(40, 40), Vector2(120, 40)]),
+			"size": 12.0, "style": "round", "color": Color(1, 0, 0), "eraser": false})
+	cv._strokes.append({"pts": PackedVector2Array([Vector2(40, 80), Vector2(120, 80)]),
+			"size": 12.0, "style": "round", "color": Color(0, 0, 1), "eraser": false})
+	_check(cv.undo(), "撤销返回 true")
+	_eq(cv.stroke_count(), 1, "撤销后剩 1 笔")
+	_check(cv.undo(), "再撤销一次")
+	_eq(cv.stroke_count(), 0, "撤销到空")
+	_check(not cv.undo(), "空栈撤销返回 false")
+
+	# 橡皮：用纸色覆盖，导出图里原来的红笔消失
+	cv.clear()
+	cv.tool = "brush"
+	cv.brush_color = Color(1, 0, 0)
+	cv.brush_size = 16.0
+	_press_release(cv, Vector2(60, 100), Vector2(160, 100))
+	_eq(cv.stroke_count(), 1, "普通笔画入栈")
+	_eq((cv._strokes[0] as Dictionary)["color"], Color(1, 0, 0), "普通笔保留画笔颜色")
+	cv.tool = "eraser"
+	_press_release(cv, Vector2(40, 100), Vector2(180, 100))
+	_eq(cv.stroke_count(), 2, "橡皮笔入栈")
+	_eq((cv._strokes[1] as Dictionary)["color"], WishCanvas.PAPER, "橡皮笔用纸色")
+	_check(bool((cv._strokes[1] as Dictionary)["eraser"]), "橡皮笔带 eraser 标记")
+	var img := Image.create_empty(256, 256, false, Image.FORMAT_RGB8)
+	cv._raster_to(img, 256)
+	var red := 0
+	for y in 256:
+		for x in 256:
+			var c := img.get_pixel(x, y)
+			if c.r > 0.6 and c.g < 0.3 and c.b < 0.3:
+				red += 1
+	_eq(red, 0, "橡皮覆盖后没有残留红像素")
+	# 撤销橡皮 → 红笔回来
+	cv.undo()
+	var img2 := Image.create_empty(256, 256, false, Image.FORMAT_RGB8)
+	cv._raster_to(img2, 256)
+	var red2 := 0
+	for y in 256:
+		for x in 256:
+			var c2 := img2.get_pixel(x, y)
+			if c2.r > 0.6 and c2.g < 0.3 and c2.b < 0.3:
+				red2 += 1
+	_check(red2 > 20, "撤销橡皮后红笔恢复（%d px）" % red2)
+
+	# 吸管：点在红笔上取到红色，且不落笔
+	var picked := {"c": Color.WHITE, "got": false}
+	cv.color_picked.connect(func(c: Color) -> void:
+		picked["c"] = c
+		picked["got"] = true)
+	var before_n := cv.stroke_count()
+	cv.tool = "picker"
+	var pk := InputEventMouseButton.new()
+	pk.button_index = MOUSE_BUTTON_LEFT
+	pk.pressed = true
+	pk.position = Vector2(100, 100)
+	cv._gui_input(pk)
+	_check(bool(picked["got"]), "吸管触发取色信号")
+	_eq(picked["c"], Color(1, 0, 0), "吸到红笔的颜色")
+	_eq(cv.stroke_count(), before_n, "吸管不落笔")
+	cv.tool = "brush"
+	cv.queue_free()
+	await process_frame
+
+
+func _press_release(cv: WishCanvas, from: Vector2, to: Vector2) -> void:
+	var press := InputEventMouseButton.new()
+	press.button_index = MOUSE_BUTTON_LEFT
+	press.pressed = true
+	press.position = from
+	cv._gui_input(press)
+	var move := InputEventMouseMotion.new()
+	move.position = to
+	cv._gui_input(move)
+	var rel := InputEventMouseButton.new()
+	rel.button_index = MOUSE_BUTTON_LEFT
+	rel.pressed = false
+	rel.position = to
+	cv._gui_input(rel)
+
+
+## 2026-11-07：卡牌翻面（正面 = 卡框+费用球+名牌「名字+等级」+立绘；背面 = 描述）
+func _test_card_flip() -> void:
+	print("[卡牌翻面]")
+	var c := StsCardPool.card("fish_ram")
+	_check(c != null, "取到测试卡")
+	if c == null:
+		return
+	var v := StsCardView.new()
+	_host.add_child(v)
+	await process_frame
+	v.setup(c)
+	await process_frame
+	_check(not v.is_flipped(), "默认是正面")
+	_check(v._front.visible and not v._back.visible, "正面可见、背面隐藏")
+	# 正面文字 = 费用 / 名字 / 等级 三个（描述不许上正面）
+	_eq(v._cost_lbl.text, str(c.cost), "费用球显示费用数字")
+	_eq(v._name_lbl.text, StsCardPool.card_name(c.id), "名牌显示卡名")
+	_eq(v._lv_lbl.text, "Lv.%d" % maxi(1, c.price_tier), "名牌显示等级（定价档位）")
+	_check(v._frame != null and v._frame.texture != null, "正面铺了卡框贴图")
+	_check(v._art != null and v._art.texture != null, "正面有立绘")
+	var desc_in_front := 0
+	for n in v._front.get_children():
+		if n is Label and n != v._cost_lbl and n != v._name_lbl and n != v._lv_lbl:
+			desc_in_front += 1
+	_eq(desc_in_front, 0, "正面除费用/名字/等级外没有其他文字")
+	# 右键翻面
+	var ev := InputEventMouseButton.new()
+	ev.button_index = MOUSE_BUTTON_RIGHT
+	ev.pressed = true
+	v._on_gui(ev)
+	await create_timer(0.45).timeout
+	_check(v.is_flipped(), "右键翻到背面")
+	_check(not v._front.visible and v._back.visible, "背面可见")
+	_check(v._back_name.text == StsCardPool.card_name(c.id), "背面显示卡名")
+	_check(v._back_desc.text != "", "背面显示效果说明")
+	# 再翻回正面
+	v.flip()
+	await create_timer(0.45).timeout
+	_check(not v.is_flipped(), "再翻回正面")
+	v.queue_free()
+	await process_frame
+
+
+## ═══ 2026-11-07：好感度系统 ═══
+
+func _test_affection_system() -> void:
+	print("[好感度系统]")
+	# —— 金币公式（对数：前段值钱，后段放缓）——
+	var g100 := RunState.gold_for_damage(100)
+	var g1000 := RunState.gold_for_damage(1000)
+	var g4000 := RunState.gold_for_damage(4000)
+	_check(g100 >= 10 and g100 <= 25, "低伤害金币落在 10~25（%d）" % g100)
+	_check(g4000 > g1000 and g1000 > g100, "金币随伤害对数增长")
+	_check(g4000 < g100 * 6, "后段增速放缓（%d < %d×6）" % [g4000, g100])
+
+	# —— 好感等级（对数、无上限）——
+	var saved := Affection.points
+	Affection.points = 0.0
+	_eq(Affection.level(), 0, "零好感 = Lv.0")
+	Affection.points = 100.0
+	var lv100 := Affection.level()
+	_check(lv100 >= 8 and lv100 <= 14, "100 点 ≈ Lv.8~14（%d）" % lv100)
+	Affection.points = 10000.0
+	_check(Affection.level() > lv100 + 5, "无上限：10000 点远超 100 点")
+
+	# —— 战斗结算：伤害→金币、米饭→好感 ——
+	var run := RunState.new()
+	run.reset_run()
+	run.set_ai(AiPool.get_ai("deepdeek"))
+	var lv := LevelPool.get_level("L1")
+	var cb := run.start_battle(lv)
+	cb.rice_eaten = 3
+	var g0 := run.gold
+	var a0 := Affection.points
+	run.win_battle(cb, lv)
+	_check(run.gold == g0 + RunState.gold_for_damage(cb.damage_dealt),
+			"胜利按伤害结算金币")
+	_check(absf(Affection.points - a0 - 6.0) < 0.001, "3 碗米饭 = +6 好感")
+
+	# —— 好感 → 许愿品质 ——
+	var hi_def := {"name": "数值测试", "kind": "attack", "damage": 99, "block": 0}
+	var cap0 := int(WishCardFactory.clamp_ai_card(hi_def, 1, 0)["damage"])
+	var cap_hi := int(WishCardFactory.clamp_ai_card(hi_def, 1, 25)["damage"])
+	_check(cap_hi > cap0, "好感抬高伤害预算（%d → %d）" % [cap0, cap_hi])
+	var s_def := {"name": "状态测试", "kind": "skill", "damage": 0, "block": 5,
+			"program": [{"when": "on_play", "then": [
+					{"do": "apply_status", "status": "poison", "tier": 1, "target": "enemy"}]}]}
+	var s0 := WishCardFactory.make_from_ai(s_def, 1, 0)
+	var s_hi := WishCardFactory.make_from_ai(s_def, 1, 25)
+	var t0 := int((((s0.effects as Array)[0] as Dictionary)["then"] as Array)[0]["tier"])
+	var t1 := int((((s_hi.effects as Array)[0] as Dictionary)["then"] as Array)[0]["tier"])
+	_check(t1 > t0, "好感抬状态档位（%d → %d）" % [t0, t1])
+	var two_def := {"name": "机制测试", "kind": "attack", "damage": 0, "block": 0,
+			"program": [{"when": "on_play", "then": [
+					{"do": "damage_scaled", "per": "same_kind_streak", "step": 2}]},
+				{"when": "on_play", "then": [
+					{"do": "apply_status", "status": "weak", "tier": 1, "target": "enemy"}]}]}
+	var o0 := WishCardFactory.make_from_ai(two_def, 1, 0)
+	var o25 := WishCardFactory.make_from_ai(two_def, 1, 25)
+	_eq((o0.effects as Array).size(), 1, "低好感：2 个机制被砍到 1 个")
+	_eq((o25.effects as Array).size(), 2, "高好感：机制预算放开到 2")
+
+	# —— 持久化往返 ——
+	Affection.points = 123.0
+	Affection.save()
+	Affection.points = 0.0
+	Affection.load()
+	_eq(Affection.points, 123.0, "好感持久化往返")
+	Affection.points = saved
+	Affection.save()
+
+
+func _test_shop_gifts() -> void:
+	print("[商店·好感礼物]")
+	var run := RunState.new()
+	run.reset_run()
+	run.set_ai(AiPool.get_ai("deepdeek"))
+	var shop := ShopScreen.new()
+	shop.setup(run)
+	_host.add_child(shop)
+	await process_frame
+	var saved := Affection.points
+	run.gold = 100
+	var a0 := Affection.points
+	shop._on_buy_gift({"id": "test", "name": "测试礼物", "price": 30, "points": 10.0})
+	_eq(run.gold, 70, "购买扣 30 金币")
+	_check(absf(Affection.points - a0 - 10.0) < 0.01, "礼物 +10 好感")
+	# 买不起时不动账
+	shop._on_buy_gift({"id": "test2", "name": "贵礼物", "price": 9999, "points": 99.0})
+	_eq(run.gold, 70, "金币不足不扣款")
+	Affection.points = saved
+	Affection.save()
+	shop.queue_free()
+	await process_frame
+
+
+## 2026-11-07：更新演示屏（全部真系统交互）
+func _test_patch_demo() -> void:
+	print("[更新演示屏]")
+	var demo := PatchDemoScreen.new()
+	_host.add_child(demo)
+	await process_frame
+	await process_frame
+	_check(demo._content != null and demo._content.get_child_count() == 6,
+			"六个演示标签页全部构建")
+	# Tab0 效果工坊：编译 + 试打
+	_check(demo._fx_desc.text.contains("编译通过"), "效果工坊实时编译出人话")
+	demo._fx_run()
+	_check(demo._fx_run_out.text.contains("敌 HP"), "试打真跑 StsCombat 并输出前后状态")
+	# Tab2 算力：cost3 一次吃完
+	demo._en_play(3, 14)
+	_eq(demo._en_combat.energy, 0, "演示屏：cost3 吃掉整回合算力")
+	# Tab3 定价：真模拟出报告
+	demo._price_pick.selected = 3   ## 超模四连
+	demo._price_samples.value = 40
+	await demo._price_run()
+	_check(demo._price_out.text.contains("竞技禁用"), "演示定价把超模卡判禁用")
+	# Tab4 组合：真容斥
+	await demo._combo_run()
+	_check(demo._combo_out.text.contains("总判"), "组合审计输出报告")
+	# Tab5 好感：礼物真加
+	var saved := Affection.points
+	demo._aff_pts.value = 500
+	demo._aff_refresh()
+	_check(demo._aff_out.text.contains("好感点 500"), "好感演示读真实等级")
+	Affection.points = saved
+	Affection.save()
+	demo.queue_free()
+	await process_frame

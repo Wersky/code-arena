@@ -15,6 +15,8 @@ const RiftScene := preload("res://scripts/ui/rift_transition.gd")
 const BurnoutScene := preload("res://scripts/ui/burnout_screen.gd")
 const SandboxPanelScene := preload("res://scripts/ui/sandbox_panel.gd")
 const ChibiRigScene := preload("res://scripts/ui/chibi_rig.gd")
+const LLMDemoScene := preload("res://scripts/ui/llm_demo_screen.gd")
+const PatchDemoScene := preload("res://scripts/ui/patch_demo_screen.gd")
 
 var run := RunState.new()
 var _current: Control = null
@@ -22,20 +24,41 @@ var _pending_level: LevelData = null
 var _pending_elite := false
 ## 体验沙盒（F1）：面板 + 强制门类型
 var _sandbox: Control = null
-var _force_special := ""   ## "" 随机 ｜ event/bonus/elite 强制下一门
+var _force_special := ""
+## 视觉验收直达标记（命令行）
+var _patch_demo_direct := false
+var _wish_demo_direct := false
 var _last_passed: bool = false
 var _levels: Array[LevelData] = []
 
+# ── LLM 接入（2026-11-03）──────────────────────────────
+## 玩家自填配置 + 唯一网络出口；未启用时全部走原有本地逻辑。
+var _llm_cfg: LLMConfig = null
+var _llm_client: LLMClient = null
+var _llm_event_rid := 0
+var _llm_panel: Control = null
+
 
 func _ready() -> void:
-	for a in OS.get_cmdline_user_args():
+	## 命令行参数：--mute 静音 ｜ --patch-demo 直达更新演示
+	## （Godot 惯例：-- 之后的才是 user args；这里两个来源都收，避免启动器漏 --）
+	for a in OS.get_cmdline_args() + OS.get_cmdline_user_args():
 		if a == "--mute":
 			AudioServer.set_bus_mute(0, true)
+		## 视觉验收直达：--patch-demo / --wish-panel 跳过主流程直开目标屏
+		if a == "--patch-demo":
+			_patch_demo_direct = true
 	_levels = LevelPool.all_levels()
 	_build_sandbox()
 	get_window().title = "代码擂台 Code Arena"
 	PixelTheme.install(self)
 	GameSettings.load_from_disk()
+	# LLM 接入：配置与网络客户端常驻（AI 关闭时 request 直接短路，零网络）
+	_llm_cfg = LLMConfig.load_from_disk()
+	_llm_client = LLMClient.new()
+	_llm_client.name = "LLMClient"
+	add_child(_llm_client)
+	_llm_client.setup(_llm_cfg)
 	# 实测调参器（Dev 工具，不进玩法）：F1 开关面板，F5 存 docs/ui-tune.json
 	var tuner := UiTuner.new()
 	add_child(tuner)
@@ -58,11 +81,19 @@ func _swap(screen: Control) -> void:
 func _show_menu() -> void:
 	# 主人 2026-10-30：启动界面重做为「初始化 → Agent 对话框」流程（旧菜单 --oldmenu 保留）
 	if not OS.get_cmdline_user_args().has("--oldmenu"):
+		if _patch_demo_direct:
+			_show_patch_demo.call_deferred()
+			return
+		if _wish_demo_direct:
+			run.set_ai(AiPool.get_ai("deepdeek"))
+			_show_level.call_deferred(_levels[0], false)
+			return
 		_show_launch()
 		return
 	var menu := MenuScene.new()
 	menu.start_run.connect(_on_start_run)
 	menu.quit_game.connect(func() -> void: get_tree().quit())
+	menu.open_ai_settings.connect(_show_llm_panel)
 	_swap(menu)
 
 
@@ -143,6 +174,45 @@ func _show_launch() -> void:
 		run.set_ai(ai)
 		_show_level(_levels[0]))
 	_swap(sc)
+	sc.ai_settings_requested.connect(_show_llm_panel)
+	sc.demo_requested.connect(_show_llm_demo)
+	sc.patch_demo_requested.connect(_show_patch_demo)
+
+
+## 本次改动 Demo 页：一键直进为主（2026-11-04 主人钦定），技术细节折叠在下方。
+func _show_patch_demo() -> void:
+	var demo := PatchDemoScene.new()
+	for a in OS.get_cmdline_args() + OS.get_cmdline_user_args():
+		if a.begins_with("--tab="):
+			demo.initial_tab = int(a.get_slice("=", 1))
+	demo.back_requested.connect(_show_launch)
+	_swap(demo)
+
+
+func _show_llm_demo() -> void:
+	var demo := LLMDemoScene.new()
+	demo.back_requested.connect(_show_launch)
+	demo.start_ai_battle.connect(_demo_enter_battle)
+	demo.start_ai_event.connect(_demo_enter_event)
+	_swap(demo)
+
+
+## Demo 一键直进：像平常战斗那样开局（AI 用已保存配置，配置没开就自动开）
+func _demo_enter_battle() -> void:
+	_demo_prep_run()
+	_show_level(_levels[0])
+
+
+func _demo_enter_event() -> void:
+	_demo_prep_run()
+	_show_event(randi() % 5)
+
+
+func _demo_prep_run() -> void:
+	if run == null:
+		run = RunState.new()
+	run.reset_run()
+	run.set_ai(AiPool.get_ai("deepdeek"))
 
 
 ## 楼梯选角 demo：3D 楼梯 + 仰视相机，四位 AI 娘分立两侧待选。
@@ -203,6 +273,7 @@ func _show_map() -> void:
 	m.battle_entered.connect(_on_battle_door)
 	m.event_entered.connect(_on_event_door)
 	m.bonus_entered.connect(_show_bonus)
+	m.shop_entered.connect(_show_shop)
 	m.elite_entered.connect(_on_elite_door)
 	_swap(m)
 
@@ -225,10 +296,69 @@ func _on_battle_door() -> void:
 
 
 func _on_event_door() -> void:
-	_show_event(0)
+	_start_event_flow()
 
 
-## 事件节点
+## AI 事件流：本地预筛候选 → LLM 池内 pick → 本地掷数值并写 run。
+## AI 关闭 / 候选池空 / 超时 / 解析失败 / 非法 pick 全部静默回退原 5 则事件。
+func _start_event_flow() -> void:
+	if _llm_cfg == null or not _llm_cfg.is_enabled():
+		_show_event(0)
+		return
+	var candidates := LLMEventEngine.build_candidates(run, run.rng)
+	if candidates.is_empty():
+		_show_event(0)
+		return
+
+	var e := EventScene.new()
+	e.setup_ai_loading(run)
+	e.finished.connect(_on_event_finished)
+	_swap(e)
+
+	# 事件协议：system 用 LLMPrompts 的 EVENT_V2 全文；user 带局面 + 候选池快照。
+	var msgs: Array[Dictionary] = []
+	msgs.append({"role": "system", "content": LLMPrompts.for_scene("event")})
+	var base := LLMEventEngine.build_messages(run, candidates)
+	msgs.append({"role": "user", "content": String(base[1].get("content", ""))})
+	_llm_event_rid += 1
+	var rid := _llm_event_rid
+	_llm_client.request("event", msgs, _on_event_llm_done.bind(candidates, rid), {
+		"resolve_id": rid,
+		"pool_hash": _event_pool_hash(candidates),
+		"timeout_s": 3.0,
+	})
+
+
+## LLM 回调：三关校验（LLMParse）→ 本地应用。迟到/切换界面后的回调直接丢弃。
+func _on_event_llm_done(result: Dictionary, candidates: Array, _rid: int) -> void:
+	var e := _current as EventScreen
+	if e == null:
+		return
+	if not bool(result.get("ok", false)):
+		_show_event(0)
+		return
+	var parsed := LLMParse.parse_event(String(result.get("text", "")), candidates.size())
+	var res := LLMEventEngine.apply_pick(run, candidates, int(parsed.get("pick", 0)))
+	if not bool(res.get("ok", false)):
+		_show_event(0)
+		return
+	var reason := String(parsed.get("reason", ""))
+	if not bool(parsed.get("ok", false)):
+		reason = ""
+	if _current != e:
+		return
+	e.apply_ai_event(res, reason)
+
+
+func _event_pool_hash(candidates: Array) -> String:
+	var parts: Array[String] = []
+	for c in candidates:
+		parts.append("%s:%d:%d" % [String(c.get("id", "")),
+				int(c.get("net_min", 0)), int(c.get("net_max", 0))])
+	return "|".join(parts)
+
+
+## 事件节点（原 5 则热梗池；AI 关闭时完全不变）
 func _show_event(event_index: int) -> void:
 	var e := EventScene.new()
 	e.setup(run, event_index)
@@ -239,6 +369,13 @@ func _show_event(event_index: int) -> void:
 func _on_event_finished() -> void:
 	run.events_since_battle += 1
 	_show_map()
+
+
+func _show_shop() -> void:
+	var sh := ShopScreen.new()
+	sh.setup(run)
+	sh.closed.connect(_show_map)
+	_swap(sh)
 
 
 func _after_shop() -> void:
@@ -275,6 +412,31 @@ func _build_sandbox() -> void:
 func _unhandled_key_input(event: InputEvent) -> void:
 	if event is InputEventKey and event.pressed and event.keycode == KEY_F1:
 		_toggle_sandbox()
+	elif event is InputEventKey and event.pressed and event.keycode == KEY_F2:
+		_show_llm_panel()
+
+
+# ── AI 接入设置面板 ───────────────────────────────────
+func _show_llm_panel() -> void:
+	if _llm_panel != null and is_instance_valid(_llm_panel):
+		_llm_panel.move_to_front()
+		return
+	if _llm_cfg == null:
+		_llm_cfg = LLMConfig.load_from_disk()
+	var panel := MenuScene.LLMSettingsPanel.new()
+	panel.name = "LLMSettingsPanel"
+	panel.setup(_llm_cfg)
+	panel.saved.connect(_on_llm_config_saved)
+	panel.closed.connect(func() -> void: _llm_panel = null)
+	_llm_panel = panel
+	add_child(panel)
+	panel.set_anchors_preset(Control.PRESET_FULL_RECT)
+
+
+func _on_llm_config_saved() -> void:
+	if _llm_client != null and _llm_cfg != null:
+		_llm_client.setup(_llm_cfg)
+		_llm_client.reset_circuit()
 
 
 func _toggle_sandbox() -> void:
@@ -321,11 +483,15 @@ func _sandbox_actions() -> Dictionary:
 		"ev4": func() -> void: _show_event(4),
 		"door_event": func() -> void: _force_special = "event"; _show_map(),
 		"door_bonus": func() -> void: _force_special = "bonus"; _show_map(),
+		"door_shop": func() -> void: _force_special = "shop"; _show_map(),
 		"door_elite": func() -> void: _force_special = "elite"; _show_map(),
 		"door_none": func() -> void: _force_special = ""; _show_map(),
 		"item_opt": func() -> void: _grant_item("prompt_opt"),
 		"item_parts": func() -> void: _grant_item("subagent"),
 		"item_compress": func() -> void: _grant_item("compress"),
+		"ult": func() -> void:
+			if _arena() != null:
+				_arena().debug_ult_demo(),
 		"fx_slash": func() -> void:
 			if _arena() != null:
 				_arena().debug_fx_demo("slash"),
@@ -361,7 +527,8 @@ func _maybe_capture() -> void:
 		return
 	if screen in ["menu", "arena", "battle", "intro", "reward", "result",
 			"menuhover", "rig", "rigwalk", "loadrun", "card", "cardtext", "cardcost", "terminal", "termgif",
-			"termdump", "hero", "stairs", "launch", "launch2", "arenalayout", "sendtest", "ricetest"]:
+			"termdump", "hero", "stairs", "launch", "launch2", "arenalayout", "sendtest", "ricetest",
+			"patchdemo"]:
 		run.reset_run()
 		if screen == "launch" or screen == "launch2":
 			var sc := _current as LaunchScreen
@@ -483,19 +650,31 @@ func _maybe_capture() -> void:
 			probe.add_child(pbg)
 			var ids := ["fish_ram", "taunt"]
 			var text_only := screen == "cardtext" or screen == "cardcost"
+			var backs: Array[StsCardView] = []
 			for i in ids.size():
 				var cv := StsCardView.new()
 				cv.setup(StsCardPool.card(ids[i]))
 				cv.position = Vector2(40 + i * 200, 40)
+				# 第二排：同样的两张卡翻到背面（2026-11-07 正面名牌+费用球 / 背面描述）
+				var cb := StsCardView.new()
+				cb.setup(StsCardPool.card(ids[i]))
+				cb.position = Vector2(40 + i * 200, 300)
+				backs.append(cb)
 				if text_only:
-					# 只留文字层：藏掉框与立绘，墨迹测量不受污染
-					for ch in cv.get_children():
-						if ch is TextureRect:
-							(ch as TextureRect).visible = false
-						elif screen == "cardcost" and ch is Label and (ch as Label).name != "CostOrb":
-							(ch as Label).visible = false
+					# 只留文字层：藏掉框与立绘，墨迹测量不受污染（层级 11-07 起嵌套，递归找）
+					for ch in cv.find_children("*", "TextureRect", true, false):
+						(ch as TextureRect).visible = false
+					if screen == "cardcost":
+						for lb in cv.find_children("*", "Label", true, false):
+							if (lb as Label).name != "CostOrb":
+								(lb as Label).visible = false
 				probe.add_child(cv)
+				probe.add_child(cb)
 			_swap(probe)
+			for cb in backs:
+				cb.flip()
+			# 翻面动画 ~0.31s，等它落定再拍
+			await get_tree().create_timer(0.6).timeout
 		elif screen == "intro":
 			# 实测转场：中段（3D 翻飞中）存一张 -mid，结尾（落回 2D）存主文件
 			_show_level(_levels[0])
@@ -1095,6 +1274,8 @@ func debug_show(screen: String) -> void:
 			_show_map()
 		"event":
 			_show_event(0)
+		"event_ai":
+			_start_event_flow()
 		"arena":
 			_show_level(_levels[0])
 		"reward":

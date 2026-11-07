@@ -1,11 +1,11 @@
 # CodeArts 接手文档 · 代码擂台 Code Arena
 
 > 面向：第一次接触本项目的 CodeArts Agent（或任何接手代理）
-> 校准时间：2026-11-02
+> 校准时间：2026-11-03
 > 项目路径：`D:\zcode-work\godot\projects\prompt-arena`
 > 引擎：Godot 4.7.2 stable（`gl_compatibility`）
 > 分支：`feat/ai-ui-kit`（远程 `origin` 同名分支）
-> 回归基线：`smoke_test.gd` **224 项检查，0 项失败**
+> 回归基线：`smoke_test.gd` **336 项检查，0 项失败**
 >
 > **本文档 + 根目录 `AGENTS.md` 是当前状态的唯一真值。**
 > `docs/00~04` 是德州扑克时代的设计存档，里面的牌型 / 筹码 / 倍率 / 花色 / 能量都已作废，只作历史参考。
@@ -27,7 +27,7 @@ D:\zcode-work\godot\projects\prompt-arena
    cd /d/zcode-work/godot/projects/prompt-arena
    "$GODOT" --headless --path . --import
    "$GODOT" --headless --path . --script res://tests/smoke_test.gd
-   期望 224 项检查 0 项失败。
+   期望 336 项检查 0 项失败。
 
 在基线跑绿、文档读完之前，不要改任何代码。
 绝对不要启动游戏窗口（主人可能在玩）；所有验证都用 --headless。
@@ -254,6 +254,26 @@ roll < 0.60        → 奖励门（10%）
 - 这个模拟器**不模拟道具、事件、门概率**，所以它是“纯战斗基线”，不是整局胜率。
 - 模拟器头部注释里的“手牌 3 张”是旧注释；真实常量是 `HAND_REFILL = 4`，以常量为准。
 - 改任何卡牌数值 / 米饭阈值 / 连段规则，必须同步改模拟器里的快照常量，再重跑。
+- **AGGRO 1.6 万场矩阵（2026-11-03）**：见 `docs/balance-aggro.md`。3/4 PASS——总胜率 61.2%、L10 34.0%、AGGRO 槽降 90.8%；**MARK 胜率差 −3.3pp 未达 +5pp（FAIL）**。建议 AGGRO 槽权重 0.5→**0.7~0.8**（或 ECONOMY 模式分 `grw*3`→`grw*2`）后复测，并平滑 L7→L8 攻击底线断崖。
+
+### 2.13 LLM 接入（2026-11-03 落地，可整体关闭）
+
+**开关**：主菜单「AI 接入」按钮或快捷键 **F2** 打开设置面板；配置存 `user://llm_config.cfg`，总开关关闭后所有请求短路，游戏与旧版零差异。API Key 只做 XOR+base64 轻混淆（防围观不防解包）。
+
+**模块**（接口全文 `docs/llm-integration.md`）：
+
+| 文件 | 类 | 职责 |
+|---|---|---|
+| `scripts/llm/llm_config.gd` | `LLMConfig` | 配置读写、Key 混淆、温度分治（observer 0.3 / event 0.5 / dialog 0.8） |
+| `scripts/llm/llm_client.gd` | `LLMClient`(Node) | 唯一网络出口：并发≤2、重试≤1（仅 5xx/超时）、401/402/429 熔断、3s 预算、迟到缓存、MockBackend |
+| `scripts/llm/llm_protocol.gd` | `LLMProtocol` | openai/deepseek/gemini/anthropic 的 URL/Header/Body 与 `/models` 解析 |
+| `scripts/llm/llm_parse.gd` | `LLMParse` | 动作四层容错、事件 JSON 三关、台词清洗 |
+| `scripts/data/llm_opponent_pool.gd` | `LLMOpponentPool` | 五动作白名单/合法性/本地兜底 |
+| `scripts/core/llm_event_engine.gd` + `scripts/data/llm_event_slots.gd` | `LLMEventEngine`/`LLMEventSlots` | 8 机械槽位、本地预筛 2~3 候选、预算（每局≤2、净值 [−8,+6]、单局 ≥−10、L1-2 无负面） |
+| `scripts/data/llm_prompts.gd` | `LLMPrompts` | 观察者 v2 / 事件 v2 / 小鲸 v1.1 三份 prompt |
+| `scripts/ui/ai_banter.gd` | `AIBanter` | AI 娘 4 钩子气泡（开场/连段/濒危/回怼），3s 超时落本地台词，不 await |
+
+**行为边界**：AI 对手只进**普通战斗**；精英/Boss 锁规则版。LLM 只出「白名单动作词」或「槽位编号 + ≤20 字理由」，数值全部本地表/本地掷。事件流回退：未接 AI、预算耗尽、候选池为空或解析失败 → 原 5 则热梗事件。AI 娘钩子：开场 1 次/场、连段 ≥3 阶 2 次/场（隔 ≥2 回合）、HP 首次 <30% 1 次/场、回怼敌 MARK/TAUNT 2 次/场。
 
 ---
 
@@ -347,10 +367,8 @@ _show_menu → _show_launch（终端进场）→ 选人 → _show_level
 
 - `scripts/data/card_data.gd` / `card_pool.gd` / `meme_cards.gd`
 - `scripts/core/scoring.gd` / `ai_taste.gd`
-- `tests/_meme_selftest.gd`（219 项）
-- `tests/verify_c4.gd`（4 项算例）
 
-`smoke_test.gd` 只跑当前主流程；旧机制由上面两个测试守着。
+`smoke_test.gd` 只跑当前主流程；旧机制已无独立测试文件（历史上的 `tests/_meme_selftest.gd`（旧记 219 项）与 `tests/verify_c4.gd`（旧记 4 项）**不在本仓库**，不要再写这些命令或数字）。
 
 ### 3.7 设计约束
 
@@ -378,16 +396,10 @@ cd /d/zcode-work/godot/projects/prompt-arena
 # 刷新 class_name / 资产导入缓存（改过 class_name 或新增脚本后必跑）
 "$GODOT" --headless --path . --import
 
-# 当前主流程回归（期望 224 项，0 失败）
+# 当前主流程回归（期望 336 项，0 失败）
 "$GODOT" --headless --path . --script res://tests/smoke_test.gd
 
-# 旧机制存档回归（期望 219 项，0 失败）
-"$GODOT" --headless --path . --script res://tests/_meme_selftest.gd
-
-# 旧机制契约算例（期望 不匹配 0 / 4）
-"$GODOT" --headless --path . --script res://tests/verify_c4.gd
-
-# 战斗平衡模拟（改数值后必跑；输出 stdout + .godot/sim_report.txt）
+# 战斗平衡模拟（改数值后必跑；输出 stdout + .godot/sim_report*.txt）
 "$GODOT" --headless --path . --script res://tools/sts_sim.gd
 
 # 导出 Windows（先查进程！）
@@ -660,8 +672,8 @@ CodeArts 支持从这些目录自动发现 `SKILL.md`：
 
 ### P2 · 体验与系统
 
-8. **跨局 meta 进度**：`ai_pool.gd` 有 `UNLOCK_AT`（DeepDeek 0 / Kweno 3 / ChatPPT 6 / Grock 9），但当前 `reset_run()` 会把 `ai` 清空，没有持久化解锁。
-   - 入口：`scripts/core/game_settings.gd`（已有本地设置读写）或新增 save 文件；技能读 `gd-save-load`。
+8. **AI 解锁**：已按主人 2026-11-03 要求改为**全部初始可选**（`AiPool.UNLOCK_AT` 全 0，`LaunchScreen.MODELS` 门槛全 0，选人界面不再出现剪影锁）。
+   - 跨局持久化仍未做，但已不影响选人；将来若要恢复"通关解锁"，只改 `UNLOCK_AT` 与 `LaunchScreen.MODELS` 第三项即可。
 9. **音频**：已有 BGM 文件和战斗音效，但没有统一的音量设置/静音 UI；`--mute` 只是启动参数。
 10. **UI 打磨**：卡面/门/奖励的悬停、按下、禁用态可以继续统一；改前读 `gd-godot-ui` 与 `gd-tween-animation`。
 11. **旧文档清理**：`docs/00~04` 是扑克时代存档，建议移到 `docs/archive/` 并在 README 标注；不要直接删，主人可能还要查历史。
@@ -679,7 +691,7 @@ CodeArts 支持从这些目录自动发现 `SKILL.md`：
 一次改动完成前，逐条确认：
 
 - [ ] 读了 `AGENTS.md` 和本文档相关章节
-- [ ] 改动前基线绿：smoke 224 项 0 失败
+- [ ] 改动前基线绿：smoke 336 项 0 失败
 - [ ] 改动只涉及任务相关文件
 - [ ] 新增/修改的逻辑有 smoke 断言；修 bug 先补回归
 - [ ] 改过 `class_name` / 新增脚本 → 跑过 `--import`
