@@ -87,6 +87,12 @@ func _build_bg() -> void:
 	veil.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	add_child(veil)
 
+	# 终端代码雨（2026-11-07 主人要求）：压暗层之上、尘埃层之下
+	var rain := TerminalRain.new()
+	rain.name = "TerminalRainBg"
+	rain.set_anchors_preset(Control.PRESET_FULL_RECT)
+	add_child(rain)
+
 	_bg_fx = BgFx.new()
 	_bg_fx.name = "BgFx"
 	_bg_fx.set_anchors_preset(Control.PRESET_FULL_RECT)

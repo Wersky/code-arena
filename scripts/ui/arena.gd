@@ -224,6 +224,13 @@ func _build_ui() -> void:
 	bg.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	add_child(bg)
 
+	# 终端代码雨背景（2026-11-07 主人要求：主界面与战斗背景都下雨）——
+	# 在黑底之上、所有 HUD/卡牌之下，只在不遮挡战局的地方下雨
+	var rain := TerminalRain.new()
+	rain.name = "TerminalRainBg"
+	rain.set_anchors_preset(Control.PRESET_FULL_RECT)
+	add_child(rain)
+
 	_build_rail()
 	_build_right_hud()
 	_build_stage()

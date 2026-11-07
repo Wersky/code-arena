@@ -690,6 +690,10 @@ func _maybe_capture() -> void:
 			if arena_shot != null:
 				arena_shot.debug_play_card(0)
 				await get_tree().create_timer(0.6).timeout
+		elif screen == "arena":
+			# 战斗背景验收（2026-11-07 代码雨）：配合 --nointro 用，落 1s 雨再拍
+			_show_level(_levels[0])
+			await get_tree().create_timer(1.0).timeout
 		elif screen == "wishpanel":
 			# 许愿画布验收（2026-11-07）：纯看图（无文字输入框）+ 代码雨背景
 			_show_level(_levels[0])
@@ -1288,6 +1292,8 @@ func debug_show(screen: String) -> void:
 			_start_event_flow()
 		"arena":
 			_show_level(_levels[0])
+			# 等终端进场转场走完（~4s）再拍，否则是黑屏（2026-11-07 同 wishpanel）
+			await get_tree().create_timer(4.5).timeout
 		"reward":
 			_show_reward()
 		"result":

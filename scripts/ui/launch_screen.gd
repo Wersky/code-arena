@@ -50,6 +50,13 @@ func _ready() -> void:
 	bg.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	add_child(bg)
 
+	# 终端代码雨背景（2026-11-07 主人要求）：主界面全程下雨，
+	# 初始化态 → Agent 对话框 → 侧边栏各态都铺在黑底之上
+	var rain := TerminalRain.new()
+	rain.name = "TerminalRainBg"
+	rain.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	add_child(rain)
+
 	_boot_btn = Button.new()
 	_boot_btn.text = "初始化"
 	_boot_btn.flat = true
