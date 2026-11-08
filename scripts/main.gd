@@ -705,8 +705,8 @@ func _maybe_capture() -> void:
 				# 再等 0.8s：代码雨落下几帧，画面不是空的
 				await get_tree().create_timer(0.8).timeout
 		elif screen == "ripple":
-			# 水波转场逐帧验收（2026-11-08）：手动推进 shader 进度，
-			# 8 个采样点各存一帧 <shotout>-fNN.png，宿主侧拼 filmstrip 逐帧目检
+			# 转场逐帧验收（2026-11-08）：--ripstyle=ripple|fan|slash|hex 选风格，
+			# 手动推进 shader 进度，8 个采样点各存一帧 <shotout>-fNN.png
 			var probe := Control.new()
 			probe.set_anchors_preset(Control.PRESET_FULL_RECT)
 			var pbg2 := ColorRect.new()
@@ -718,8 +718,19 @@ func _maybe_capture() -> void:
 			rp.size = Vector2(384, 512)
 			probe.add_child(rp)
 			_swap(probe)
-			rp.debug_prepare(load("res://assets/art/ai-deepdeek.png"),
-					load("res://assets/art/ai-kweno.png"))
+			var style_name := "ripple"
+			for a2 in OS.get_cmdline_user_args():
+				if a2.begins_with("--ripstyle="):
+					style_name = a2.substr(11)
+			rp.style = {
+				"ripple": RippleSwapPortrait.Style.RIPPLE,
+				"fan": RippleSwapPortrait.Style.FAN,
+				"slash": RippleSwapPortrait.Style.SLASH,
+				"hex": RippleSwapPortrait.Style.HEX,
+			}.get(style_name, RippleSwapPortrait.Style.RIPPLE)
+			var next_tex: Texture2D = load("res://assets/art/ai-%s.png" % style_name \
+					if style_name in ["kweno", "grock", "chatppt"] else "res://assets/art/ai-kweno.png")
+			rp.debug_prepare(load("res://assets/art/ai-deepdeek.png"), next_tex)
 			var ts := [0.0, 0.1, 0.22, 0.34, 0.46, 0.58, 0.72, 1.0]
 			for i in ts.size():
 				rp.debug_set_progress(float(ts[i]))
@@ -727,7 +738,7 @@ func _maybe_capture() -> void:
 				await get_tree().process_frame
 				var fimg := get_viewport().get_texture().get_image()
 				fimg.save_png("%s-f%02d.png" % [out_path, i])
-			print("[shot=ripple] 已存 8 帧 → %s-fNN.png" % out_path)
+			print("[shot=ripple] style=%s 已存 8 帧 → %s-fNN.png" % [style_name, out_path])
 		else:
 			_show_menu()
 	for _i in 6:

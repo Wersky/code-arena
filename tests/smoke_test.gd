@@ -1734,5 +1734,12 @@ func _test_ripple_swap() -> void:
 	await create_timer(1.1).timeout
 	_check(done[0], "转场完成发 swap_finished 信号")
 	_check(not v.is_swapping(), "转场结束后状态复位")
+	# 一人一款：折扇 / X斩 / 龙鳞 各冒烟一次（切换 shader + 手动推进不炸）
+	for st in [RippleSwapPortrait.Style.FAN, RippleSwapPortrait.Style.SLASH,
+			RippleSwapPortrait.Style.HEX]:
+		v.style = st
+		v.debug_prepare(ta, tb)
+		v.debug_set_progress(0.5)
+		_check(true, "风格 %d 手动推进不炸" % st)
 	v.queue_free()
 	await process_frame

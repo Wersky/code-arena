@@ -60,6 +60,8 @@ var _rp_btns: Array[Button] = []
 var _rp_state: Label = null
 var _rp_cur := 0
 var _rp_texs: Array[Texture2D] = []
+## 转场风格覆盖：-1=按角色（一人一款），其余 = RippleSwapPortrait.Style.*
+var _rp_style_override := -1
 
 
 func _init() -> void:
@@ -734,7 +736,10 @@ func _aff_refresh() -> void:
 # ═══ Tab6 角色转场（水波试验版）══════════════════════════════════════════════
 
 const RIPPLE_IDS := ["deepdeek", "kweno", "chatppt", "grock"]
-const RIPPLE_NAMES := ["DeepDeek", "Kweno", "ChatPPT", "Grock"]
+const RIPPLE_NAMES := ["DeepDeek｜水波", "Kweno｜折扇", "ChatPPT｜龙鳞", "Grock｜X斩"]
+## 每人一款：女仆=水波（柔和）、青花千金=折扇、白龙千金=龙鳞、X斧小恶魔=X斩
+const RIPPLE_STYLES := [RippleSwapPortrait.Style.RIPPLE, RippleSwapPortrait.Style.FAN,
+		RippleSwapPortrait.Style.HEX, RippleSwapPortrait.Style.SLASH]
 const RIPPLE_TINTS := [Color(0.310, 0.757, 0.965), Color(1.000, 0.820, 0.400),
 		Color(0.937, 0.545, 0.706), Color(0.478, 0.792, 0.443)]
 
@@ -746,7 +751,7 @@ func _build_ripple_tab() -> void:
 	root.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_content.add_child(root)
 
-	var title := UiKit.label("点右边角色切换——水波从立绘中心不规则扩散，波内显现新立绘（试验版）", 17, Color(0.55, 0.85, 1.0))
+	var title := UiKit.label("一人一款转场：水波（女仆）/ 折扇（青花千金）/ 龙鳞（白龙）/ X斩（小恶魔）——点角色试试", 17, Color(0.55, 0.85, 1.0))
 	title.position = Vector2(24, 16)
 	root.add_child(title)
 
@@ -823,8 +828,22 @@ func _build_ripple_tab() -> void:
 	_rp_state.size = Vector2(360, 26)
 	root.add_child(_rp_state)
 
-	var info := UiKit.dim("水波边缘 = 径向进度 + 三层角向正弦花瓣（5/9/13 倍角频，无缝）+ uv 噪声细碎，无描边；\n波外衰减圆环做亮度调制与轻微折射，波内是干净的新立绘。\n速度滑杆拖完自动存档（0.15s ~ 2.5s），下次启动还是主人调的值。", 13, Color(0.55, 0.68, 0.85))
-	info.position = Vector2(560, 82 + RIPPLE_NAMES.size() * 66 + 126)
+	# 风格覆盖：默认一人一款，也可以强行指定某款来看对比
+	var style_lbl := UiKit.label("风格", 15, Color(0.85, 0.95, 1.0))
+	style_lbl.position = Vector2(560, 82 + RIPPLE_NAMES.size() * 66 + 124)
+	style_lbl.size = Vector2(48, 24)
+	root.add_child(style_lbl)
+	var style_pick := OptionButton.new()
+	for s in ["按角色（一人一款）", "水波（柔和）", "折扇（千金）", "X斩（小恶魔）", "龙鳞（白龙）"]:
+		style_pick.add_item(s)
+	style_pick.position = Vector2(612, 82 + RIPPLE_NAMES.size() * 66 + 120)
+	style_pick.size = Vector2(230, 30)
+	style_pick.item_selected.connect(func(idx: int) -> void:
+		_rp_style_override = -1 if idx == 0 else idx - 1)
+	root.add_child(style_pick)
+
+	var info := UiKit.dim("水波=径向+角向花瓣边缘，柔和漫开；折扇=扇骨金线逐格开屏；\nX斩=两道剑光交叉劈开、四片沿对角滑开坠落；龙鳞=六边形鳞片底部先剥、沿线翘金边。\n速度滑杆拖完自动存档（0.15s ~ 2.5s），下次启动还是主人调的值。", 13, Color(0.55, 0.68, 0.85))
+	info.position = Vector2(560, 82 + RIPPLE_NAMES.size() * 66 + 158)
 	info.size = Vector2(430, 120)
 	info.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	root.add_child(info)
@@ -834,8 +853,10 @@ func _rp_swap(i: int) -> void:
 	if i == _rp_cur or _rp_view == null:
 		return
 	_rp_cur = i
+	_rp_view.style = _rp_style_override if _rp_style_override >= 0 \
+			else int(RIPPLE_STYLES[i])
 	_rp_view.swap_to(_rp_texs[i])
 	if _rp_state != null:
-		_rp_state.text = "水波扩散中… → %s" % RIPPLE_NAMES[i]
+		_rp_state.text = "转场中… → %s" % RIPPLE_NAMES[i]
 	for k in _rp_btns.size():
 		_rp_btns[k].button_pressed = k == i
