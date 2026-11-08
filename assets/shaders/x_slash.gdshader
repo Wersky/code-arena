@@ -1,11 +1,10 @@
 shader_type canvas_item;
 render_mode unshaded;
 
-// 乱斩转场 v9（2026-11-08，Grock 专属，主人定稿「纸片燃烧」模型）：
-// ① 全部斩击依次劈下，在**旧立绘**上留下斩痕（细亮线+暗缝）
-// ② 停顿后：每一条斩痕 + 画框四边**同时着火**——宽火焰区沿所有边界向内推进
-//    （像素到最近边界的距离场驱动，像纸从四边烧向中心），烧过即净见新立绘，无黑渣。
-// 合成顺序（v9 修正）：旧立绘+斩痕 → 火焰带叠加 → 已烧区替换为新立绘。
+// 乱斩转场 v10（2026-11-08，Grock 专属，主人定稿「全部燃烧」）：
+// 1 五刀四面八方依次劈下，在完整的旧立绘上留下斩痕（细亮线+暗缝）
+// 2 停顿后：整张立绘作为一整体开始燃烧——噪声火线斜扫过全图（不分碎块）
+//   火线橙红 -> 刚烧过的一小段短暂焦黑 -> 彻底烧净露新立绘（带登场缩放冲击）
 // slashes[k] = vec4(法线x, 法线y, 截距c, 起刀时刻)，由 GDScript 随机种子生成。
 
 uniform sampler2D tex_prev : source_color, filter_linear;
@@ -35,54 +34,54 @@ float vnoise(vec2 p) {
 void fragment() {
 	vec2 q = (UV - vec2(0.5)) * vec2(aspect, 1.0);
 
-	vec3 ember_col = vec3(1.0, 0.42, 0.10) * (1.1 + 0.6 * vnoise(UV * 40.0 + vec2(TIME * 3.0)));
-
-	// ── ① 旧立绘 + 斩痕（全部在旧图上叠加）──────────────────────
+	// --- 1 旧立绘 + 斩痕 ---
 	vec4 prev_c = texture(tex_prev, UV);
 	vec3 col = prev_c.rgb;
 
-	float bd = 2.0;   // 到最近边界（斩线或画框边缘）的距离
 	for (int k = 0; k < 5; k++) {
 		vec4 s = slashes[k];
 		float d = dot(q, s.xy) - s.z;
-		bd = min(bd, abs(d));
 
-		// 斩线白光：起刀后 0.07 进度内闪一下
 		float tw = clamp((progress - s.w) / 0.07, 0.0, 1.0);
 		float streak = exp(-abs(d) * 16.0) * (1.0 - tw) * step(0.001, progress)
 				* step(s.w, progress);
 		col += vec3(1.0) * streak * 0.95;
 
-		// 斩痕：细亮线 + 暗缝（燃烧开始后淡出）
-		float scar_a = step(s.w, progress) * (1.0 - smoothstep(0.55, 0.7, progress));
+		float scar_a = step(s.w, progress) * (1.0 - smoothstep(0.55, 0.72, progress));
 		col = mix(col, vec3(0.92, 0.96, 1.0), exp(-abs(d) * 60.0) * scar_a * 0.7);
 		col = mix(col, vec3(0.05, 0.05, 0.09), exp(-abs(d) * 18.0) * scar_a * 0.35);
 	}
 
-	// 画框四边也是边界
-	bd = min(bd, min(0.5 * aspect - abs(q.x), 0.5 - abs(q.y)));
-	// 有机烧沿：加噪声抖动
-	bd += (vnoise(UV * 9.0 + vec2(seed_n * 23.0)) - 0.5) * 0.05
-			+ (vnoise(UV * 28.0 + vec2(seed_n * 7.0)) - 0.5) * 0.02;
+	// --- 2 整张图燃烧：噪声火线斜扫全图 ---
+	float sweep = (UV.x * 0.55 + (1.0 - UV.y) * 0.45);
+	float n = vnoise(UV * 7.0 + vec2(seed_n * 19.0));
+	float n2 = vnoise(UV * 21.0 + vec2(seed_n * 43.0));
+	float field = sweep * 0.62 + n * 0.28 + n2 * 0.10;
 
-	// ── ② 纸片燃烧：火焰区沿所有边界向内推进 ───────────────────
-	float bt = clamp((progress - 0.26) / 0.60, 0.0, 1.0);
-	float front = bt * 0.45;
-	float ignite = smoothstep(0.0, 0.25, bt);
-	float burn_mask = step(bd, front);                       // 1 = 已烧尽
-	float band_t = clamp((bd - front) / 0.22, 0.0, 1.0);     // 0=火线 1=未烧
-	float band_mask = (1.0 - burn_mask) * step(front, bd);
+	float bt = clamp((progress - 0.34) / 0.62, 0.0, 1.0);
+	float front = bt * 1.12;
 
-	// 火焰区：以火色为主，靠未烧侧渐回纸面
-	vec3 band_col = mix(ember_col * 1.15, col, band_t * 0.55);
-	band_col *= 0.9 + 0.25 * vnoise(UV * 55.0 + vec2(TIME * 5.0));
-	col = mix(col, band_col, band_mask * ignite);
+	vec3 ember_col = vec3(1.0, 0.42, 0.10)
+			* (1.15 + 0.55 * vnoise(UV * 45.0 + vec2(TIME * 4.0)));
+	vec3 char_col = vec3(0.045, 0.035, 0.038);
 
-	// ── ③ 已烧尽区域 → 新立绘（带登场缩放冲击）────────────────
-	float punch = 1.0 + 0.08 * exp(-abs(progress - 0.8) * 9.0);
+	float burned = step(field, front);
+	float behind = front - field;          // 已烧过多久（>0 = 已烧）
+	float ahead = field - front;           // 离火线还多远（>0 = 未烧）
+
+	// 火焰只在前缘前方一窄条（0.16 内），其余未烧区域保持原图
+	float flame = (1.0 - burned) * (1.0 - smoothstep(0.0, 0.16, ahead));
+	col = mix(col, ember_col, flame * 0.95);
+
+	float char_t = burned * (1.0 - smoothstep(0.10, 0.30, behind));
+	col = mix(col, char_col, char_t * 0.88);
+
+	// --- 3 烧尽区 -> 新立绘 ---
+	float punch = 1.0 + 0.08 * exp(-abs(progress - 0.82) * 9.0);
 	vec2 nuv = (UV - vec2(0.5)) / punch + vec2(0.5);
 	vec3 next_rgb = texture(tex_next, nuv).rgb;
-	col = mix(col, next_rgb, burn_mask);
+	float clear_mask = burned * (1.0 - char_t);
+	col = mix(col, next_rgb, clear_mask);
 
 	COLOR = vec4(col, 1.0);
 }
