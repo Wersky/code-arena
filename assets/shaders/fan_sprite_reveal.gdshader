@@ -11,11 +11,14 @@ uniform sampler2D tex_next : source_color, filter_linear;
 uniform sampler2D tex_fan : source_color, filter_nearest, repeat_enable; // 像素布：NEAREST 才脆
 uniform float sweep : hint_range(0.0, 1.0) = 0.0;   // 0=合拢（竖在左缘） 1=盖满全画框
 uniform float dim : hint_range(0.0, 1.0) = 0.0;     // 未扫到区域的压暗
+uniform float outline : hint_range(0.0, 1.0) = 0.0; // 勾边进度：扇沿弧线画到哪了
 uniform float aspect = 1.0;
 uniform vec2 pivot_s = vec2(0.06, 0.94);            // 画面侧扇轴（左下，uv）
 uniform float a_start = -95.0;                      // 起始角（度）：左边缘略过一点，兜住左上角
 uniform float a_end = 8.0;                          // 终止角（度）：右边略过一点，兜住右下角
 uniform float r_scale = 0.6;                        // 屏幕半径 → 布贴图采样半径
+uniform float fan_r = 1.02;                         // 扇布外沿半径（比最远角小一点，弧沿露在画框内）
+uniform float blades = 10.0;                        // 扇骨尖数量（决定波浪边沿的瓣数）
 
 void fragment() {
 	vec2 q = (UV - pivot_s) * vec2(aspect, 1.0);
@@ -25,14 +28,24 @@ void fragment() {
 	// 前缘：sweep 0→1，扇布从左边缘向右扫到另一侧
 	float front = mix(a_start, a_end, clamp(sweep, 0.0, 1.0));
 
-	// 已展开区域：左边缘与前缘之间
-	float in_swept = step(a_start, phi) * step(phi, front) * step(r, 1.7);
+	// 扇布外沿：圆弧 + 波浪（扇骨尖处凸、瓣间凹）——这就是「扇子的边沿」
+	float span_rad = (phi - a_start) * 0.0174533 * blades;
+	float c = cos(span_rad);
+	float r_edge = fan_r * (0.93 + 0.07 * c);
+	// 放射状布褶：扇骨位置的布面折痕（布的一部分，不是支架）
+	float crease = (1.0 + c) * 0.5;
+
+	float in_swept = step(a_start, phi) * step(phi, front) * step(r, r_edge);
 
 	// 像素布采样：极坐标随扇轴转，图案跟着扇布一起「转开」
 	float phi_rad = phi * 0.0174533;
 	vec2 tuv = vec2(0.5) + vec2(cos(phi_rad), sin(phi_rad)) * r * r_scale;
 	vec4 fan_c = texture(tex_fan, tuv);
-	vec3 fan_area = fan_c.rgb;   // 布满幅不透明，扫到即布
+	vec3 fan_area = fan_c.rgb * (1.0 - 0.10 * crease);
+
+	// 边沿描边（像素风深蓝描边，勾出波浪弧沿；铺布后由它接管）
+	float edge_band = smoothstep(0.05, 0.015, r_edge - r) * in_swept;
+	fan_area = mix(fan_area, vec3(0.10, 0.13, 0.24), edge_band * 0.8);
 
 	// 未扫到的区域：旧立绘（dim 压暗；盖满后背后已换新立绘）
 	vec4 prev_c = texture(tex_prev, UV);
@@ -41,8 +54,18 @@ void fragment() {
 
 	vec4 col = mix(base, vec4(fan_area, 1.0), in_swept);
 
+	// 勾边阶段：金色扇沿弧线先画出来（从左缘画到 outline 进度处，
+	// 含末端放射边；铺布开始后金线让位给布面深描边）
+	float drawn = a_start + outline * (a_end - a_start);
+	float in_drawn = step(a_start, phi) * step(phi, drawn);
+	float rim_line = exp(-abs(r - r_edge) * 60.0) * in_drawn * step(r, r_edge + 0.05)
+			* (1.0 - smoothstep(0.0, 0.25, sweep));
+	float end_radial = exp(-abs(phi - a_end) * 30.0) * step(r, r_edge)
+			* step(0.99, outline) * (1.0 - smoothstep(0.0, 0.25, sweep));
+	col.rgb += vec3(1.0, 0.88, 0.55) * (rim_line + end_radial) * 0.9;
+
 	// 前缘金光（正在展开的那条边）
-	float glow = exp(-abs(phi - front) * 30.0) * step(r, 1.7)
+	float glow = exp(-abs(phi - front) * 30.0) * step(r, r_edge)
 			* step(0.0001, sweep) * step(sweep, 0.9999);
 	col.rgb += vec3(1.0, 0.88, 0.55) * glow * 0.8;
 

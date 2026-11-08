@@ -185,41 +185,53 @@ func _apply_fan(p: float) -> void:
 	_fan_closed.pivot_offset = Vector2(size.x * 0.05, size.y * 0.97)
 	var sweep := 0.0
 	var dim := 0.0
+	var rim := 0.0
 	if p < 0.14:
 		# 啪：收拢的扇布在左缘立起来（回弹放大落定）
 		var k: float = p / 0.14
 		_fan_closed.visible = true
 		_fan_closed.modulate = Color(1, 1, 1, clampf(k * 2.0, 0.0, 1.0))
 		_fan_closed.scale = Vector2(1.3 - 0.3 * smoothstep(0.0, 1.0, k), 1.0)
-	elif p < 0.55:
-		# 展开：扇布从左缘向右一路扫过整个立绘，竖条淡出
-		var k: float = (p - 0.14) / 0.41
-		sweep = smoothstep(0.0, 1.0, k)
-		dim = 0.95 * sweep
-		_fan_closed.visible = k < 0.25
-		_fan_closed.modulate = Color(1, 1, 1, clampf(1.0 - k / 0.25, 0.0, 1.0))
+	elif p < 0.38:
+		# 勾边：金色扇沿弧线从左缘画到另一侧（整个扇子的边沿先出现）
+		var k: float = (p - 0.14) / 0.24
+		rim = smoothstep(0.0, 1.0, k)
+		dim = 0.18
+		_fan_closed.visible = k < 0.3
+		_fan_closed.modulate = Color(1, 1, 1, clampf(1.0 - k / 0.3, 0.0, 1.0))
 	elif p < 0.62:
+		# 潇洒铺布：扇布沿着已画好的边沿从左缘铺满全画框
+		var k: float = (p - 0.38) / 0.24
+		sweep = smoothstep(0.0, 1.0, k)
+		rim = 1.0
+		dim = 0.18 + 0.77 * sweep
+		_fan_closed.visible = false
+	elif p < 0.68:
 		# 盖满：定住（背后已换成新立绘）
 		sweep = 1.0
+		rim = 1.0
 		dim = 0.95
 		_fan_closed.visible = false
 	elif p < 0.9:
-		# 逆向收拢：扇布合回左缘，露出新立绘；收到最后竖条重新立起来
-		var k: float = (p - 0.62) / 0.28
+		# 逆向：扇布合回左缘（金沿重现），露出新立绘
+		var k: float = (p - 0.68) / 0.22
 		sweep = 1.0 - smoothstep(0.0, 1.0, k)
+		rim = 1.0
 		dim = 0.95 * sweep
-		_fan_closed.visible = k > 0.78
-		_fan_closed.modulate = Color(1, 1, 1, clampf((k - 0.78) / 0.22, 0.0, 1.0))
+		_fan_closed.visible = false
 	else:
-		# 收拢扇布淡出
+		# 收尾：边沿淡出
 		var k: float = (p - 0.9) / 0.1
-		_fan_closed.visible = true
-		_fan_closed.modulate = Color(1, 1, 1, 1.0 - k)
+		sweep = 0.0
+		rim = 1.0 - k
+		dim = 0.0
+		_fan_closed.visible = false
 	_fan_closed.rotation_degrees = 0.0
 	_mat.set_shader_parameter("sweep", sweep)
 	_mat.set_shader_parameter("dim", dim)
+	_mat.set_shader_parameter("outline", rim)
 	# 完全盖住的瞬间，背后换成新立绘
-	if p >= 0.55 and not _fan_swapped and _fan_next != null:
+	if p >= 0.62 and not _fan_swapped and _fan_next != null:
 		_mat.set_shader_parameter("tex_prev", _fan_next)
 		_current = _fan_next
 		_fan_swapped = true
