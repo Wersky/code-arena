@@ -1,14 +1,14 @@
 shader_type canvas_item;
 render_mode unshaded;
 
-// 像素扇布透明转场 v7（2026-11-08，Kweno 专属，主人定稿）：
-// 一开始扇子就是「左下→右上」的一条对角线；转场开始后扇布**向两边展开**
-// （绕对角线对称开花，像素布·扇沿波浪·放射褶皱），展开的区域里透出新立绘；
-// 盖满（背后已换图）后逆向收回对角线，露出新立绘。透明 shader 转场，无实体精灵。
+// 像素扇布透明转场 v8（2026-11-08，Kweno 专属，主人定稿「要水波那种透明」）：
+// 一开始扇子就是「左下→右上」的一条对角线；转场开始后扇形区域**向两边展开**，
+// 展开的区域里**直接透出新立绘**（透明揭示，不是实心布）——扇子的存在感靠：
+// 波浪扇沿的深色描边 + 放射状褶皱压暗 + 两侧开花前缘金光。盖满（背后已换图）
+// 后逆向收回对角线，露出新立绘。
 
 uniform sampler2D tex_prev : source_color, filter_linear;
 uniform sampler2D tex_next : source_color, filter_linear;
-uniform sampler2D tex_fan : source_color, filter_nearest, repeat_enable; // 像素布：NEAREST 才脆
 uniform float sweep : hint_range(0.0, 1.0) = 0.0;    // 0=对角线 1=盖满
 uniform float dim : hint_range(0.0, 1.0) = 0.0;      // 扇面之外的压暗
 uniform float aspect = 1.0;
@@ -37,11 +37,9 @@ void fragment() {
 	float spread = sweep * a_half_s;
 	float in_fan = step(dphi, spread) * step(r, r_edge);
 
-	// 像素布采样：极坐标随扇轴转，图案跟着扇布一起「展开」
-	float phi_rad = phi * 0.0174533;
-	vec2 tuv = vec2(0.5) + vec2(cos(phi_rad), sin(phi_rad)) * r * r_scale;
-	vec4 fan_c = texture(tex_fan, tuv);
-	vec3 fan_area = fan_c.rgb * (1.0 - 0.10 * crease);
+	// 透明揭示：展开区域直接透出新立绘，只保留褶皱压暗做布的存在感
+	vec4 next_c = texture(tex_next, UV);
+	vec3 fan_area = next_c.rgb * (1.0 - 0.14 * crease);
 
 	// 边沿描边（像素风深蓝描边，勾出波浪弧沿）
 	float edge_band = smoothstep(0.05, 0.015, r_edge - r) * in_fan;
