@@ -95,7 +95,7 @@ func swap_to(tex: Texture2D) -> void:
 		return
 	_swapping = true
 	if style == Style.FAN:
-		# 实物扇子：合拢扇啪上对角线 → 扇骨从对角线向两侧开花盖满 → 背后换图 → 逆向收拢
+		# 像素扇布：折痕先现 → 扇布从左缘单边划出盖满 → 背后换图 → 逆向收起
 		_fan_swapped = false
 		_fan_next = tex
 		_mat.shader = SHADERS[style]
@@ -103,7 +103,9 @@ func swap_to(tex: Texture2D) -> void:
 		_mat.set_shader_parameter("tex_next", tex)
 		_mat.set_shader_parameter("sweep", 0.0)
 		_mat.set_shader_parameter("dim", 0.0)
+		_mat.set_shader_parameter("fan_p", 0.0)
 		_update_fan_geo()
+		_apply_fan_creases()
 		_fan_closed.visible = false
 		var tw := create_tween()
 		tw.tween_method(_apply_fan, 0.0, 1.0, maxf(0.05, swap_time))
@@ -143,7 +145,7 @@ func _apply_slash_params(shake: bool) -> void:
 	for k in 6:
 		var ang := deg_to_rad(rng.randf_range(-80.0, 80.0))
 		var c: float = rng.randf_range(-0.12, 0.12) if k == 0 else rng.randf_range(-0.34, 0.34)
-		var delay: float = 0.08 + k * 0.088 + rng.randf_range(-0.015, 0.015)
+		var delay: float = 0.06 + k * 0.05 + rng.randf_range(-0.01, 0.01)   ## 全部斩完 ≤0.31
 		arr.append(Vector4(cos(ang), sin(ang), c, delay))
 	_mat.set_shader_parameter("slashes", arr)
 	_mat.set_shader_parameter("seed_n", rng.randf_range(0.0, 10.0))
@@ -185,56 +187,53 @@ func _apply_fan(p: float) -> void:
 	_fan_closed.pivot_offset = Vector2(size.x * 0.05, size.y * 0.97)
 	var sweep := 0.0
 	var dim := 0.0
-	var rim := 0.0
-	if p < 0.14:
+	if p < 0.1:
 		# 啪：收拢的扇布在左缘立起来（回弹放大落定）
-		var k: float = p / 0.14
+		var k: float = p / 0.1
 		_fan_closed.visible = true
 		_fan_closed.modulate = Color(1, 1, 1, clampf(k * 2.0, 0.0, 1.0))
 		_fan_closed.scale = Vector2(1.3 - 0.3 * smoothstep(0.0, 1.0, k), 1.0)
-	elif p < 0.38:
-		# 勾边：金色扇沿弧线从左缘画到另一侧（整个扇子的边沿先出现）
-		var k: float = (p - 0.14) / 0.24
-		rim = smoothstep(0.0, 1.0, k)
-		dim = 0.18
-		_fan_closed.visible = k < 0.3
-		_fan_closed.modulate = Color(1, 1, 1, clampf(1.0 - k / 0.3, 0.0, 1.0))
-	elif p < 0.62:
-		# 潇洒铺布：扇布沿着已画好的边沿从左缘铺满全画框
-		var k: float = (p - 0.38) / 0.24
-		sweep = smoothstep(0.0, 1.0, k)
-		rim = 1.0
-		dim = 0.18 + 0.77 * sweep
-		_fan_closed.visible = false
+	elif p < 0.44:
+		# 折痕出现：金色折叠线一条条画出来，铺满立绘（shader 按 fan_p 画）
+		dim = 0.15
+		_fan_closed.visible = p < 0.2
+		_fan_closed.modulate = Color(1, 1, 1, clampf(1.0 - (p - 0.1) / 0.1, 0.0, 1.0))
 	elif p < 0.68:
-		# 盖满：定住（背后已换成新立绘）
-		sweep = 1.0
-		rim = 1.0
-		dim = 0.95
+		# 单边划出：扇布从左缘沿折痕一路扫到另一侧，盖满全画框
+		var k: float = (p - 0.44) / 0.24
+		sweep = smoothstep(0.0, 1.0, k)
+		dim = 0.15 + 0.8 * sweep
 		_fan_closed.visible = false
-	elif p < 0.9:
-		# 逆向：扇布合回左缘（金沿重现），露出新立绘
-		var k: float = (p - 0.68) / 0.22
+	elif p < 0.88:
+		# 逆向收起：扇布合回左缘（折痕重现），露出新立绘
+		var k: float = (p - 0.68) / 0.2
 		sweep = 1.0 - smoothstep(0.0, 1.0, k)
-		rim = 1.0
-		dim = 0.95 * sweep
+		dim = 0.15 + 0.8 * sweep
 		_fan_closed.visible = false
 	else:
-		# 收尾：边沿淡出
-		var k: float = (p - 0.9) / 0.1
-		sweep = 0.0
-		rim = 1.0 - k
+		# 收尾：折痕淡出
 		dim = 0.0
 		_fan_closed.visible = false
 	_fan_closed.rotation_degrees = 0.0
+	_mat.set_shader_parameter("fan_p", p)
 	_mat.set_shader_parameter("sweep", sweep)
 	_mat.set_shader_parameter("dim", dim)
-	_mat.set_shader_parameter("outline", rim)
 	# 完全盖住的瞬间，背后换成新立绘
-	if p >= 0.62 and not _fan_swapped and _fan_next != null:
+	if p >= 0.68 and not _fan_swapped and _fan_next != null:
 		_mat.set_shader_parameter("tex_prev", _fan_next)
 		_current = _fan_next
 		_fan_swapped = true
+
+
+## 折痕参数：12 等分扇骨距的偶数位（5 条内折痕），角度带微小抖动，起画时刻错峰
+func _apply_fan_creases() -> void:
+	var pitch := 8.0 / 12.0   ## (a_end - a_start) / 12 = 103/12 ≈ 8.58°
+	var arr := PackedVector4Array()
+	for j in 5:
+		var ang := -95.0 + float((j + 1) * 2) * pitch + randf_range(-1.2, 1.2)
+		var delay := 0.12 + j * 0.058
+		arr.append(Vector4(ang, delay, 0.0, 0.0))
+	_mat.set_shader_parameter("creases", arr)
 
 
 func is_swapping() -> bool:
@@ -255,6 +254,7 @@ func debug_prepare(prev: Texture2D, next: Texture2D) -> void:
 		_fan_next = next
 		_mat.set_shader_parameter("tex_fan", FAN_TEX_CLOTH_PX)
 		_update_fan_geo()
+		_apply_fan_creases()
 		_fan_closed.visible = false
 	elif style == Style.SLASH:
 		_apply_slash_params(false)
