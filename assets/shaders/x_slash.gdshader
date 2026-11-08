@@ -44,8 +44,6 @@ void fragment() {
 	float keep_all = 1.0;
 	float n = vnoise(UV * 9.0 + vec2(seed_n * 37.0)) * 0.85
 			+ vnoise(UV * 23.0 + vec2(seed_n * 11.0)) * 0.15;
-	float char_tex = vnoise(UV * 31.0 + vec2(11.0));
-	vec3 char_col = vec3(0.03, 0.024, 0.03) + vec3(char_tex * 0.06);
 	vec3 ember_col = vec3(1.0, 0.42, 0.10) * (1.1 + 0.6 * vnoise(UV * 40.0 + vec2(TIME * 3.0)));
 	float end_fade = 1.0 - smoothstep(0.9, 1.0, progress);
 
@@ -59,37 +57,32 @@ void fragment() {
 				* step(s.w, progress);
 		col.rgb += vec3(1.0) * streak * 0.95;
 
-		// ② 斩痕：劈下后留着的细亮线 + 暗缝（第一阶段满屏都是痕，碎片起飞后跟着飞走淡出）
-		float ft2 = clamp((progress - 0.30 - float(k) * 0.02) / 0.40, 0.0, 1.0);
-		float scar_a = step(s.w, progress) * (1.0 - ft2);
+		// ② 斩痕：劈下后留着的细亮线 + 暗缝（燃烧开始后随火线掠过而消失）
+		float scar_a = step(s.w, progress) * (1.0 - smoothstep(0.30, 0.40, progress));
 		float scar_core = exp(-abs(d) * 60.0);
 		float scar_seam = exp(-abs(d) * 18.0);
 		col.rgb = mix(col.rgb, vec3(0.92, 0.96, 1.0), scar_core * scar_a * 0.7);
 		col.rgb = mix(col.rgb, vec3(0.05, 0.05, 0.09), scar_seam * scar_a * 0.35);
 
-		// ③ 第 k 片 = 前 k 刀都保留、且在第 k 刀的被切侧：第二阶段统一边飞边烧
+		// ③ 第 k 片（实时计算的碎块）：火线从切口（d=0）往碎片尖端扫，
+		//    扫过即净（不留黑渣）；碎片跟着火线往后退着飞
 		float is_piece = keep_all * step(0.0, d);
 		if (is_piece > 0.5) {
-			float ft = clamp((progress - 0.30 - float(k) * 0.02) / 0.42, 0.0, 1.0);
-			float fly = 1.87 * (1.0 - pow(1.0 - ft, 2.0));
-			vec2 off = s.xy * fly;
-			float burn_t = clamp((progress - 0.34 - float(k) * 0.02) / 0.38, 0.0, 1.0);
-			float dnb = n - burn_t;
+			float bt = clamp((progress - 0.30 - float(k) * 0.015) / 0.58, 0.0, 1.0);
+			float front = -0.15 + 2.05 * bt;              // 火线位置（bt=0 在切口外侧→点火前无火带）
+			vec2 off = s.xy * (1.45 * max(bt, 0.0));      // 碎片沿法线退着飞
+			float dd = d - front;                          // >0 = 还没烧到（尖端侧）
 			vec4 prev_c = texture(tex_prev, UV - off);
 			vec3 pc;
 			float pa;
-			if (dnb > 0.06) {
-				pc = prev_c.rgb;
+			if (dd > 0.08) {
+				pc = prev_c.rgb;                           // 未烧到的碎片本体
 				pa = 1.0;
-			} else if (dnb > 0.0) {
-				pc = mix(ember_col, prev_c.rgb, dnb / 0.06);
-				pa = 1.0;
-			} else if (dnb > -0.26) {
-				pc = char_col;
+			} else if (dd > 0.0) {
+				pc = mix(ember_col, prev_c.rgb, dd / 0.08); // 火线：橙红燃烧带
 				pa = 1.0;
 			} else {
-				pc = char_col;
-				pa = smoothstep(-0.42, -0.26, dnb);
+				pa = 0.0;                                   // 烧干净，直接见新立绘
 			}
 			pa *= end_fade;
 			col = mix(col, vec4(pc, 1.0), clamp(pa, 0.0, 1.0));
@@ -97,28 +90,13 @@ void fragment() {
 		keep_all *= (1.0 - step(0.0, d));
 	}
 
-	// 残余区：所有刀都留下的中间小块，最后自己烧尽（微微漂移）
+	// 残余区（所有刀都留下的中心块）：整体起火燃烧殆尽，烧完即净
 	if (keep_all > 0.5) {
-		float bt = clamp((progress - 0.42) / 0.42, 0.0, 1.0);
-		float dnb = n - bt;
-		vec2 drift = vec2(0.12, 0.2) * bt;
+		float bt = clamp((progress - 0.34) / 0.58, 0.0, 1.0);
+		vec2 drift = vec2(0.1, 0.16) * bt;
 		vec4 prev_c = texture(tex_prev, UV - drift);
-		vec3 pc;
-		float pa;
-		if (dnb > 0.06) {
-			pc = prev_c.rgb;
-			pa = 1.0;
-		} else if (dnb > 0.0) {
-			pc = mix(ember_col, prev_c.rgb, dnb / 0.06);
-			pa = 1.0;
-		} else if (dnb > -0.26) {
-			pc = char_col;
-			pa = 1.0;
-		} else {
-			pc = char_col;
-			pa = smoothstep(-0.4, -0.26, dnb);
-		}
-		pa *= end_fade;
+		float pa = (1.0 - smoothstep(0.55, 1.0, bt)) * end_fade;
+		vec3 pc = mix(prev_c.rgb, ember_col, smoothstep(0.3, 0.9, bt) * 0.85);
 		col = mix(col, vec4(pc, 1.0), clamp(pa, 0.0, 1.0));
 	}
 
