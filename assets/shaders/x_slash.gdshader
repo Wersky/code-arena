@@ -58,31 +58,29 @@ void fragment() {
 		col.rgb += vec3(1.0) * streak * 0.95;
 
 		// ② 斩痕：劈下后留着的细亮线 + 暗缝（燃烧开始后随火线掠过而消失）
-		float scar_a = step(s.w, progress) * (1.0 - smoothstep(0.30, 0.40, progress));
+		float scar_a = step(s.w, progress) * (1.0 - smoothstep(0.66, 0.78, progress));
 		float scar_core = exp(-abs(d) * 60.0);
 		float scar_seam = exp(-abs(d) * 18.0);
 		col.rgb = mix(col.rgb, vec3(0.92, 0.96, 1.0), scar_core * scar_a * 0.7);
 		col.rgb = mix(col.rgb, vec3(0.05, 0.05, 0.09), scar_seam * scar_a * 0.35);
 
-		// ③ 第 k 片（实时计算的碎块）：火线从切口（d=0）往碎片尖端扫，
-		//    扫过即净（不留黑渣）；碎片跟着火线往后退着飞
+		// ③ 第 k 片（实时计算的碎块）：原地不动，火从碎片**外沿**往切口方向烧进去
+		//    （由外往内燃烧殆尽）：外沿已烧=透明见新立绘，火线橙红，内侧未烧=本体
 		float is_piece = keep_all * step(0.0, d);
 		if (is_piece > 0.5) {
-			float bt = clamp((progress - 0.30 - float(k) * 0.015) / 0.58, 0.0, 1.0);
-			float front = -0.15 + 2.05 * bt;              // 火线位置（bt=0 在切口外侧→点火前无火带）
-			vec2 off = s.xy * (1.45 * max(bt, 0.0));      // 碎片沿法线退着飞
-			float dd = d - front;                          // >0 = 还没烧到（尖端侧）
-			vec4 prev_c = texture(tex_prev, UV - off);
+			float bt = clamp((progress - 0.30 - float(k) * 0.03) / 0.5, 0.0, 1.0);
+			float front = mix(1.3, 0.0, bt);              // 火线：从外沿(d≈1.3)往切口(d=0)推进
+			vec4 prev_c = texture(tex_prev, UV);           // 碎片原地不动
 			vec3 pc;
 			float pa;
-			if (dd > 0.08) {
-				pc = prev_c.rgb;                           // 未烧到的碎片本体
-				pa = 1.0;
-			} else if (dd > 0.0) {
-				pc = mix(ember_col, prev_c.rgb, dd / 0.08); // 火线：橙红燃烧带
+			if (d > front) {
+				pa = 0.0;                                  // 外沿已烧尽 → 透明见新立绘
+			} else if (d > front - 0.14) {
+				pc = mix(ember_col, prev_c.rgb, (front - d) / 0.14); // 火线：橙红燃烧带
 				pa = 1.0;
 			} else {
-				pa = 0.0;                                   // 烧干净，直接见新立绘
+				pc = prev_c.rgb;                           // 未烧到的内侧本体
+				pa = 1.0;
 			}
 			pa *= end_fade;
 			col = mix(col, vec4(pc, 1.0), clamp(pa, 0.0, 1.0));
