@@ -13,7 +13,8 @@ extends Control
 signal swap_finished
 
 const SHADER := preload("res://assets/shaders/ripple_reveal.gdshader")
-const SWAP_TIME := 0.7
+## 一次 swap 的总时长（秒）。demo 页有调速滑杆，主人的数值存 GameSettings 跨启动记住。
+var swap_time := 0.7
 
 var _mat: ShaderMaterial = null
 var _swapping := false
@@ -59,7 +60,7 @@ func swap_to(tex: Texture2D) -> void:
 	_mat.set_shader_parameter("progress", 0.0)
 	var tw := create_tween()
 	tw.tween_method(func(v: float) -> void:
-		_mat.set_shader_parameter("progress", v), 0.0, 1.0, SWAP_TIME) \
+		_mat.set_shader_parameter("progress", v), 0.0, 1.0, maxf(0.05, swap_time)) \
 		.set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_OUT)
 	tw.tween_callback(func() -> void:
 		_mat.set_shader_parameter("tex_prev", tex)

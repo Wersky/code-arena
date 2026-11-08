@@ -18,6 +18,9 @@ const SPEED_TOTAL_MS := [6800, 2400, 900]
 static var term_speed: int = 0        ## 0=慢（默认） 1=中 2=快
 ## 终端窗口模式：true = 真全屏（**默认**）；false = 最大化（铺满但不隐藏任务栏）
 static var term_fullscreen: bool = true
+## 水波转场速度（2026-11-08 主人要求可调）：一次 swap 的总时长（秒）。
+## demo 页滑杆拖完即存盘——主人调好的数值跨启动记住。
+static var ripple_swap_time := 0.7
 
 
 static func load_from_disk() -> void:
@@ -27,6 +30,7 @@ static func load_from_disk() -> void:
 	var ver := int(cfg.get_value("meta", "version", 1))
 	term_speed = clampi(int(cfg.get_value("term", "speed", 0)), 0, 2)
 	term_fullscreen = bool(cfg.get_value("term", "fullscreen", true))
+	ripple_swap_time = clampf(float(cfg.get_value("ripple", "swap_time", 0.7)), 0.15, 2.5)
 	if ver < CFG_VERSION:
 		# v2：窗口模式默认改成真全屏。老配置只迁移这一次，之后主人自己切就尊重设置。
 		term_fullscreen = true
@@ -38,6 +42,7 @@ static func save_to_disk() -> void:
 	cfg.set_value("meta", "version", CFG_VERSION)
 	cfg.set_value("term", "speed", term_speed)
 	cfg.set_value("term", "fullscreen", term_fullscreen)
+	cfg.set_value("ripple", "swap_time", ripple_swap_time)
 	cfg.save(PATH)
 
 

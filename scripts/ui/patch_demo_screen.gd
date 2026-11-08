@@ -793,13 +793,38 @@ func _build_ripple_tab() -> void:
 		_rp_swap(other))
 	root.add_child(replay)
 
+	# 调速器（2026-11-08 主人要求）：水波扩散速度，拖完即存盘——主人的数值跨启动记住
+	_rp_view.swap_time = GameSettings.ripple_swap_time
+	var speed_lbl := UiKit.label("速度", 15, Color(0.85, 0.95, 1.0))
+	speed_lbl.position = Vector2(560, 82 + RIPPLE_NAMES.size() * 66 + 58)
+	speed_lbl.size = Vector2(48, 24)
+	root.add_child(speed_lbl)
+	var speed_val := UiKit.label("%.2fs" % GameSettings.ripple_swap_time, 15, Color(0.6, 0.85, 1.0))
+	speed_val.position = Vector2(770, 82 + RIPPLE_NAMES.size() * 66 + 58)
+	speed_val.size = Vector2(80, 24)
+	root.add_child(speed_val)
+	var speed_slider := HSlider.new()
+	speed_slider.min_value = 0.15
+	speed_slider.max_value = 2.5
+	speed_slider.step = 0.05
+	speed_slider.value = GameSettings.ripple_swap_time
+	speed_slider.position = Vector2(612, 82 + RIPPLE_NAMES.size() * 66 + 62)
+	speed_slider.size = Vector2(150, 18)
+	speed_slider.value_changed.connect(func(v: float) -> void:
+		if _rp_view != null:
+			_rp_view.swap_time = v
+		GameSettings.ripple_swap_time = v
+		GameSettings.save_to_disk()
+		speed_val.text = "%.2fs" % v)
+	root.add_child(speed_slider)
+
 	_rp_state = UiKit.label("当前：DeepDeek", 16, Color(0.85, 0.95, 1.0))
-	_rp_state.position = Vector2(560, 82 + RIPPLE_NAMES.size() * 66 + 58)
+	_rp_state.position = Vector2(560, 82 + RIPPLE_NAMES.size() * 66 + 92)
 	_rp_state.size = Vector2(360, 26)
 	root.add_child(_rp_state)
 
-	var info := UiKit.dim("水波边缘 = 径向进度 + 三层角向正弦花瓣（5/9/13 倍角频，无缝）+ uv 噪声细碎；\n波前一条青白高光线，波外衰减圆环做亮度调制与轻微折射。\n0.7s TRANS_CUBIC EASE_OUT——先快后慢，像水漫开。", 13, Color(0.55, 0.68, 0.85))
-	info.position = Vector2(560, 82 + RIPPLE_NAMES.size() * 66 + 92)
+	var info := UiKit.dim("水波边缘 = 径向进度 + 三层角向正弦花瓣（5/9/13 倍角频，无缝）+ uv 噪声细碎，无描边；\n波外衰减圆环做亮度调制与轻微折射，波内是干净的新立绘。\n速度滑杆拖完自动存档（0.15s ~ 2.5s），下次启动还是主人调的值。", 13, Color(0.55, 0.68, 0.85))
+	info.position = Vector2(560, 82 + RIPPLE_NAMES.size() * 66 + 126)
 	info.size = Vector2(430, 120)
 	info.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	root.add_child(info)
