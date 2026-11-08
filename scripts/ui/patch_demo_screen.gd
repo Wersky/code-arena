@@ -842,7 +842,7 @@ func _build_ripple_tab() -> void:
 		_rp_style_override = -1 if idx == 0 else idx - 1)
 	root.add_child(style_pick)
 
-	var info := UiKit.dim("水波=柔和漫开（女仆）；折扇=实物青花扇啪上、绕左下扇轴绽放盖满、逆向收走（千金）；\nX斩=剑光交叉劈开、四片火烧留黑痕渐消（小恶魔）；龙鳞=鳞片底部先剥翘金边（白龙）。\n速度滑杆拖完自动存档（0.15s ~ 2.5s），下次启动还是主人调的值。", 13, Color(0.55, 0.68, 0.85))
+	var info := UiKit.dim("水波=柔和漫开（女仆）；折扇=像素扇布从左缘展开扫满全画框、逆向收回（千金）；\nX斩=剑光交叉劈开、四片火烧留黑痕渐消（小恶魔）；龙鳞=鳞片底部先剥翘金边（白龙）。\n速度滑杆拖完自动存档（0.15s ~ 2.5s），下次启动还是主人调的值。", 13, Color(0.55, 0.68, 0.85))
 	info.position = Vector2(560, 82 + RIPPLE_NAMES.size() * 66 + 158)
 	info.size = Vector2(430, 120)
 	info.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART

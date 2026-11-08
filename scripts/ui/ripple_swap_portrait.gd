@@ -22,13 +22,8 @@ const SHADERS := {
 	Style.SLASH: preload("res://assets/shaders/x_slash.gdshader"),
 	Style.HEX: preload("res://assets/shaders/hex_scale.gdshader"),
 }
-## 实物扇子素材（2026-11-08 主人定稿：单边舒展；展开面只用青花布——不要金扇骨）
-const FAN_TEX_CLOSED := preload("res://assets/art/fx/fan-closed.png")
-const FAN_TEX_CLOTH := preload("res://assets/art/fx/fan-cloth.png")
-## 扇贴图实测参数（numpy 量的：扇钉位置 / 扇骨角中位与半跨）
-const FAN_PIVOT_T := Vector2(0.068, 0.903)
-const FAN_TEX_MID := -59.0
-const FAN_TEX_HALF := 48.0
+## 实物扇子素材（2026-11-08 主人定稿：像素风扇布——合拢竖在左缘，展开扫满全画框，无支架）
+const FAN_TEX_CLOTH_PX := preload("res://assets/art/fx/fan-cloth-pixel.png")
 ## 画面侧扇轴（左下角内收一点）
 const FAN_PIVOT_S := Vector2(0.06, 0.94)
 ## 一次 swap 的总时长（秒）。demo 页有调速滑杆，主人的数值存 GameSettings 跨启动记住。
@@ -62,12 +57,18 @@ func _ready() -> void:
 
 
 func _build_fan_sprites() -> void:
+	# 合拢态 = 扇布收成的窄竖条，贴在立绘左边缘（像素布裁条，无骨）
 	_fan_closed = TextureRect.new()
 	_fan_closed.name = "FanClosed"
-	_fan_closed.texture = FAN_TEX_CLOSED
-	_fan_closed.set_anchors_preset(Control.PRESET_FULL_RECT)
+	var at := AtlasTexture.new()
+	at.atlas = FAN_TEX_CLOTH_PX
+	at.region = Rect2(0, 0, 13, 128)   ## 布贴图最左一条 ≈ 收拢的扇布
+	_fan_closed.texture = at
+	_fan_closed.position = Vector2.ZERO
+	_fan_closed.size = Vector2(52, 512)  ## 13px ×4，立在左缘
 	_fan_closed.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
-	_fan_closed.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+	_fan_closed.stretch_mode = TextureRect.STRETCH_SCALE
+	_fan_closed.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
 	_fan_closed.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_fan_closed.visible = false
 	add_child(_fan_closed)
@@ -98,7 +99,7 @@ func swap_to(tex: Texture2D) -> void:
 		_fan_swapped = false
 		_fan_next = tex
 		_mat.shader = SHADERS[style]
-		_mat.set_shader_parameter("tex_fan", FAN_TEX_CLOTH)
+		_mat.set_shader_parameter("tex_fan", FAN_TEX_CLOTH_PX)
 		_mat.set_shader_parameter("tex_next", tex)
 		_mat.set_shader_parameter("sweep", 0.0)
 		_mat.set_shader_parameter("dim", 0.0)
@@ -169,66 +170,52 @@ func _update_fan_geo() -> void:
 	if _mat == null or size.y <= 0.0:
 		return
 	var asp := size.x / size.y
-	# 画面角度带（相对左下扇轴，aspect 校正后）：画框可见四角的 atan 范围
-	var a_ur := rad_to_deg(atan2(-(FAN_PIVOT_S.y * size.y), (1.0 - FAN_PIVOT_S.x) * size.x * asp))
-	var a_ul := rad_to_deg(atan2(-(FAN_PIVOT_S.y * size.y), -(FAN_PIVOT_S.x * size.x) * asp))
-	var a_lr := rad_to_deg(atan2((1.0 - FAN_PIVOT_S.y) * size.y, (1.0 - FAN_PIVOT_S.x) * size.x * asp))
-	var a_start := a_lr + 3.0                      ## 起始边：底边侧再往外 3° 兜住底角
-	var a_end := a_ul - 2.0                        ## 终止边：左边侧再收 2° 兜住左上角
+	## 像素扇布：起始角（左缘略过，兜住左上角）与终止角（右缘略过，兜住右下角）
 	_mat.set_shader_parameter("pivot_s", FAN_PIVOT_S)
-	_mat.set_shader_parameter("pivot_t", FAN_PIVOT_T)
-	_mat.set_shader_parameter("a_start", a_start)
-	_mat.set_shader_parameter("a_end", a_end)
-	## 角度映射基准 = 扫掠带 [a_start, a_end] 的中位 对齐 贴图扇骨中位
-	_mat.set_shader_parameter("t_off", FAN_TEX_MID - (a_start + a_end) * 0.5)
-	_mat.set_shader_parameter("r_scale", 0.95)
+	_mat.set_shader_parameter("a_start", -95.0)
+	_mat.set_shader_parameter("a_end", 8.0)
+	_mat.set_shader_parameter("r_scale", 0.6)
 	_mat.set_shader_parameter("aspect", asp)
 
 
 func _apply_fan(p: float) -> void:
 	if _fan_closed == null or _mat == null:
 		return
-	# 合拢扇精灵当「第一片扇骨」：绕扇柄（左下）旋转，领着前缘走
-	_fan_closed.pivot_offset = Vector2(size.x * 0.07, size.y * 0.9)
+	# 合拢扇布竖条：贴左缘立着，绕底部扇轴（左下）做回弹
+	_fan_closed.pivot_offset = Vector2(size.x * 0.05, size.y * 0.97)
 	var sweep := 0.0
 	var dim := 0.0
-	var rot := 0.0
 	if p < 0.14:
-		# 啪：合拢扇在起始边拍上（回弹缩小）
+		# 啪：收拢的扇布在左缘立起来（回弹放大落定）
 		var k: float = p / 0.14
-		rot = 50.0 - 12.0 * smoothstep(0.0, 1.0, k)
 		_fan_closed.visible = true
 		_fan_closed.modulate = Color(1, 1, 1, clampf(k * 2.0, 0.0, 1.0))
-		_fan_closed.scale = Vector2.ONE * (1.25 - 0.25 * smoothstep(0.0, 1.0, k))
-		_fan_closed.rotation_degrees = rot
+		_fan_closed.scale = Vector2(1.3 - 0.3 * smoothstep(0.0, 1.0, k), 1.0)
 	elif p < 0.55:
-		# 单边舒展：扇骨从起始边一路扫到另一边，合拢扇领着前缘转
+		# 展开：扇布从左缘向右一路扫过整个立绘，竖条淡出
 		var k: float = (p - 0.14) / 0.41
 		sweep = smoothstep(0.0, 1.0, k)
 		dim = 0.95 * sweep
-		rot = 50.0 - 100.0 * k
-		_fan_closed.visible = true
-		_fan_closed.modulate = Color(1, 1, 1, clampf(1.0 - k * 1.4, 0.0, 1.0))
-		_fan_closed.rotation_degrees = rot
+		_fan_closed.visible = k < 0.25
+		_fan_closed.modulate = Color(1, 1, 1, clampf(1.0 - k / 0.25, 0.0, 1.0))
 	elif p < 0.62:
 		# 盖满：定住（背后已换成新立绘）
 		sweep = 1.0
 		dim = 0.95
 		_fan_closed.visible = false
-		_fan_closed.rotation_degrees = 0.0
 	elif p < 0.9:
-		# 逆向收拢：扇骨合回起始边，露出新立绘
+		# 逆向收拢：扇布合回左缘，露出新立绘；收到最后竖条重新立起来
 		var k: float = (p - 0.62) / 0.28
 		sweep = 1.0 - smoothstep(0.0, 1.0, k)
 		dim = 0.95 * sweep
-		_fan_closed.visible = false
-		_fan_closed.rotation_degrees = 0.0
+		_fan_closed.visible = k > 0.78
+		_fan_closed.modulate = Color(1, 1, 1, clampf((k - 0.78) / 0.22, 0.0, 1.0))
 	else:
-		# 收拢扇淡出
+		# 收拢扇布淡出
 		var k: float = (p - 0.9) / 0.1
 		_fan_closed.visible = true
 		_fan_closed.modulate = Color(1, 1, 1, 1.0 - k)
-		_fan_closed.rotation_degrees = 0.0
+	_fan_closed.rotation_degrees = 0.0
 	_mat.set_shader_parameter("sweep", sweep)
 	_mat.set_shader_parameter("dim", dim)
 	# 完全盖住的瞬间，背后换成新立绘
@@ -254,7 +241,7 @@ func debug_prepare(prev: Texture2D, next: Texture2D) -> void:
 	if style == Style.FAN:
 		_fan_swapped = false
 		_fan_next = next
-		_mat.set_shader_parameter("tex_fan", FAN_TEX_CLOTH)
+		_mat.set_shader_parameter("tex_fan", FAN_TEX_CLOTH_PX)
 		_update_fan_geo()
 		_fan_closed.visible = false
 	elif style == Style.SLASH:
