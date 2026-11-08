@@ -810,7 +810,7 @@ func _build_ripple_tab() -> void:
 	root.add_child(speed_val)
 	var speed_slider := HSlider.new()
 	speed_slider.min_value = 0.15
-	speed_slider.max_value = 2.5
+	speed_slider.max_value = 10.0
 	speed_slider.step = 0.05
 	speed_slider.value = GameSettings.ripple_swap_time
 	speed_slider.position = Vector2(612, 82 + RIPPLE_NAMES.size() * 66 + 62)

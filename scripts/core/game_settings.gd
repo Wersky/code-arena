@@ -30,7 +30,7 @@ static func load_from_disk() -> void:
 	var ver := int(cfg.get_value("meta", "version", 1))
 	term_speed = clampi(int(cfg.get_value("term", "speed", 0)), 0, 2)
 	term_fullscreen = bool(cfg.get_value("term", "fullscreen", true))
-	ripple_swap_time = clampf(float(cfg.get_value("ripple", "swap_time", 0.7)), 0.15, 2.5)
+	ripple_swap_time = clampf(float(cfg.get_value("ripple", "swap_time", 0.7)), 0.15, 10.0)
 	if ver < CFG_VERSION:
 		# v2：窗口模式默认改成真全屏。老配置只迁移这一次，之后主人自己切就尊重设置。
 		term_fullscreen = true

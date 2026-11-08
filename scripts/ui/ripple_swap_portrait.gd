@@ -33,8 +33,7 @@ var style: int = Style.RIPPLE
 var _mat: ShaderMaterial = null
 var _swapping := false
 var _current: Texture2D = null
-## 实物扇子（FAN 风格专用）：合拢扇精灵 + 角度揭示 shader
-var _fan_closed: TextureRect = null
+## FAN 风格专用状态
 var _fan_swapped := false   ## 盖满后，背后已换成新立绘
 var _fan_next: Texture2D = null
 
@@ -53,25 +52,6 @@ func _ready() -> void:
 	add_child(rect)
 	resized.connect(_update_geo)
 	_update_geo()
-	_build_fan_sprites()
-
-
-func _build_fan_sprites() -> void:
-	# 合拢态 = 扇布收成的窄竖条，贴在立绘左边缘（像素布裁条，无骨）
-	_fan_closed = TextureRect.new()
-	_fan_closed.name = "FanClosed"
-	var at := AtlasTexture.new()
-	at.atlas = FAN_TEX_CLOTH_PX
-	at.region = Rect2(0, 0, 13, 128)   ## 布贴图最左一条 ≈ 收拢的扇布
-	_fan_closed.texture = at
-	_fan_closed.position = Vector2.ZERO
-	_fan_closed.size = Vector2(52, 512)  ## 13px ×4，立在左缘
-	_fan_closed.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
-	_fan_closed.stretch_mode = TextureRect.STRETCH_SCALE
-	_fan_closed.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
-	_fan_closed.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	_fan_closed.visible = false
-	add_child(_fan_closed)
 
 
 func _update_geo() -> void:
@@ -95,7 +75,7 @@ func swap_to(tex: Texture2D) -> void:
 		return
 	_swapping = true
 	if style == Style.FAN:
-		# 像素扇布：折痕先现 → 扇布从左缘单边划出盖满 → 背后换图 → 逆向收起
+		# 像素扇布透明转场：对角线起手 → 向两边展开盖满 → 背后换图 → 逆向收回
 		_fan_swapped = false
 		_fan_next = tex
 		_mat.shader = SHADERS[style]
@@ -103,14 +83,10 @@ func swap_to(tex: Texture2D) -> void:
 		_mat.set_shader_parameter("tex_next", tex)
 		_mat.set_shader_parameter("sweep", 0.0)
 		_mat.set_shader_parameter("dim", 0.0)
-		_mat.set_shader_parameter("fan_p", 0.0)
 		_update_fan_geo()
-		_apply_fan_creases()
-		_fan_closed.visible = false
 		var tw := create_tween()
 		tw.tween_method(_apply_fan, 0.0, 1.0, maxf(0.05, swap_time))
 		tw.tween_callback(func() -> void:
-			_fan_closed.visible = false
 			_mat.set_shader_parameter("tex_prev", tex)
 			_mat.set_shader_parameter("sweep", 0.0)
 			_mat.set_shader_parameter("dim", 0.0)
@@ -142,10 +118,12 @@ func _apply_slash_params(shake: bool) -> void:
 	var rng := RandomNumberGenerator.new()
 	rng.randomize()
 	var arr := PackedVector4Array()
-	for k in 6:
-		var ang := deg_to_rad(rng.randf_range(-80.0, 80.0))
-		var c: float = rng.randf_range(-0.12, 0.12) if k == 0 else rng.randf_range(-0.34, 0.34)
-		var delay: float = 0.06 + k * 0.05 + rng.randf_range(-0.01, 0.01)   ## 全部斩完 ≤0.31
+	var base_ang := rng.randf_range(0.0, 72.0)   ## 四面八方：法线角铺满 360°，每刀隔 72°
+	for k in 5:
+		## 均匀分布：方向四面八方 + 截距等距穿过画框，只留小抖动（不密、盖满全卡）
+		var ang := deg_to_rad(base_ang + k * 72.0 + rng.randf_range(-8.0, 8.0))
+		var c: float = -0.32 + k * 0.16 + rng.randf_range(-0.04, 0.04)
+		var delay: float = 0.04 + k * 0.05 + rng.randf_range(-0.008, 0.008)   ## 全部斩完 ≈0.25
 		arr.append(Vector4(cos(ang), sin(ang), c, delay))
 	_mat.set_shader_parameter("slashes", arr)
 	_mat.set_shader_parameter("seed_n", rng.randf_range(0.0, 10.0))
@@ -153,7 +131,7 @@ func _apply_slash_params(shake: bool) -> void:
 		return
 	var base_pos := position
 	var dur := maxf(0.05, swap_time)
-	for k in 6:
+	for k in 5:
 		var sh := create_tween()
 		sh.tween_interval(arr[k].w * dur)
 		for i in 3:
@@ -162,78 +140,63 @@ func _apply_slash_params(shake: bool) -> void:
 		sh.tween_property(self, "position", base_pos, 0.04)
 
 
-## 实物扇子分镜（p 0→1，由 tween/逐帧验收推进）：
-##   0~0.16  啪：合拢扇拍上立绘（回弹缩小）
-##   0.16~0.46 从中间向左右展开（scale.x 中心为轴 0→1），完全遮住立绘
-##   0.46~0.56 扇面定住——p≥0.5 时背后已换成新立绘
-##   0.56~0.88 逆向收扇（scale.x 1→0），露出新立绘
-##   0.88~1  合拢扇滑走淡出
+## 像素扇布分镜（p 0→1，由 tween/逐帧验收推进）：
+##   0~0.06  啪：对角线出现（合拢的扇）
+##   0.06~0.5  向两边展开（绕对角线对称开花，扇骨从对角线向两侧长出），扇面渐盖满
+##   0.5~0.58  盖满定住——背后已换成新立绘
+##   0.58~0.92 逆向收拢回对角线，露出新立绘
+##   0.92~1  收尾淡出
 func _update_fan_geo() -> void:
 	if _mat == null or size.y <= 0.0:
 		return
 	var asp := size.x / size.y
-	## 像素扇布：起始角（左缘略过，兜住左上角）与终止角（右缘略过，兜住右下角）
+	# 开花中心 = 合拢对角线角（扇轴左下 → 画框右上角）
+	var diag := Vector2((1.0 - FAN_PIVOT_S.x) * size.x * asp, -(FAN_PIVOT_S.y * size.y))
+	var a_diag := rad_to_deg(atan2(diag.y, diag.x))
 	_mat.set_shader_parameter("pivot_s", FAN_PIVOT_S)
-	_mat.set_shader_parameter("a_start", -95.0)
-	_mat.set_shader_parameter("a_end", 8.0)
+	_mat.set_shader_parameter("a_mid_s", a_diag)
+	_mat.set_shader_parameter("a_half_s", 48.0)
+	_mat.set_shader_parameter("a_mid_t", -59.0)
+	_mat.set_shader_parameter("fan_r", 1.02)
+	_mat.set_shader_parameter("blades", 12.0)
 	_mat.set_shader_parameter("r_scale", 0.6)
 	_mat.set_shader_parameter("aspect", asp)
 
 
 func _apply_fan(p: float) -> void:
-	if _fan_closed == null or _mat == null:
+	if _mat == null:
 		return
-	# 合拢扇布竖条：贴左缘立着，绕底部扇轴（左下）做回弹
-	_fan_closed.pivot_offset = Vector2(size.x * 0.05, size.y * 0.97)
 	var sweep := 0.0
 	var dim := 0.0
-	if p < 0.1:
-		# 啪：收拢的扇布在左缘立起来（回弹放大落定）
-		var k: float = p / 0.1
-		_fan_closed.visible = true
-		_fan_closed.modulate = Color(1, 1, 1, clampf(k * 2.0, 0.0, 1.0))
-		_fan_closed.scale = Vector2(1.3 - 0.3 * smoothstep(0.0, 1.0, k), 1.0)
-	elif p < 0.44:
-		# 折痕出现：金色折叠线一条条画出来，铺满立绘（shader 按 fan_p 画）
-		dim = 0.15
-		_fan_closed.visible = p < 0.2
-		_fan_closed.modulate = Color(1, 1, 1, clampf(1.0 - (p - 0.1) / 0.1, 0.0, 1.0))
-	elif p < 0.68:
-		# 单边划出：扇布从左缘沿折痕一路扫到另一侧，盖满全画框
-		var k: float = (p - 0.44) / 0.24
-		sweep = smoothstep(0.0, 1.0, k)
-		dim = 0.15 + 0.8 * sweep
-		_fan_closed.visible = false
-	elif p < 0.88:
-		# 逆向收起：扇布合回左缘（折痕重现），露出新立绘
-		var k: float = (p - 0.68) / 0.2
-		sweep = 1.0 - smoothstep(0.0, 1.0, k)
-		dim = 0.15 + 0.8 * sweep
-		_fan_closed.visible = false
-	else:
-		# 收尾：折痕淡出
+	if p < 0.06:
+		# 啪：对角线出现（合拢的扇就是这条线）
+		sweep = 0.03
 		dim = 0.0
-		_fan_closed.visible = false
-	_fan_closed.rotation_degrees = 0.0
-	_mat.set_shader_parameter("fan_p", p)
+	elif p < 0.5:
+		# 向两边展开：扇布绕对角线对称开花，扇骨从对角线向两侧长出
+		var k: float = (p - 0.06) / 0.44
+		sweep = 0.03 + 0.97 * smoothstep(0.0, 1.0, k)
+		dim = 0.92 * sweep
+	elif p < 0.58:
+		# 盖满：定住（背后已换成新立绘）
+		sweep = 1.0
+		dim = 0.92
+	elif p < 0.92:
+		# 逆向收拢回对角线，露出新立绘
+		var k: float = (p - 0.58) / 0.34
+		sweep = 1.0 - 0.97 * smoothstep(0.0, 1.0, k)
+		dim = 0.92 * sweep
+	else:
+		# 收尾：对角线也淡出归零
+		sweep = 0.03 * (1.0 - (p - 0.92) / 0.08)
+		dim = 0.0
 	_mat.set_shader_parameter("sweep", sweep)
 	_mat.set_shader_parameter("dim", dim)
 	# 完全盖住的瞬间，背后换成新立绘
-	if p >= 0.68 and not _fan_swapped and _fan_next != null:
+	if p >= 0.5 and not _fan_swapped and _fan_next != null:
 		_mat.set_shader_parameter("tex_prev", _fan_next)
 		_current = _fan_next
 		_fan_swapped = true
-
-
-## 折痕参数：12 等分扇骨距的偶数位（5 条内折痕），角度带微小抖动，起画时刻错峰
-func _apply_fan_creases() -> void:
-	var pitch := 8.0 / 12.0   ## (a_end - a_start) / 12 = 103/12 ≈ 8.58°
-	var arr := PackedVector4Array()
-	for j in 5:
-		var ang := -95.0 + float((j + 1) * 2) * pitch + randf_range(-1.2, 1.2)
-		var delay := 0.12 + j * 0.058
-		arr.append(Vector4(ang, delay, 0.0, 0.0))
-	_mat.set_shader_parameter("creases", arr)
 
 
 func is_swapping() -> bool:
@@ -254,8 +217,6 @@ func debug_prepare(prev: Texture2D, next: Texture2D) -> void:
 		_fan_next = next
 		_mat.set_shader_parameter("tex_fan", FAN_TEX_CLOTH_PX)
 		_update_fan_geo()
-		_apply_fan_creases()
-		_fan_closed.visible = false
 	elif style == Style.SLASH:
 		_apply_slash_params(false)
 

@@ -12,7 +12,7 @@ uniform sampler2D tex_prev : source_color, filter_linear;
 uniform sampler2D tex_next : source_color, filter_linear;
 uniform float progress : hint_range(0.0, 1.0) = 0.0;
 uniform float aspect = 1.0;
-uniform vec4 slashes[6];
+uniform vec4 slashes[5];
 uniform float seed_n = 0.0;
 
 float hash21(vec2 p) {
@@ -49,7 +49,7 @@ void fragment() {
 	vec3 ember_col = vec3(1.0, 0.42, 0.10) * (1.1 + 0.6 * vnoise(UV * 40.0 + vec2(TIME * 3.0)));
 	float end_fade = 1.0 - smoothstep(0.9, 1.0, progress);
 
-	for (int k = 0; k < 6; k++) {
+	for (int k = 0; k < 5; k++) {
 		vec4 s = slashes[k];
 		float d = dot(q, s.xy) - s.z;          // >0 = 被这一刀切走的一侧
 
@@ -60,7 +60,7 @@ void fragment() {
 		col.rgb += vec3(1.0) * streak * 0.95;
 
 		// ② 斩痕：劈下后留着的细亮线 + 暗缝（第一阶段满屏都是痕，碎片起飞后跟着飞走淡出）
-		float ft2 = clamp((progress - 0.46 - float(k) * 0.04) / 0.40, 0.0, 1.0);
+		float ft2 = clamp((progress - 0.30 - float(k) * 0.02) / 0.40, 0.0, 1.0);
 		float scar_a = step(s.w, progress) * (1.0 - ft2);
 		float scar_core = exp(-abs(d) * 60.0);
 		float scar_seam = exp(-abs(d) * 18.0);
@@ -70,10 +70,10 @@ void fragment() {
 		// ③ 第 k 片 = 前 k 刀都保留、且在第 k 刀的被切侧：第二阶段统一边飞边烧
 		float is_piece = keep_all * step(0.0, d);
 		if (is_piece > 0.5) {
-			float ft = clamp((progress - 0.46 - float(k) * 0.04) / 0.40, 0.0, 1.0);
+			float ft = clamp((progress - 0.30 - float(k) * 0.02) / 0.42, 0.0, 1.0);
 			float fly = 1.87 * (1.0 - pow(1.0 - ft, 2.0));
 			vec2 off = s.xy * fly;
-			float burn_t = clamp((progress - 0.50 - float(k) * 0.04) / 0.34, 0.0, 1.0);
+			float burn_t = clamp((progress - 0.34 - float(k) * 0.02) / 0.38, 0.0, 1.0);
 			float dnb = n - burn_t;
 			vec4 prev_c = texture(tex_prev, UV - off);
 			vec3 pc;
@@ -99,7 +99,7 @@ void fragment() {
 
 	// 残余区：所有刀都留下的中间小块，最后自己烧尽（微微漂移）
 	if (keep_all > 0.5) {
-		float bt = clamp((progress - 0.58) / 0.32, 0.0, 1.0);
+		float bt = clamp((progress - 0.42) / 0.42, 0.0, 1.0);
 		float dnb = n - bt;
 		vec2 drift = vec2(0.12, 0.2) * bt;
 		vec4 prev_c = texture(tex_prev, UV - drift);
