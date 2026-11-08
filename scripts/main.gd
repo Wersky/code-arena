@@ -528,7 +528,7 @@ func _maybe_capture() -> void:
 	if screen in ["menu", "arena", "battle", "intro", "reward", "result",
 			"menuhover", "rig", "rigwalk", "loadrun", "card", "cardtext", "cardcost", "terminal", "termgif",
 			"termdump", "hero", "stairs", "launch", "launch2", "arenalayout", "sendtest", "ricetest",
-			"patchdemo", "wishpanel"]:
+			"patchdemo", "wishpanel", "ripple"]:
 		run.reset_run()
 		if screen == "launch" or screen == "launch2":
 			var sc := _current as LaunchScreen
@@ -704,6 +704,30 @@ func _maybe_capture() -> void:
 				ar_wish.debug_open_wish_panel()
 				# 再等 0.8s：代码雨落下几帧，画面不是空的
 				await get_tree().create_timer(0.8).timeout
+		elif screen == "ripple":
+			# 水波转场逐帧验收（2026-11-08）：手动推进 shader 进度，
+			# 8 个采样点各存一帧 <shotout>-fNN.png，宿主侧拼 filmstrip 逐帧目检
+			var probe := Control.new()
+			probe.set_anchors_preset(Control.PRESET_FULL_RECT)
+			var pbg2 := ColorRect.new()
+			pbg2.color = Color("#0b0f18")
+			pbg2.set_anchors_preset(Control.PRESET_FULL_RECT)
+			probe.add_child(pbg2)
+			var rp := RippleSwapPortrait.new()
+			rp.position = Vector2(608, 194)
+			rp.size = Vector2(384, 512)
+			probe.add_child(rp)
+			_swap(probe)
+			rp.debug_prepare(load("res://assets/art/ai-deepdeek.png"),
+					load("res://assets/art/ai-kweno.png"))
+			var ts := [0.0, 0.1, 0.22, 0.34, 0.46, 0.58, 0.72, 1.0]
+			for i in ts.size():
+				rp.debug_set_progress(float(ts[i]))
+				await get_tree().process_frame
+				await get_tree().process_frame
+				var fimg := get_viewport().get_texture().get_image()
+				fimg.save_png("%s-f%02d.png" % [out_path, i])
+			print("[shot=ripple] 已存 8 帧 → %s-fNN.png" % out_path)
 		else:
 			_show_menu()
 	for _i in 6:

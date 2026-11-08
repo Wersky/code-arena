@@ -54,6 +54,13 @@ var _saved_affection := 0.0
 ## 视觉验收：命令行 --tab=N 直开指定标签页
 var initial_tab := 0
 
+# ── Tab6 角色转场（水波试验版）──
+var _rp_view: RippleSwapPortrait = null
+var _rp_btns: Array[Button] = []
+var _rp_state: Label = null
+var _rp_cur := 0
+var _rp_texs: Array[Texture2D] = []
+
 
 func _init() -> void:
 	set_anchors_preset(Control.PRESET_FULL_RECT)
@@ -77,7 +84,7 @@ func _build_bg() -> void:
 
 
 func _build_header() -> void:
-	var title := UiKit.label("更新演示 · 效果程序 / 翻面 / 算力 / 定价 / 组合 / 好感度", 30, Color(0.92, 0.95, 1.0))
+	var title := UiKit.label("更新演示 · 效果程序 / 翻面 / 算力 / 定价 / 组合 / 好感度 / 转场", 30, Color(0.92, 0.95, 1.0))
 	title.position = Vector2(60, 42)
 	title.size = Vector2(1100, 40)
 	add_child(title)
@@ -108,6 +115,7 @@ func _build_left() -> void:
 		["定价", "模拟跑分：p50 定费用、p95 封禁，超模卡当场判禁用"],
 		["组合审计", "2–6 张组容斥差分，抓「单卡无害合起来超模」"],
 		["好感度", "金币（伤害对数结算）+ 商店礼物 + 喂饭；好感抬许愿卡品质"],
+		["角色转场", "试验：水波从立绘中心不规则扩散，波内显现新角色——第 7 页可玩"],
 	]
 	for r in rows:
 		var d := UiKit.dim("%s：%s" % [String(r[0]), String(r[1]).replace("\n", " ")], 13, Color(0.55, 0.68, 0.85))
@@ -123,13 +131,13 @@ func _build_tabs() -> void:
 	var tab_row := HBoxContainer.new()
 	tab_row.position = Vector2(520, 138)
 	tab_row.size = Vector2(1020, 36)
-	tab_row.add_theme_constant_override("separation", 6)
+	tab_row.add_theme_constant_override("separation", 5)
 	add_child(tab_row)
-	var names := ["效果工坊", "翻面卡牌", "算力", "定价", "组合审计", "好感度"]
+	var names := ["效果工坊", "翻面卡牌", "算力", "定价", "组合审计", "好感度", "角色转场"]
 	for i in names.size():
 		var b := UiKit.button(String(names[i]), 15)
 		b.toggle_mode = true
-		b.custom_minimum_size = Vector2(150, 34)
+		b.custom_minimum_size = Vector2(142, 34)
 		b.button_pressed = i == 0
 		var idx := i
 		b.toggled.connect(func(on: bool) -> void:
@@ -154,6 +162,7 @@ func _build_tabs() -> void:
 	_build_price_tab()
 	_build_combo_tab()
 	_build_affection_tab()
+	_build_ripple_tab()
 
 
 func _switch_tab(idx: int) -> void:
@@ -720,3 +729,88 @@ func _aff_refresh() -> void:
 		Affection.quality_tier(), WishCardFactory.max_tokens_for(lv)]
 	_aff_out.text = ("好感点 %.0f ｜ 等级 Lv.%d（进度 %.0f%%）\n%s\n\n许愿卡连动：画出来的卡 [伤害上限][状态档位][机制数量] 全部抬升。\n商店礼物：小蛋糕 20 金 / 蝴蝶结 45 金 / 约会券 110 金。\n\n金币预览：本战伤害 %d → 金币 +%d（对数：100 伤≈18 金，4000 伤≈65 金）" % [
 		Affection.points, lv, Affection.level_progress() * 100.0, caps, dmg, gold])
+
+
+# ═══ Tab6 角色转场（水波试验版）══════════════════════════════════════════════
+
+const RIPPLE_IDS := ["deepdeek", "kweno", "chatppt", "grock"]
+const RIPPLE_NAMES := ["DeepDeek", "Kweno", "ChatPPT", "Grock"]
+const RIPPLE_TINTS := [Color(0.310, 0.757, 0.965), Color(1.000, 0.820, 0.400),
+		Color(0.937, 0.545, 0.706), Color(0.478, 0.792, 0.443)]
+
+
+func _build_ripple_tab() -> void:
+	var root := Control.new()
+	root.name = "TabRipple"
+	root.set_anchors_preset(Control.PRESET_FULL_RECT)
+	root.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_content.add_child(root)
+
+	var title := UiKit.label("点右边角色切换——水波从立绘中心不规则扩散，波内显现新立绘（试验版）", 17, Color(0.55, 0.85, 1.0))
+	title.position = Vector2(24, 16)
+	root.add_child(title)
+
+	for id in RIPPLE_IDS:
+		var t: Texture2D = load("res://assets/art/ai-%s.png" % id)
+		_rp_texs.append(t)
+
+	# 大立绘（192×256 立绘整数 ×2 = 384×512，像素画 crisp）
+	var frame := UiKit.panel_box(Color(0.03, 0.045, 0.08, 0.97), Color(0.16, 0.30, 0.48), 10)
+	frame.position = Vector2(80, 58)
+	frame.size = Vector2(408, 560)
+	frame.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	root.add_child(frame)
+
+	_rp_view = RippleSwapPortrait.new()
+	_rp_view.name = "RipplePortrait"
+	_rp_view.position = Vector2(100, 82)
+	_rp_view.size = Vector2(384, 512)
+	root.add_child(_rp_view)
+	_rp_view.set_portrait(_rp_texs[0])
+	_rp_view.swap_finished.connect(func() -> void:
+		if _rp_state != null:
+			_rp_state.text = "转场完成 ✓ 当前：%s" % RIPPLE_NAMES[_rp_cur])
+
+	# 右侧：4 个角色切换按钮（竖排）
+	for i in RIPPLE_NAMES.size():
+		var b := UiKit.button(RIPPLE_NAMES[i], 18)
+		b.toggle_mode = true
+		b.button_pressed = i == 0
+		b.custom_minimum_size = Vector2(280, 52)
+		b.position = Vector2(560, 82 + i * 66)
+		var idx := i
+		b.toggled.connect(func(on: bool) -> void:
+			if on:
+				_rp_swap(idx))
+		root.add_child(b)
+		_rp_btns.append(b)
+
+	var replay := UiKit.button("↻ 重播上一转（A/B 交替）", 15)
+	replay.custom_minimum_size = Vector2(280, 40)
+	replay.position = Vector2(560, 82 + RIPPLE_NAMES.size() * 66 + 6)
+	replay.pressed.connect(func() -> void:
+		var other := (_rp_cur + 1) % _rp_texs.size()
+		_rp_swap(other))
+	root.add_child(replay)
+
+	_rp_state = UiKit.label("当前：DeepDeek", 16, Color(0.85, 0.95, 1.0))
+	_rp_state.position = Vector2(560, 82 + RIPPLE_NAMES.size() * 66 + 58)
+	_rp_state.size = Vector2(360, 26)
+	root.add_child(_rp_state)
+
+	var info := UiKit.dim("水波边缘 = 径向进度 + 三层角向正弦花瓣（5/9/13 倍角频，无缝）+ uv 噪声细碎；\n波前一条青白高光线，波外衰减圆环做亮度调制与轻微折射。\n0.7s TRANS_CUBIC EASE_OUT——先快后慢，像水漫开。", 13, Color(0.55, 0.68, 0.85))
+	info.position = Vector2(560, 82 + RIPPLE_NAMES.size() * 66 + 92)
+	info.size = Vector2(430, 120)
+	info.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	root.add_child(info)
+
+
+func _rp_swap(i: int) -> void:
+	if i == _rp_cur or _rp_view == null:
+		return
+	_rp_cur = i
+	_rp_view.swap_to(_rp_texs[i])
+	if _rp_state != null:
+		_rp_state.text = "水波扩散中… → %s" % RIPPLE_NAMES[i]
+	for k in _rp_btns.size():
+		_rp_btns[k].button_pressed = k == i

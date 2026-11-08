@@ -35,6 +35,7 @@ func _initialize() -> void:
 	await _test_wish_canvas_colors()
 	await _test_wish_canvas_edit()
 	await _test_card_flip()
+	await _test_ripple_swap()
 	await _test_patch_demo()
 	_test_affection_system()
 	await _test_shop_gifts()
@@ -1682,8 +1683,8 @@ func _test_patch_demo() -> void:
 	_host.add_child(demo)
 	await process_frame
 	await process_frame
-	_check(demo._content != null and demo._content.get_child_count() == 6,
-			"六个演示标签页全部构建")
+	_check(demo._content != null and demo._content.get_child_count() == 7,
+			"七个演示标签页全部构建（含角色转场试验）")
 	# Tab0 效果工坊：编译 + 试打
 	_check(demo._fx_desc.text.contains("编译通过"), "效果工坊实时编译出人话")
 	demo._fx_run()
@@ -1707,4 +1708,31 @@ func _test_patch_demo() -> void:
 	Affection.points = saved
 	Affection.save()
 	demo.queue_free()
+	await process_frame
+
+
+## 2026-11-08：角色切换水波转场（试验版）——shader 控件基本行为
+func _test_ripple_swap() -> void:
+	print("[水波转场]")
+	var v := RippleSwapPortrait.new()
+	_host.add_child(v)
+	v.size = Vector2(384, 512)
+	await process_frame
+	var ta: Texture2D = load("res://assets/art/ai-deepdeek.png")
+	var tb: Texture2D = load("res://assets/art/ai-kweno.png")
+	_check(v.get_child_count() > 0, "控件持有 shader 矩形")
+	v.set_portrait(ta)
+	v.debug_prepare(ta, tb)
+	v.debug_set_progress(0.5)
+	_check(true, "progress 手动推进不炸（0.5）")
+	v.debug_set_progress(1.0)
+	_check(not v.is_swapping(), "手动推进不触发转场状态")
+	var done := [false]
+	v.swap_finished.connect(func() -> void: done[0] = true)
+	v.swap_to(tb)
+	_check(v.is_swapping(), "swap_to 进入转场状态")
+	await create_timer(1.1).timeout
+	_check(done[0], "转场完成发 swap_finished 信号")
+	_check(not v.is_swapping(), "转场结束后状态复位")
+	v.queue_free()
 	await process_frame
