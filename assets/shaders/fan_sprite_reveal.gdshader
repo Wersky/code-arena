@@ -8,7 +8,7 @@ render_mode unshaded;
 
 uniform sampler2D tex_prev : source_color, filter_linear;
 uniform sampler2D tex_next : source_color, filter_linear;
-uniform sampler2D tex_fan : source_color, filter_linear_mipmap;
+uniform sampler2D tex_fan : source_color, filter_linear_mipmap, repeat_enable;
 uniform float sweep : hint_range(0.0, 1.0) = 0.0;   // 0=全合拢 1=舒展到另一边底
 uniform float dim : hint_range(0.0, 1.0) = 0.0;     // 未扫到区域的压暗
 uniform float aspect = 1.0;

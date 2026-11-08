@@ -22,9 +22,9 @@ const SHADERS := {
 	Style.SLASH: preload("res://assets/shaders/x_slash.gdshader"),
 	Style.HEX: preload("res://assets/shaders/hex_scale.gdshader"),
 }
-## 实物扇子素材（2026-11-08 主人定稿：合拢扇啪上对角线 → 扇骨从对角线向两侧开花盖满）
+## 实物扇子素材（2026-11-08 主人定稿：单边舒展；展开面只用青花布——不要金扇骨）
 const FAN_TEX_CLOSED := preload("res://assets/art/fx/fan-closed.png")
-const FAN_TEX_OPEN := preload("res://assets/art/fx/fan-open.png")
+const FAN_TEX_CLOTH := preload("res://assets/art/fx/fan-cloth.png")
 ## 扇贴图实测参数（numpy 量的：扇钉位置 / 扇骨角中位与半跨）
 const FAN_PIVOT_T := Vector2(0.068, 0.903)
 const FAN_TEX_MID := -59.0
@@ -98,7 +98,7 @@ func swap_to(tex: Texture2D) -> void:
 		_fan_swapped = false
 		_fan_next = tex
 		_mat.shader = SHADERS[style]
-		_mat.set_shader_parameter("tex_fan", FAN_TEX_OPEN)
+		_mat.set_shader_parameter("tex_fan", FAN_TEX_CLOTH)
 		_mat.set_shader_parameter("tex_next", tex)
 		_mat.set_shader_parameter("sweep", 0.0)
 		_mat.set_shader_parameter("dim", 0.0)
@@ -226,7 +226,7 @@ func debug_prepare(prev: Texture2D, next: Texture2D) -> void:
 	if style == Style.FAN:
 		_fan_swapped = false
 		_fan_next = next
-		_mat.set_shader_parameter("tex_fan", FAN_TEX_OPEN)
+		_mat.set_shader_parameter("tex_fan", FAN_TEX_CLOTH)
 		_update_fan_geo()
 		_fan_closed.visible = false
 
