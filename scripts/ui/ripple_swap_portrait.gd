@@ -129,6 +129,15 @@ func swap_to(tex: Texture2D) -> void:
 		_current = tex
 		_swapping = false
 		swap_finished.emit())
+	if style == Style.SLASH:
+		# 斩击张力：双剑交叉的瞬间画面震一下
+		var base_pos := position
+		var sh := create_tween()
+		sh.tween_interval(maxf(0.05, swap_time) * 0.30)
+		for i in 5:
+			sh.tween_property(self, "position",
+					base_pos + Vector2(randf_range(-10.0, 10.0), randf_range(-8.0, 8.0)), 0.028)
+		sh.tween_property(self, "position", base_pos, 0.05)
 
 
 ## 实物扇子分镜（p 0→1，由 tween/逐帧验收推进）：
