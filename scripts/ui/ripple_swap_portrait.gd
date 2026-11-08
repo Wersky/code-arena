@@ -119,6 +119,8 @@ func swap_to(tex: Texture2D) -> void:
 	_mat.set_shader_parameter("tex_next", tex)
 	_mat.set_shader_parameter("progress", 0.0)
 	_update_geo()
+	if style == Style.SLASH:
+		_apply_slash_params(true)
 	var tw := create_tween()
 	tw.tween_method(func(v: float) -> void:
 		_mat.set_shader_parameter("progress", v), 0.0, 1.0, maxf(0.05, swap_time)) \
@@ -129,15 +131,32 @@ func swap_to(tex: Texture2D) -> void:
 		_current = tex
 		_swapping = false
 		swap_finished.emit())
-	if style == Style.SLASH:
-		# 斩击张力：双剑交叉的瞬间画面震一下
-		var base_pos := position
+
+
+## 乱斩参数（随机种子）：6 刀，角度/截距/起刀时刻全随机；第一刀偏中保证切得大。
+## shake=true 时每刀落下画面小震一下。
+func _apply_slash_params(shake: bool) -> void:
+	var rng := RandomNumberGenerator.new()
+	rng.randomize()
+	var arr := PackedVector4Array()
+	for k in 6:
+		var ang := deg_to_rad(rng.randf_range(-80.0, 80.0))
+		var c: float = rng.randf_range(-0.12, 0.12) if k == 0 else rng.randf_range(-0.34, 0.34)
+		var delay: float = 0.08 + k * 0.088 + rng.randf_range(-0.015, 0.015)
+		arr.append(Vector4(cos(ang), sin(ang), c, delay))
+	_mat.set_shader_parameter("slashes", arr)
+	_mat.set_shader_parameter("seed_n", rng.randf_range(0.0, 10.0))
+	if not shake:
+		return
+	var base_pos := position
+	var dur := maxf(0.05, swap_time)
+	for k in 6:
 		var sh := create_tween()
-		sh.tween_interval(maxf(0.05, swap_time) * 0.30)
-		for i in 5:
+		sh.tween_interval(arr[k].w * dur)
+		for i in 3:
 			sh.tween_property(self, "position",
-					base_pos + Vector2(randf_range(-10.0, 10.0), randf_range(-8.0, 8.0)), 0.028)
-		sh.tween_property(self, "position", base_pos, 0.05)
+					base_pos + Vector2(randf_range(-7.0, 7.0), randf_range(-6.0, 6.0)), 0.025)
+		sh.tween_property(self, "position", base_pos, 0.04)
 
 
 ## 实物扇子分镜（p 0→1，由 tween/逐帧验收推进）：
@@ -238,6 +257,8 @@ func debug_prepare(prev: Texture2D, next: Texture2D) -> void:
 		_mat.set_shader_parameter("tex_fan", FAN_TEX_CLOTH)
 		_update_fan_geo()
 		_fan_closed.visible = false
+	elif style == Style.SLASH:
+		_apply_slash_params(false)
 
 
 func debug_set_progress(p: float) -> void:

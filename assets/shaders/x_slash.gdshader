@@ -1,16 +1,18 @@
 shader_type canvas_item;
 render_mode unshaded;
 
-// X 双斩 v3（2026-11-08，Grock 专属，主人反馈加张力）：
-// ① 两道更宽更亮的剑光对角交叉扫过（带拖尾），交叉瞬间白闪更狠
-// ② 旧立绘四片沿对角大幅飞出（1.7 倍位移 + 坠弧），干净利落
-// ③ 飞出过程照旧火烧：火线橙红 → 黑色焦痕 → 渐隐
-// ④ 新立绘登场带一记缩放冲击（先放大再落定），画面不闷
+// 乱斩转场 v4（2026-11-08，Grock 专属，主人定稿：不要 X，随机种子无规则乱斩）：
+// 6 条随机角度/位置的斩线**逐步**劈下——第 k 刀把「前 k 刀都留下的区域」再切掉一块，
+// 被切下的碎片沿切口法线**边飞边烧**（火线橙红 → 黑色焦痕 → 渐隐）；
+// 每刀落下时沿斩线闪一道白光；最后残余的部分自己烧尽，底下透出新立绘（带缩放冲击）。
+// slashes[k] = vec4(法线x, 法线y, 截距c, 起刀时刻)，由 GDScript 随机种子生成。
 
 uniform sampler2D tex_prev : source_color, filter_linear;
 uniform sampler2D tex_next : source_color, filter_linear;
 uniform float progress : hint_range(0.0, 1.0) = 0.0;
 uniform float aspect = 1.0;
+uniform vec4 slashes[6];
+uniform float seed_n = 0.0;   // 每次换图换一批噪声，烧痕不重样
 
 float hash21(vec2 p) {
 	p = fract(p * vec2(234.34, 435.345));
@@ -31,75 +33,85 @@ float vnoise(vec2 p) {
 
 void fragment() {
 	vec2 q = (UV - vec2(0.5)) * vec2(aspect, 1.0);
-	float d1 = (q.x - q.y) * 0.7071;
-	float d2 = (q.x + q.y) * 0.7071;
 
-	// ① 双斩：主光带更宽（falloff 14），后面拖一条余光
-	float sw1 = mix(-1.45, 1.45, clamp(progress / 0.26, 0.0, 1.0));
-	float sw2 = mix(1.45, -1.45, clamp((progress - 0.15) / 0.26, 0.0, 1.0));
-	float s1 = exp(-abs(d1 - sw1) * 14.0) * step(0.001, progress) * step(progress, 0.32);
-	float s2 = exp(-abs(d2 - sw2) * 14.0) * step(0.13, progress) * step(progress, 0.46);
-	float trail1 = exp(-abs(d1 - (sw1 - 0.22)) * 30.0) * step(0.001, progress) * step(progress, 0.32);
-	float trail2 = exp(-abs(d2 - (sw2 + 0.22)) * 30.0) * step(0.13, progress) * step(progress, 0.46);
-
-	// ② 交叉白闪（更狠）
-	float flash = exp(-abs(progress - 0.30) * 24.0) * 0.45;
-
-	// ③ 四片大幅飞出：位移 0.95（比 v2 大 70%），快起慢停，下片坠弧——
-	//    位移别太大，四片要留在画面里边飞边烧
-	float split_t = clamp((progress - 0.34) / 0.28, 0.0, 1.0);
-	float split = 1.0 - pow(1.0 - split_t, 2.2);
-	float side1 = step(0.0, d1);
-	float side2 = step(0.0, d2);
-	vec2 dir = normalize(vec2(side1 * 2.0 - 1.0, side2 * 2.0 - 1.0) + vec2(0.001, 0.001));
-	float grav = (side2 > 0.5) ? 0.4 : -0.15;
-	vec2 off = (dir * 0.95 + vec2(0.0, grav)) * split;
-
-	// ④ 火烧（0.45 起，四片错峰）：火线 → 黑痕 → 渐隐
-	float qidx = side1 * 2.0 + side2;
-	float burn_p = clamp((progress - 0.45 - qidx * 0.055) / 0.40, -0.2, 1.6);
-	float n = vnoise(UV * 9.0) * 0.85 + vnoise(UV * 23.0 + vec2(31.7)) * 0.15;
-	float d = n - burn_p;
-
-	vec4 prev_c = texture(tex_prev, UV - off);
-	// 新立绘缩放冲击：先放大 8% 再落定
-	float punch = 1.0 + 0.08 * exp(-abs(progress - 0.42) * 9.0);
+	// 新立绘：登场缩放冲击
+	float punch = 1.0 + 0.08 * exp(-abs(progress - 0.45) * 9.0);
 	vec2 nuv = (UV - vec2(0.5)) / punch + vec2(0.5);
 	vec4 next_c = texture(tex_next, nuv);
+	vec4 col = next_c;
 
+	float keep_all = 1.0;   // 被 0..k-1 刀全部保留 → 属于「残余区」
+	float n = vnoise(UV * 9.0 + vec2(seed_n * 37.0)) * 0.85
+			+ vnoise(UV * 23.0 + vec2(seed_n * 11.0)) * 0.15;
 	float char_tex = vnoise(UV * 31.0 + vec2(11.0));
 	vec3 char_col = vec3(0.03, 0.024, 0.03) + vec3(char_tex * 0.06);
 	vec3 ember_col = vec3(1.0, 0.42, 0.10) * (1.1 + 0.6 * vnoise(UV * 40.0 + vec2(TIME * 3.0)));
-
-	vec3 piece_col;
-	float piece_a;
-	if (d > 0.06) {
-		piece_col = prev_c.rgb;
-		piece_a = 1.0;
-	} else if (d > 0.0) {
-		piece_col = mix(ember_col, prev_c.rgb, d / 0.06);
-		piece_a = 1.0;
-	} else if (d > -0.28) {
-		piece_col = char_col;
-		piece_a = 1.0;
-	} else {
-		piece_col = char_col;
-		piece_a = smoothstep(-0.46, -0.28, d);
-	}
 	float end_fade = 1.0 - smoothstep(0.9, 1.0, progress);
-	float old_a = clamp(piece_a, 0.0, 1.0) * end_fade;
 
-	vec4 col = mix(next_c, vec4(piece_col, 1.0), old_a);
+	for (int k = 0; k < 6; k++) {
+		vec4 s = slashes[k];
+		float d = dot(q, s.xy) - s.z;          // >0 = 被这一刀切走的一侧
+		// 斩线白光：起刀后 0.08 进度内闪一下
+		float tw = clamp((progress - s.w) / 0.08, 0.0, 1.0);
+		float streak = exp(-abs(d) * 16.0) * (1.0 - tw) * step(0.001, progress)
+				* step(s.w, progress);
+		col.rgb += vec3(1.0) * streak * 0.9;
 
-	// 斩缝暗红残光
-	float cut_vis = smoothstep(0.26, 0.38, progress) * (1.0 - smoothstep(0.7, 0.88, progress));
-	float cut = exp(-abs(d1) * 26.0) + exp(-abs(d2) * 26.0);
-	col.rgb += vec3(1.0, 0.25, 0.3) * cut * cut_vis * 0.5;
+		// 第 k 片 = 前 k 刀都保留、且在第 k 刀的被切侧
+		float is_piece = keep_all * step(0.0, d);
+		if (is_piece > 0.5) {
+			// 边飞边烧
+			float ft = clamp((progress - s.w) / 0.45, 0.0, 1.0);
+			float fly = 1.87 * (1.0 - pow(1.0 - ft, 2.0));
+			vec2 off = s.xy * fly;
+			float burn_t = clamp((progress - s.w - 0.05) / 0.34, 0.0, 1.0);
+			float dnb = n - burn_t;
+			vec4 prev_c = texture(tex_prev, UV - off);
+			vec3 pc;
+			float pa;
+			if (dnb > 0.06) {
+				pc = prev_c.rgb;
+				pa = 1.0;
+			} else if (dnb > 0.0) {
+				pc = mix(ember_col, prev_c.rgb, dnb / 0.06);
+				pa = 1.0;
+			} else if (dnb > -0.26) {
+				pc = char_col;      // 黑色焦痕
+				pa = 1.0;
+			} else {
+				pc = char_col;
+				pa = smoothstep(-0.42, -0.26, dnb);   // 焦痕渐隐
+			}
+			pa *= end_fade;
+			col = mix(col, vec4(pc, 1.0), clamp(pa, 0.0, 1.0));
+		}
+		keep_all *= (1.0 - step(0.0, d));
+	}
 
-	// 剑光本体（白）+ 拖尾（淡红）+ 白闪
-	col.rgb += vec3(1.0) * (s1 + s2) * 1.05;
-	col.rgb += vec3(1.0, 0.55, 0.6) * (trail1 + trail2) * 0.5;
-	col.rgb += vec3(1.0, 0.98, 0.9) * flash;
+	// 残余区：所有刀都留下的中间小块，最后自己烧尽（微微漂移）
+	if (keep_all > 0.5) {
+		float bt = clamp((progress - 0.58) / 0.34, 0.0, 1.0);
+		float dnb = n - bt;
+		vec2 drift = vec2(0.12, 0.2) * bt;
+		vec4 prev_c = texture(tex_prev, UV - drift);
+		vec3 pc;
+		float pa;
+		if (dnb > 0.06) {
+			pc = prev_c.rgb;
+			pa = 1.0;
+		} else if (dnb > 0.0) {
+			pc = mix(ember_col, prev_c.rgb, dnb / 0.06);
+			pa = 1.0;
+		} else if (dnb > -0.26) {
+			pc = char_col;
+			pa = 1.0;
+		} else {
+			pc = char_col;
+			pa = smoothstep(-0.4, -0.26, dnb);
+		}
+		pa *= end_fade;
+		col = mix(col, vec4(pc, 1.0), clamp(pa, 0.0, 1.0));
+	}
 
 	COLOR = col;
 }
