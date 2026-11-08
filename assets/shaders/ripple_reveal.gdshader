@@ -63,9 +63,7 @@ void fragment() {
 	vec4 next_c = texture(tex_next, UV);
 	vec4 col = mix(prev_c, next_c, inside);
 
-	// 波前水面高光线（progress 0/1 两端自动熄灭）
-	float line = exp(-abs(dist_e) * 55.0) * step(0.0001, progress) * step(progress, 0.9999);
-	col.rgb += vec3(0.72, 0.95, 1.0) * line * 0.8;
+	// 2026-11-08 主人指示：去掉波前高光描边——水波只靠形状与折射余韵表达
 	col.rgb *= 1.0 + ring * ring_strength;
 
 	COLOR = col;
