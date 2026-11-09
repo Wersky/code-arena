@@ -1,10 +1,12 @@
 class_name PanelMorphDemo
 extends Control
-## 面板动态伸缩演示（2026-11-09 主人要求，第二轮修订）：
-## 模仿主界面布局（左侧竖框 + 下方横框），点击按钮**两个框同时**收缩，各自独立结束：
-##   ① 左边框向上收缩：**上边固定不动**，下边向上挪（只改 size.y）
-##   ② 下边框向左收缩到左下角，**右边线与「原左边框」的右边线对齐**，再整体上移
-## 一个框先收完就先停住，不牵连另一个。
+## 面板动态伸缩演示（2026-11-09 主人要求，第三轮修订）：
+## 模仿主界面布局（左侧竖框 + 下方横框），点击按钮后：
+##   ① 两框**同时**开始收缩，各自收完即停、互不牵连：
+##        左边框向上收缩（**上边固定不动**，只改 size.y，下边向上挪）
+##        下边框向左收缩到左下角，**右边线与「原左边框」右边线对齐**，再整体上移
+##   ② 左边框先收完（0.55s）先停住；下边框后收完（0.95s）
+##   ③ 下边框升到位后**继续上冲，顶着左边框一起弹射出画面**（两者刚性同速上移）
 ##
 ## 关键实现要点（Godot Control 动画坑）：
 ##   - PanelContainer 会自动被内容撑回最小尺寸 → 收缩前必须把 custom_minimum_size 一起改，
@@ -12,6 +14,7 @@ extends Control
 ##   - 上边不动 = 只改 size.y，不改 position.y；下边向上挪是 size 变化的自然结果
 ##   - 右对齐基准取「原左边框」= SIDEBAR_BASE.x + SIDEBAR_W（动画中途左边框会变窄，
 ##     但它自己会同时收缩，所以对齐基准必须是动画前的常量，不能用 _sidebar.size.x）
+##   - 第三段联动：两框用同一位移量 + 同一时长并行 tween，相对位置天然保持（不用手算跟随）
 
 signal back_requested
 
@@ -29,11 +32,14 @@ const SIDEBAR_COMPACT_W := SIDEBAR_W
 const DIALOG_COMPACT_W := SIDEBAR_W              ## 收窄到与原左边框同宽 → 右边线正好落在原右边线上
 const GAP := 12.0                                ## 下边框上移后与左边框底部的间距
 
-## 各段时长（下边框两段串行，总长 0.95s；左边框 0.55s 先结束）
+## 时间轴（下边框三段串行；左边框 0.55s 先结束）
 const SIDEBAR_DUR := 0.55
 const DIALOG_SHRINK := 0.45
 const DIALOG_RISE := 0.50
-const MORPH_TOTAL := 0.95
+const PUSH_DUR := 0.55
+## 弹出距离 = 整个立柱高度（左框 + 间距 + 下框）+ 余量，保证两者完全离开画面顶部
+const PUSH_DIST := SIDEBAR_COMPACT_H + GAP + DIALOG_H + 40.0
+const MORPH_TOTAL := SIDEBAR_DUR + DIALOG_RISE + PUSH_DUR   ## 完整时间轴总长 = 1.60s
 
 var _sidebar: PanelContainer = null
 var _dialog: PanelContainer = null
@@ -42,6 +48,7 @@ var _btn: Button = null
 var _reset_btn: Button = null
 var _tw_sidebar: Tween = null
 var _tw_dialog: Tween = null
+var _tw_push: Tween = null
 var _busy := false
 var _pending := 0                                  ## 尚未收完的框数量（=0 时解锁按钮）
 
@@ -81,7 +88,7 @@ func _build() -> void:
 	title.position = Vector2(300, 40)
 	add_child(title)
 	var sub := UiKit.dim(
-			"两个框同时收缩｜左边框上边固定、下边向上挪｜下边框收到左下角、右边线对齐原左边框右边线（x=%.0f）" % _orig_sidebar_right(),
+			"两框同时收缩 → 左框先收完停住 → 下框收到左下（右边线对齐原左框右边线 x=%.0f）→ 下框上冲顶着左框一起弹出画面" % _orig_sidebar_right(),
 			15, Color(0.55, 0.72, 0.9))
 	sub.position = Vector2(302, 84)
 	add_child(sub)
@@ -142,7 +149,7 @@ func _make_panel(nm: String, pos: Vector2, sz: Vector2, fill: Color, line: Color
 	return p
 
 
-## 主演示：两个框**同时**开始，各自收完后停住
+## 主演示：两框同时开始 → 左框先停 → 下框收完后顶左框一起飞出
 func _play_morph() -> void:
 	if _busy:
 		return
@@ -150,7 +157,7 @@ func _play_morph() -> void:
 	_pending = 2
 	_kill_tweens()
 	_btn.disabled = true
-	_status.text = "两个框同时收缩中…"
+	_status.text = "① 两个框同时收缩中…"
 
 	# ① 左边框：只改 size（position 不动 → 上边固定），0.55s 先结束
 	_tw_sidebar = create_tween().set_parallel(true)
@@ -173,12 +180,24 @@ func _play_morph() -> void:
 			.set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_IN_OUT)
 	_tw_dialog.chain().tween_property(_dialog, "position", risen, DIALOG_RISE) \
 			.set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_OUT)
-	_tw_dialog.chain().tween_callback(func() -> void:
-		_status.text = "下边框已到位并停住；等待左边框…" if _pending > 0 else ""
-		_morph_done())
+	# ③ 升到位后继续上冲，把左框一并顶出画面
+	_tw_dialog.chain().tween_callback(_start_push)
 
 
-## 每个框收完各报一票，全部收完才解锁按钮
+## ③ 弹射：下框继续向上，左框被它顶住同速上移（同一位移量 + 同一时长 → 相对位置不变）
+func _start_push() -> void:
+	if _status != null:
+		_status.text = "③ 下框顶住左框，两框一起弹出画面…"
+	var up := Vector2(0.0, -PUSH_DIST)
+	_tw_push = create_tween().set_parallel(true)
+	_tw_push.tween_property(_dialog, "position", _dialog.position + up, PUSH_DUR) \
+			.set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_IN)
+	_tw_push.tween_property(_sidebar, "position", _sidebar.position + up, PUSH_DUR) \
+			.set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_IN)
+	_tw_push.chain().tween_callback(func() -> void: _morph_done())
+
+
+## 每个框收完各报一票，全部阶段走完才解锁按钮
 func _morph_done() -> void:
 	_pending = maxi(_pending - 1, 0)
 	if _pending > 0:
@@ -186,8 +205,8 @@ func _morph_done() -> void:
 	_busy = false
 	if _btn != null:
 		_btn.disabled = false
-	_status.text = "✓ 完成：左边框上边固定收到高 %.0f；下边框右边线对齐原左边框右边线 x=%.0f，宽 %.0f" % [
-		SIDEBAR_COMPACT_H, _orig_sidebar_right(), DIALOG_COMPACT_W]
+	_status.text = "✓ 完成：左框先收到高 %.0f 停住（上边固定），下框右边线对齐 x=%.0f 后上冲，两框一起弹出画面" % [
+		SIDEBAR_COMPACT_H, _orig_sidebar_right()]
 
 
 func _reset_layout() -> void:
@@ -211,12 +230,16 @@ func _kill_tweens() -> void:
 		_tw_sidebar.kill()
 	if _tw_dialog != null and _tw_dialog.is_valid():
 		_tw_dialog.kill()
+	if _tw_push != null and _tw_push.is_valid():
+		_tw_push.kill()
 	_tw_sidebar = null
 	_tw_dialog = null
+	_tw_push = null
 
 
-## 逐帧验收钩子：直接停在指定进度（0=原始布局，1=两框都收完）。
-## 时间轴与真实 Tween 完全一致：左边框 [0,0.55]、下边框 [0,0.45] 收 + [0.45,0.95] 上移。
+## 逐帧验收钩子：直接停在指定进度（0=原始布局，1=两框都飞出画面）。
+## 时间轴与真实 Tween 完全一致：左框 [0,0.55]；下框 [0,0.45] 收 + [0.45,0.95] 上移
+## + [0.95,1.50] 弹出画面。
 func debug_set_morph(p: float) -> void:
 	_kill_tweens()
 	_busy = false
@@ -225,8 +248,9 @@ func debug_set_morph(p: float) -> void:
 	var k1: float = clampf(t / SIDEBAR_DUR, 0.0, 1.0)
 	var ks: float = clampf(t / DIALOG_SHRINK, 0.0, 1.0)
 	var kr: float = clampf((t - DIALOG_SHRINK) / DIALOG_RISE, 0.0, 1.0)
+	var kp: float = clampf((t - DIALOG_SHRINK - DIALOG_RISE) / PUSH_DUR, 0.0, 1.0)
 	if _sidebar != null:
-		_sidebar.position = SIDEBAR_BASE
+		_sidebar.position = SIDEBAR_BASE + Vector2(0.0, -PUSH_DIST * kp)
 		_sidebar.size = Vector2(
 				lerpf(SIDEBAR_W, SIDEBAR_COMPACT_W, k1),
 				lerpf(SIDEBAR_H, SIDEBAR_COMPACT_H, k1))
@@ -234,6 +258,6 @@ func debug_set_morph(p: float) -> void:
 		_dialog.size = Vector2(lerpf(DIALOG_W, DIALOG_COMPACT_W, ks), DIALOG_H)
 		_dialog.position = Vector2(
 				lerpf(DIALOG_BASE.x, _dialog_compact_x(), ks),
-				lerpf(DIALOG_BASE.y, _dialog_rise_y(), kr))
+				lerpf(DIALOG_BASE.y, _dialog_rise_y(), kr) - PUSH_DIST * kp)
 	if _status != null:
 		_status.text = "调试进度 %.0f%%" % (clampf(p, 0.0, 1.0) * 100.0)

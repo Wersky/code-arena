@@ -118,7 +118,7 @@ func _build_left() -> void:
 		["组合审计", "2–6 张组容斥差分，抓「单卡无害合起来超模」"],
 		["好感度", "金币（伤害对数结算）+ 商店礼物 + 喂饭；好感抬许愿卡品质"],
 		["角色转场", "一人一款：水波 / 折扇单边展开 / 龙鳞剥落 / 乱斩火烧——第 7 页可玩"],
-		["面板伸缩", "左边框向上收（上边不动）+ 下边框收到左下再上移对齐——第 8 页可玩"],
+		["面板伸缩", "两框同时收缩，左框先停，下框上冲顶着左框一起弹出画面——第 8 页可玩"],
 	]
 	for r in rows:
 		var d := UiKit.dim("%s：%s" % [String(r[0]), String(r[1]).replace("\n", " ")], 13, Color(0.55, 0.68, 0.85))
@@ -876,12 +876,12 @@ func _build_morph_tab() -> void:
 	root.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_content.add_child(root)
 
-	var title := UiKit.label("面板动态伸缩：左边框向上收（上边不动）｜下边框收到左下角再上移对齐", 17,
+	var title := UiKit.label("面板动态伸缩：两框同时收缩（左框上边不动）｜左框先停｜下框上冲顶左框一起弹出画面", 17,
 			Color(0.55, 0.85, 1.0))
 	title.position = Vector2(24, 16)
 	root.add_child(title)
 
-	var info := UiKit.dim("两个框同时收缩、各自收完即停：① 左边框上边固定、下边向上挪（900→300）；② 下边框向左收到左下角（右边线对齐原左边框右边线 x=256），再上移贴到左边框底部。全部 Tween 驱动，可重复播放。", 13,
+	var info := UiKit.dim("三段：① 两框同时收缩（左框上边固定 900→300、下框收到左下角右边线对齐 x=256）；② 左框先收完停住；③ 下框上冲顶着左框一起弹出画面。全部 Tween 驱动，可重复播放。", 13,
 			Color(0.55, 0.68, 0.85))
 	info.position = Vector2(24, 42)
 	info.size = Vector2(966, 40)
