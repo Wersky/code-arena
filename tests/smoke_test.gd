@@ -1755,57 +1755,77 @@ func _test_panel_morph() -> void:
 
 	var sb0: Vector2 = v._sidebar.position
 	var sb_sz0: Vector2 = v._sidebar.size
-	var dl0: Vector2 = v._dialog.position
 	var dl_sz0: Vector2 = v._dialog.size
 	_check(is_equal_approx(sb_sz0.y, PanelMorphDemo.SIDEBAR_H), "初始左边框满高 900")
 	_check(is_equal_approx(dl_sz0.x, PanelMorphDemo.DIALOG_W), "初始下边框宽 880")
 
-	# ── 真点按钮：走完整 Tween 链路。时间轴（按下=0）：左框[0,0.55]
-	#    下框[0,0.45]收+[0.45,0.95]上移+[0.95,1.50]弹出 ──
+	# ── 真点按钮。时间轴（按下=0）：左框[0,0.55]；下框[0,0.45]收 + [0.45,1.50]上移顶出 ──
 	v._btn.emit_signal("pressed")
 	await create_timer(0.30).timeout          # t≈0.30
 	_check(v._sidebar.size.y < sb_sz0.y, "① 播放中左边框高度已在收缩")
 	_check(v._dialog.size.x < dl_sz0.x, "② 播放中下边框宽度也已在收缩（两框同时进行）")
 	_check(is_equal_approx(v._sidebar.position.y, sb0.y), "① 收缩时上边固定不动（position.y 不变）")
 
-	await create_timer(0.30).timeout          # t≈0.60：左框已停、下框正在上移
+	await create_timer(0.30).timeout          # t≈0.60：左框已停，下框正在上移
 	_check(absf(v._sidebar.size.y - PanelMorphDemo.SIDEBAR_COMPACT_H) < 1.0, "① 左边框收到高度 300")
 	_check(is_equal_approx(v._sidebar.position.y, 0.0), "① 左边框顶边仍在 y=0（此时还未被上推）")
-	var dl_right_mid: float = v._dialog.position.x + v._dialog.size.x
-	_check(absf(dl_right_mid - v._orig_sidebar_right()) < 1.0, "② 下边框右边线已对齐原左边框右边线")
+	_check(absf((v._dialog.position.x + v._dialog.size.x) - v._orig_sidebar_right()) < 1.0,
+			"② 下边框右边线已对齐原左边框右边线")
 	_check(absf(v._dialog.size.x - PanelMorphDemo.DIALOG_COMPACT_W) < 1.0,
 			"② 下边框收到与原左边框同宽 232")
 
-	await create_timer(0.70).timeout          # t≈1.30：第三段弹射进行中
-	_check(v._sidebar.position.y < -20.0, "③ 左边框已被顶起来（position.y 变负）")
+	await create_timer(0.55).timeout          # t≈1.15：已进入顶出段
+	_check(v._sidebar.position.y < -20.0, "③ 左边框已被顶起来")
 	_check(v._dialog.position.y < v._dialog_rise_y() - 20.0, "③ 下边框同步上冲")
 	var gap_mid: float = v._dialog.position.y - (v._sidebar.position.y + v._sidebar.size.y)
 	_check(absf(gap_mid - PanelMorphDemo.GAP) < 1.5, "③ 两框相对位置保持不变（间距仍为 12）")
 
-	await create_timer(0.50).timeout          # t≈1.80：第三段已结束
+	await create_timer(0.55).timeout          # t≈1.70：全部结束
 	_check(v._sidebar.position.y + v._sidebar.size.y < 0.0, "③ 左边框完全移出画面顶部")
 	_check(v._dialog.position.y + v._dialog.size.y < 0.0, "③ 下边框也完全移出画面顶部")
-	var pushed_by: float = sb0.y - v._sidebar.position.y
-	_check(absf(pushed_by - PanelMorphDemo.PUSH_DIST) < 2.0, "③ 左框位移量 = PUSH_DIST（被顶走整根立柱高）")
-	_check(not v._btn.disabled, "全部阶段走完后按钮才恢复")
+	_check(not v._btn.disabled, "全部动画走完后按钮恢复")
 
-	# 复位可再来一次
+	# 复位
 	v._reset_layout()
 	await process_frame
 	_check(is_equal_approx(v._sidebar.size.y, PanelMorphDemo.SIDEBAR_H)
 			and is_equal_approx(v._sidebar.position.y, 0.0)
-			and is_equal_approx(v._dialog.size.x, PanelMorphDemo.DIALOG_W), "复位回到初始布局（含左框位置）")
+			and is_equal_approx(v._dialog.size.x, PanelMorphDemo.DIALOG_W), "复位回到初始布局")
 
-	# ── debug 钩子：时间轴与真实 Tween 一致，用它验精确边界 ──
+	# ── 关键验收：接触点前后**速度连续**（不留停顿）──
+	# 用 debug 钩子在接触点附近等间隔取样，比较下框相邻位移差
+	var contact_k := (PanelMorphDemo.DIALOG_BASE.y - v._dialog_rise_y()) / v._rise_push_dist()
+	var dt := 0.02   # 归一化步长（这里是缓动后的 k 步长）
+	# debug_set_morph 内部用 SINE+EASE_IN_OUT（ke = 0.5-0.5cos(pi*tp)），
+	# 所以从目标 ke 反解时间参数：tp = acos(1-2k)/pi
+	var ys: Array[float] = []
+	for n in 5:
+		var kk: float = clampf(contact_k - dt * 2.0 + dt * float(n), 0.0, 1.0)
+		var tp_lin: float = acos(clampf(1.0 - 2.0 * kk, -1.0, 1.0)) / PI
+		v.debug_set_morph((0.45 + tp_lin * 1.05) / PanelMorphDemo.MORPH_TOTAL)
+		ys.append(v._dialog.position.y)
+	var steps: Array[float] = []
+	for n in range(1, ys.size()):
+		steps.append(absf(ys[n] - ys[n - 1]))
+	# 跨过接触点的那一步与相邻步长应同量级（若中途换段停顿，跨接缝步长会明显变小）
+	var step_min: float = steps.min()
+	var step_max: float = steps.max()
+	_check(step_min > step_max * 0.55,
+			"接触点处速度连续（相邻步长最小/最大 = %.2f，未出现停顿）" % (step_min / step_max))
+
+	# 接触瞬间：左框刚好开始动、间距仍为 GAP
+	var tp_contact: float = acos(clampf(1.0 - 2.0 * contact_k, -1.0, 1.0)) / PI
+	v.debug_set_morph((0.45 + tp_contact * 1.05) / PanelMorphDemo.MORPH_TOTAL)
+	_check(absf(v._sidebar.position.y) < 1.0, "接触时刻左框仍在原位")
+	_check(absf(v._dialog.position.y - v._dialog_rise_y()) < 2.0, "接触时刻下框正好贴到左框底部")
+
+	# debug 端点
 	v.debug_set_morph(0.0)
 	_check(is_equal_approx(v._sidebar.size.y, PanelMorphDemo.SIDEBAR_H), "debug p0 = 初始")
-	# p = 0.948/1.60 → 上移刚收尾、弹射尚未开始
-	v.debug_set_morph(0.5925)
-	_check(absf(v._sidebar.position.y) < 1.0, "debug 弹射起点：左框尚未移动")
-	_check(absf(v._dialog.position.y - v._dialog_rise_y()) < 2.0, "debug 弹射起点：下框已升到位")
 	v.debug_set_morph(1.0)
-	_check(absf(v._sidebar.position.y + PanelMorphDemo.PUSH_DIST) < 1.0, "debug p1：左框被顶出 PUSH_DIST")
+	_check(v._sidebar.position.y + v._sidebar.size.y < 0.0
+			and v._dialog.position.y + v._dialog.size.y < 0.0, "debug p1 = 两框全出画")
 	_check(absf((v._dialog.position.x + v._dialog.size.x) - v._orig_sidebar_right()) < 1.0,
-			"debug p1：右对齐在弹射期间保持不变")
+			"debug p1：右对齐在顶出期间保持")
 	v.queue_free()
 	await process_frame

@@ -710,8 +710,8 @@ func _maybe_capture() -> void:
 			morph.size = Vector2(1600, 900)
 			_swap(morph)
 			await get_tree().process_frame
-			# 采样点覆盖四段：起手 / 收缩中 / 左框已停 / 下框上移 / 弹射中 / 全出画
-			var mts := [0.0, 0.25, 0.5, 0.62, 0.78, 1.0]
+			# 采样点覆盖全程：起手 / 收缩中 / 左框已停 / 接触前 / 接触瞬间 / 顶出中 / 全出画
+			var mts := [0.0, 0.2, 0.4, 0.5, 0.56, 0.7, 0.85, 1.0]
 			for i in mts.size():
 				morph.debug_set_morph(float(mts[i]))
 				await get_tree().process_frame
