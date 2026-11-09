@@ -161,22 +161,54 @@ func _show_ai_select() -> void:
 	_swap(sel)
 
 
-## 新启动流程：黑屏「初始化」按钮 → Agent 对话框选模型 → 发送进游戏。
-## launched 带回模型 id，照旧走 reset_run + 进第一关（终端进场照旧触发）。
+## 新启动流程（2026-11-09 主人改版）：
+##   黑屏「初始化」 → Agent 对话框（无模型选择）→ 发送（可空输入）
+##   → 全屏马赛克糊掉 → 选角界面（4 角色 + 专属转场切换）→ 开始游戏 → 进第一关
+## 发送后带回的 ai_id 只作为选角的**默认高亮位**（对话框不再选模型）。
 func _show_launch() -> void:
 	var sc := LaunchScreen.new()
 	sc.launched.connect(func(ai_id: String) -> void:
-		sc.queue_free()
-		run.reset_run()
-		var ai := AiPool.get_ai(ai_id)
-		if ai == null:
-			ai = AiPool.get_ai("deepdeek")
-		run.set_ai(ai)
-		_show_level(_levels[0]))
+		_goto_character_select(ai_id))
 	_swap(sc)
 	sc.ai_settings_requested.connect(_show_llm_panel)
 	sc.demo_requested.connect(_show_llm_demo)
 	sc.patch_demo_requested.connect(_show_patch_demo)
+
+
+## 启动页 → 选角：先让整屏马赛克化，糊住后再换界面，然后从马赛克里清晰出来
+func _goto_character_select(default_ai_id: String) -> void:
+	var mosaic := ScreenMosaic.new()
+	mosaic.name = "ScreenMosaic"
+	add_child(mosaic)
+	mosaic.move_to_front()
+	await mosaic.grab()
+	await mosaic.cover(0.5)
+	var sel := CharacterSelectScreen.new()
+	sel.setup(AiPool.all_ais())
+	var first := 0
+	for i in AiPool.all_ais().size():
+		if AiPool.all_ais()[i].id == default_ai_id:
+			first = i
+			break
+	sel.select_by_index(first)
+	sel.started.connect(func(ai_id: String) -> void: _on_character_chosen(ai_id))
+	sel.back_requested.connect(_show_launch)
+	_swap(sel)
+	mosaic.move_to_front()
+	# 关键：重新抓新界面的帧再消退，否则消退出来的是启动页的残影
+	await mosaic.recapture()
+	await mosaic.reveal(0.5)
+	mosaic.queue_free()
+
+
+## 选角确认 → 真正开 Run 进第一关（终端进场照旧触发）
+func _on_character_chosen(ai_id: String) -> void:
+	run.reset_run()
+	var ai := AiPool.get_ai(ai_id)
+	if ai == null:
+		ai = AiPool.get_ai("deepdeek")
+	run.set_ai(ai)
+	_show_level(_levels[0])
 
 
 ## 本次改动 Demo 页：一键直进为主（2026-11-04 主人钦定），技术细节折叠在下方。
@@ -528,7 +560,7 @@ func _maybe_capture() -> void:
 	if screen in ["menu", "arena", "battle", "intro", "reward", "result",
 			"menuhover", "rig", "rigwalk", "loadrun", "card", "cardtext", "cardcost", "terminal", "termgif",
 			"termdump", "hero", "stairs", "launch", "launch2", "arenalayout", "sendtest", "ricetest",
-			"patchdemo", "wishpanel", "ripple", "morph"]:
+			"patchdemo", "wishpanel", "ripple", "morph", "select", "mosaic", "flow"]:
 		run.reset_run()
 		if screen == "launch" or screen == "launch2":
 			var sc := _current as LaunchScreen
@@ -719,6 +751,74 @@ func _maybe_capture() -> void:
 				get_viewport().get_texture().get_image().save_png(
 						"%s-f%02d.png" % [out_path, i])
 			print("[shot=morph] 已存 %d 帧 → %s-fNN.png" % [mts.size(), out_path])
+		elif screen == "flow":
+			# 端到端流程验收（2026-11-09）：启动页 → 发送 → 马赛克 → 选角 → 开始游戏
+			await get_tree().create_timer(0.6).timeout
+			get_viewport().get_texture().get_image().save_png("%s-f00.png" % out_path)
+			var lc2 := _current as LaunchScreen
+			if lc2 == null:
+				lc2 = LaunchScreen.new()
+				_swap(lc2)
+				await get_tree().process_frame
+			lc2.expand()
+			await get_tree().create_timer(1.0).timeout
+			get_viewport().get_texture().get_image().save_png("%s-f01.png" % out_path)
+			# 空输入直接发送 → 触发马赛克 + 选角
+			lc2._input.text = ""
+			lc2._send()
+			await get_tree().create_timer(0.28).timeout      # 马赛克块化中
+			get_viewport().get_texture().get_image().save_png("%s-f02.png" % out_path)
+			await get_tree().create_timer(0.45).timeout      # 糊满、正在换界面
+			get_viewport().get_texture().get_image().save_png("%s-f03.png" % out_path)
+			await get_tree().create_timer(0.30).timeout      # 新界面正在清晰出来
+			get_viewport().get_texture().get_image().save_png("%s-f04.png" % out_path)
+			await get_tree().create_timer(0.7).timeout       # 选角界面稳定
+			get_viewport().get_texture().get_image().save_png("%s-f05.png" % out_path)
+			print("[shot=flow] 已存 6 帧 → %s-fNN.png" % out_path)
+		elif screen == "mosaic":
+			# 马赛克转场逐帧验收（2026-11-09）：在真实启动页画面（代码雨 + 对话框）上块化，
+			# 这才是主人实际看到的转场起点
+			var sc2 := LaunchScreen.new()
+			_swap(sc2)
+			await get_tree().process_frame
+			sc2.expand()
+			await get_tree().create_timer(1.2).timeout
+			await get_tree().process_frame
+			var mosaic := ScreenMosaic.new()
+			add_child(mosaic)
+			mosaic.move_to_front()
+			await mosaic.grab()
+			var dbg := FileAccess.open("res://.tmp/mosaic_dbg.txt", FileAccess.WRITE)
+			if dbg != null:
+				dbg.store_line("has_snapshot=%s size=%s mosaic_size=%s rect_size=%s" % [
+					mosaic.has_snapshot(), mosaic.size, 
+					(mosaic._tex_rect.size if mosaic._tex_rect != null else Vector2.ZERO),
+					(mosaic._snapshot.get_size() if mosaic._snapshot != null else Vector2i.ZERO)])
+				dbg.close()
+			for i in 7:
+				mosaic.debug_set_step([0, 3, 5, 7, 9, 12, 0][i])
+				await get_tree().process_frame
+				await get_tree().process_frame
+				get_viewport().get_texture().get_image().save_png(
+						"%s-f%02d.png" % [out_path, i])
+			print("[shot=mosaic] 已存 7 帧 → %s-fNN.png" % out_path)
+		elif screen == "select":
+			# 选角界面验收（2026-11-09）：
+			#   -f00 布局 / -f01..04 四个角色各自的转场中段
+			var sel := CharacterSelectScreen.new()
+			sel.setup(AiPool.all_ais())
+			_swap(sel)
+			await get_tree().process_frame
+			await get_tree().process_frame
+			get_viewport().get_texture().get_image().save_png("%s-f00.png" % out_path)
+			for i in 4:
+				sel.select_by_index(i)
+				# 转场中段（swap_time 默认 0.7s）
+				await get_tree().create_timer(0.34).timeout
+				get_viewport().get_texture().get_image().save_png(
+						"%s-f%02d.png" % [out_path, i + 1])
+				await get_tree().create_timer(0.45).timeout
+			print("[shot=select] 已存 5 帧 → %s-fNN.png" % out_path)
 		elif screen == "ripple":
 			# 转场逐帧验收（2026-11-08）：--ripstyle=ripple|fan|slash|hex 选风格，
 			# 手动推进 shader 进度，8 个采样点各存一帧 <shotout>-fNN.png

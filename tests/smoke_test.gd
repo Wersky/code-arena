@@ -37,6 +37,7 @@ func _initialize() -> void:
 	await _test_card_flip()
 	await _test_ripple_swap()
 	await _test_panel_morph()
+	await _test_mosaic_and_select()
 	await _test_patch_demo()
 	_test_affection_system()
 	await _test_shop_gifts()
@@ -1828,4 +1829,98 @@ func _test_panel_morph() -> void:
 	_check(absf((v._dialog.position.x + v._dialog.size.x) - v._orig_sidebar_right()) < 1.0,
 			"debug p1：右对齐在顶出期间保持")
 	v.queue_free()
+	await process_frame
+
+func _test_mosaic_and_select() -> void:
+	print("[马赛克转场 + 选角]")
+	# ── 马赛克遮罩：块数语义（blocks 大=清晰，1=整屏一块）──
+	var mos := ScreenMosaic.new()
+	_host.add_child(mos)
+	await process_frame
+	await process_frame
+	_check(mos.size.x > 100.0, "遮罩铺满全屏（不是 0 尺寸）")
+	# 用一张自制纯色图当冻结帧源，避开抓屏依赖
+	mos._snapshot = Image.create(64, 36, false, Image.FORMAT_RGBA8)
+	mos._snapshot.fill(Color(0.2, 0.4, 0.8))
+	mos.debug_set_blocks(1)
+	_check(mos._cur_blocks == 1, "blocks=1 = 整屏一块（最糊）")
+	mos.debug_set_blocks(32)
+	_check(mos._cur_blocks == 32, "blocks=32 = 32 块横排（较清晰）")
+	_check(not mos.is_visible_in_tree() or mos.visible, "块化后可显示")
+	mos.queue_free()
+	await process_frame
+
+	# ── 选角界面：4 角色 / 圆点 / 箭头 / 开始按钮 / 一人一款转场 ──
+	var sel := CharacterSelectScreen.new()
+	sel.setup(AiPool.all_ais())
+	_host.add_child(sel)
+	await process_frame
+	await process_frame
+	_check(sel._ais.size() == 4, "选角界面载入 4 位角色")
+	_check(sel._dots.size() == 4, "底部 4 个位置点")
+	_check(sel._left_btn != null and sel._right_btn != null, "左右切换箭头已建")
+	_check(sel._start_btn != null, "右下角「开始游戏」已建")
+	_eq(sel.current_id(), "deepdeek", "默认选中第 1 位 DeepDeek")
+
+	# 一人一款转场：4 个风格各不相同
+	var styles := {}
+	for i in 4:
+		styles[int(CharacterSelectScreen.TRANSITION_STYLE[i])] = true
+	_eq(styles.size(), 4, "4 位角色各配一款不同转场")
+	_eq(int(CharacterSelectScreen.TRANSITION_STYLE[0]), RippleSwapPortrait.Style.RIPPLE,
+			"DeepDeek = 水波")
+	_eq(int(CharacterSelectScreen.TRANSITION_STYLE[1]), RippleSwapPortrait.Style.FAN,
+			"Kweno = 折扇")
+	_eq(int(CharacterSelectScreen.TRANSITION_STYLE[2]), RippleSwapPortrait.Style.HEX,
+			"ChatPPT = 龙鳞")
+	_eq(int(CharacterSelectScreen.TRANSITION_STYLE[3]), RippleSwapPortrait.Style.SLASH,
+			"Grock = 乱斩")
+
+	# 切换：点右箭头走到第 2 位，圆点跟着走
+	var before_idx: int = sel.current_index()
+	sel._right_btn.emit_signal("pressed")
+	await process_frame
+	_check(sel.current_index() != before_idx, "点右箭头切换到下一位")
+	_eq(sel.current_id(), "kweno", "切到第 2 位 Kweno")
+	# 转场期间不允许连点（防状态错乱）
+	_check(sel._swapping, "切换中 _swapping 置位（连点被挡）")
+	await create_timer(0.9).timeout
+	_check(not sel._swapping, "转场结束后解锁")
+
+	# 开始游戏按钮发信号
+	var started := [""]
+	sel.started.connect(func(id: String) -> void: started[0] = id)
+	sel._start_btn.emit_signal("pressed")
+	await process_frame
+	_eq(started[0], "kweno", "开始游戏带回当前选中角色 id")
+
+	# 立绘等比适配：宽度不超出框、不拉伸
+	_check(sel._swap_view.size.x <= CharacterSelectScreen.FRAME_W + 0.5
+			and sel._swap_view.size.y <= CharacterSelectScreen.FRAME_H + 0.5,
+			"立绘等比适配后不超出框")
+	sel.queue_free()
+	await process_frame
+
+	# ── 启动页精简：无模型名铭牌 / 无模型下拉 / 无右侧立绘 ──
+	var lc := LaunchScreen.new()
+	_host.add_child(lc)
+	await process_frame
+	lc.expand()
+	await process_frame
+	await process_frame
+	# 成员变量已删除，改为静态检查源码里不再有这些节点/引用
+	var lc_src := FileAccess.get_file_as_string("res://scripts/ui/launch_screen.gd")
+	_check(not lc_src.contains("_name_plate"), "左上角模型铭牌已移除（源码无残留）")
+	_check(not lc_src.contains("_portrait"), "右侧模型立绘已移除（源码无残留）")
+	_check(not lc_src.contains("OptionButton"), "输入框旁模型下拉已移除（源码无残留）")
+	_check(lc._skill_list != null, "侧栏技能列表仍正常构建")
+	_check(lc.get_node_or_null("AgentDialog") != null, "Agent 对话框已展开")
+	# 空输入也能发送
+	var fired := [""]
+	lc.launched.connect(func(id: String) -> void: fired[0] = id)
+	lc._input.text = ""
+	lc._send()
+	await process_frame
+	_check(not fired[0].is_empty(), "输入框空着也能发送（进选角）")
+	lc.queue_free()
 	await process_frame

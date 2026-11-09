@@ -4,7 +4,8 @@ extends Control
 ##   状态A  全屏黑，中间只有一个白框像素按钮「初始化」
 ##   状态B  点初始化 → 底部居中展开 Agent 对话框 + 左侧滑入侧边栏（技能 / MCP）
 ##          对话框右下角是纯图标发送键，旁边是模型下拉（DeepSeek/Grok/GPT/千问）
-##   发送   → launched(ai_id)，由 main.gd 接管进终端进场与战斗
+##   发送   → launched(ai_id)（2026-11-09 起：选角已移到独立界面，输入框可空着直接发）
+##            main.gd 收到后播全屏马赛克 → 切 CharacterSelectScreen 选角 → 开始游戏才进战斗
 ##
 ## 布局基准：画布 1600x900。像素风走 PixelTheme 的字体。
 
@@ -29,12 +30,9 @@ var _boot_btn: Button
 var _dialog: Control
 var _sidebar: Control
 var _input: LineEdit
-var _model_btn: OptionButton
 var _send_btn: Button
-var _portrait: TextureRect
 var _hint: Label
 var _skill_list: Label
-var _name_plate: Label
 var _skill_title: Button
 var _mcp_title: Button
 var _mcp_box: VBoxContainer
@@ -87,7 +85,6 @@ func expand() -> void:
 	_boot_btn.queue_free()
 	_build_dialog()
 	_build_sidebar()
-	_build_portrait()
 	_apply_model()
 	_dialog.modulate.a = 0.0
 	_dialog.position.y += 190.0
@@ -162,17 +159,6 @@ func _build_dialog() -> void:
 	_input.text_submitted.connect(func(_t: String) -> void: _send())
 	row.add_child(_input)
 
-	_model_btn = OptionButton.new()
-	_model_btn.add_theme_font_override("font", PixelTheme.font())
-	_model_btn.add_theme_font_size_override("font_size", 18)
-	_model_btn.custom_minimum_size = Vector2(150, 0)
-	for m in MODELS:
-		_model_btn.add_item(String(m[1]))
-	_model_btn.item_selected.connect(func(i: int) -> void:
-		_model_idx = i
-		_apply_model())
-	row.add_child(_model_btn)
-
 	_send_btn = Button.new()
 	_send_btn.custom_minimum_size = Vector2(52, 44)
 	_send_btn.icon = _send_icon()
@@ -203,10 +189,7 @@ func _build_sidebar() -> void:
 	var v := VBoxContainer.new()
 	v.add_theme_constant_override("separation", 6)
 	_sidebar.add_child(v)
-	# 顶部铭牌：与战斗界面侧栏一致（2026-11-03）
-	_name_plate = UiKit.label(String(MODELS[_model_idx][1]), UiKit.FS_S, UiKit.TEXT)
-	v.add_child(_name_plate)
-	v.add_child(UiKit.rule())
+	# 左上角模型铭牌已移除（2026-11-09 主人要求：选角不在主界面，模型名没意义了）
 	# ── 技能（下拉）──
 	_skill_title = Button.new()
 	_skill_title.text = "▸ 技能"
@@ -291,37 +274,15 @@ func _make_icon_entry(node_name: String, tex_path: String, tip: String,
 	btn.move_to_front()
 
 
-func _build_portrait() -> void:
-	_portrait = TextureRect.new()
-	_portrait.name = "ModelPortrait"
-	_portrait.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
-	_portrait.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
-	_portrait.position = Vector2(1170, 576)
-	_portrait.size = Vector2(406, 304)
-	add_child(_portrait)
-
-
-## 模型切换：换立绘 + 换侧边栏技能列表 + 未解锁提示
+## 侧边栏技能列表（模型选择已移到选角界面，这里只按默认角色填技能示例）
 func _apply_model() -> void:
-	var id := String(MODELS[_model_idx][0])
-	var need := int(MODELS[_model_idx][2])
-	if _name_plate != null:
-		_name_plate.text = String(MODELS[_model_idx][1])
-	var ai := AiPool.get_ai(id)
-	var tex := load("res://assets/art/select/%s.png" % id) as Texture2D
-	if tex == null:
-		tex = load("res://assets/art/ai-%s.png" % id) as Texture2D
-	_portrait.texture = tex
+	if _skill_list == null:
+		return
+	var ai := AiPool.get_ai(String(MODELS[_model_idx][0]))
 	_skill_list.text = ""
 	if ai != null:
 		for sk in ai.taste_rules:
 			_skill_list.text += "  · " + sk + "\n"
-	var locked := run_level() < need
-	if locked:
-		_hint.text = "「%s」未解锁：通过第 %d 关后加入" % [String(MODELS[_model_idx][1]), need + 1]
-	else:
-		_hint.text = ""
-	_model_btn.set_item_disabled(_model_idx, false)
 
 
 func run_level() -> int:
@@ -334,9 +295,7 @@ func _send() -> void:
 	if run_level() < need:
 		_hint.text = "「%s」还没解锁，先通关 %d 关。" % [String(MODELS[_model_idx][1]), need]
 		return
-	if _input.text.strip_edges().is_empty():
-		_hint.text = "先写一句指令再发送。"
-		return
+	# 2026-11-09 主人要求：输入框空着也能直接发送 → 进选角
 	launched.emit(id)
 
 
