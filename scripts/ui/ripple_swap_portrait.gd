@@ -117,21 +117,20 @@ func swap_to(tex: Texture2D) -> void:
 func _apply_slash_params(shake: bool) -> void:
 	var rng := RandomNumberGenerator.new()
 	rng.randomize()
-	var asp := (size.x / size.y) if size.y > 0.0 else 0.75
+	var asp: float = (size.x / size.y) if size.y > 0.0 else 0.75
 	var arr := PackedVector4Array()
-	var base_ang := rng.randf_range(0.0, 360.0)
 	for k in 5:
-		# 法线角均匀铺满全向（每刀错 36°；法线翻转等价），加小抖动
-		var ang := deg_to_rad(base_ang + k * 36.0 + rng.randf_range(-10.0, 10.0))
-		# 关键：每条线**强制穿进画面内的一个分散点**——否则随机截距会让线落在画面外，
-		# 实际只切出 2~3 块（染色验收实锤）。5 条线都过画面 → 必然互相交叉切分。
-		var ring := deg_to_rad(base_ang * 1.7 + k * 72.0)
-		var rad := 0.10 + 0.16 * rng.randf()
-		var px := cos(ring) * rad * asp
-		var py := sin(ring) * rad
-		var c: float = px * cos(ang) + py * sin(ang)
+		# 方向：180° 内分槽 + 大抖动（法线反向等价，180° 已覆盖所有直线方向；
+		# 分槽只避免两条线几乎重合，抖动给足随机感）
+		var ang := deg_to_rad(k * 36.0 + rng.randf_range(-28.0, 28.0))
+		var nx := cos(ang)
+		var ny := sin(ang)
+		# 截距：线段到原点的有符号距离。有效范围 = 该方向画面半投影，
+		# 在范围内**随机撒**（而不是都穿过中心附近）→ 均匀随机分布，不会绕中心切蛋糕
+		var proj: float = absf(nx) * asp * 0.5 + absf(ny) * 0.5
+		var c: float = rng.randf_range(-proj * 0.82, proj * 0.82)
 		var delay: float = 0.04 + k * 0.05 + rng.randf_range(-0.008, 0.008)
-		arr.append(Vector4(cos(ang), sin(ang), c, delay))
+		arr.append(Vector4(nx, ny, c, delay))
 	_mat.set_shader_parameter("slashes", arr)
 	_mat.set_shader_parameter("seed_n", rng.randf_range(0.0, 10.0))
 	if not shake:
