@@ -47,9 +47,9 @@ const GAP := 12.0                                ## 下边框升到左框底部�
 ## ── 时间轴 ──
 const SIDEBAR_DUR := 0.55                        ## 左框竖向收缩（独立，先结束）
 const DIALOG_SHRINK := 0.45                      ## 下框收窄 + 右移到左下角
-const RISE_PUSH_DUR := 1.05                      ## ②③ 合体：上移 + 顶出，一条曲线跑完
-## 总时长 = 下框收窄 0.45 + 蓄力 0.09 + 飞出 1.05 = 1.59s
-const MORPH_TOTAL := 0.45 + 0.09 + 1.05
+const RISE_PUSH_DUR := 0.70                      ## ②③ 合体：上移 + 顶出，一条曲线跑完（原 1.05，主人要求上升快 50%）
+## 总时长 = 下框收窄 0.45 + 蓄力 0.09 + 飞出 0.70 = 1.24s（飞出原 1.05，主人要求快 50%）
+const MORPH_TOTAL := DIALOG_SHRINK + ANTICIPATE_DUR + RISE_PUSH_DUR   ## = 1.24s
 
 ## ── 位移 ──
 ## 升到位时下框顶部 y（贴到左框底部下方 GAP）
@@ -297,7 +297,7 @@ func _kill_tweens() -> void:
 ## 逐帧验收钩子：直接停在指定进度（0=原始布局，1=两框都飞出画面）。
 ## 时间轴与真实 Tween 完全一致：
 ##   左框 [SIDEBAR_LAG, SIDEBAR_LAG+0.55]
-##   下框 [0,0.45] 收窄 → [0.45,0.54] 蓄力下压 → [0.54,1.59] 上移顶出（QUAD + EASE_IN）
+##   下框 [0,0.45] 收窄 → [0.45,0.54] 蓄力下压 → [0.54,1.24] 上移顶出（QUAD + EASE_IN）
 func debug_set_morph(p: float) -> void:
 	_kill_tweens()
 	_busy = false

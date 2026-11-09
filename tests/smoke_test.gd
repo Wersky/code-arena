@@ -1767,7 +1767,8 @@ func _test_panel_morph() -> void:
 	_check(v._dialog.size.x < dl_sz0.x, "② 播放中下边框宽度也已在收缩（两框同时进行）")
 	_check(is_equal_approx(v._sidebar.position.y, sb0.y), "① 收缩时上边固定不动（position.y 不变）")
 
-	await create_timer(0.35).timeout          # t≈0.65：左框已停（0.07+0.55=0.62 收完），下框收窄完+蓄力
+	# 左框收完时刻 = SIDEBAR_LAG + SIDEBAR_DUR = 0.62
+	await create_timer(0.35).timeout          # t≈0.65：左框已停，下框刚过蓄力段
 	_check(absf(v._sidebar.size.y - PanelMorphDemo.SIDEBAR_COMPACT_H) < 1.0, "① 左边框收到高度 300")
 	_check(absf(v.sidebar_visual_pos().y) < 30.0, "① 左框此时基本还在原位（飞出刚开始）")
 	_check(absf((v._dialog.position.x + v._dialog.size.x) - v._orig_sidebar_right()) < 1.0,
@@ -1775,13 +1776,16 @@ func _test_panel_morph() -> void:
 	_check(absf(v._dialog.size.x - PanelMorphDemo.DIALOG_COMPACT_W) < 1.0,
 			"② 下边框收到与原左边框同宽 232")
 
-	await create_timer(0.70).timeout          # t≈1.35：飞出段（0.54~1.59）进行中
+	# 飞出段 = [0.54, 1.24]。接触点在下框升到左框底那一刻：
+	#   k_contact = (DIALOG_BASE.y - rise_y) / rise_push_dist ≈ 0.38 → tp = sqrt(k) ≈ 0.62
+	#   → t_contact ≈ 0.54 + 0.62*0.70 ≈ 0.97。取样必须晚于它，左框才会被顶起来。
+	await create_timer(0.46).timeout          # t≈1.11：已过接触点，两框应明显上移
 	_check(v.sidebar_visual_pos().y < -20.0, "③ 左边框已被顶起来")
 	_check(v.dialog_visual_pos().y < v._dialog_rise_y() - 20.0, "③ 下边框同步上冲")
 	var gap_mid: float = v.dialog_visual_pos().y - (v.sidebar_visual_pos().y + v._sidebar.size.y)
 	_check(absf(gap_mid - PanelMorphDemo.GAP) < 1.5, "③ 两框相对位置保持不变（间距仍为 12）")
 
-	await create_timer(0.70).timeout          # t≈2.05：全部结束（1.59 + 余量）
+	await create_timer(0.50).timeout          # t≈1.41：已超过 MORPH_TOTAL(1.24)，全部结束
 	_check(v.sidebar_visual_pos().y + v._sidebar.size.y < 0.0, "③ 左边框完全移出画面顶部")
 	_check(v.dialog_visual_pos().y + v._dialog.size.y < 0.0, "③ 下边框也完全移出画面顶部")
 	_check(not v._btn.disabled, "全部动画走完后按钮恢复")
@@ -1802,8 +1806,11 @@ func _test_panel_morph() -> void:
 	for n in 5:
 		var kk: float = clampf(contact_k - dt * 2.0 + dt * float(n), 0.0, 1.0)
 			# 飞出段缓动 = QUAD + EASE_IN → k = tp^2，反解 tp = sqrt(k)
+		# 时间点用常量拼（改速度时测试自动跟随，不再硬编码时长）
 		var tp_lin: float = sqrt(clampf(kk, 0.0, 1.0))
-		v.debug_set_morph((0.45 + 0.09 + tp_lin * 1.05) / PanelMorphDemo.MORPH_TOTAL)
+		var fly_start: float = PanelMorphDemo.DIALOG_SHRINK + PanelMorphDemo.ANTICIPATE_DUR
+		v.debug_set_morph((fly_start + tp_lin * PanelMorphDemo.RISE_PUSH_DUR)
+				/ PanelMorphDemo.MORPH_TOTAL)
 		ys.append(v.dialog_visual_pos().y)
 	var steps: Array[float] = []
 	for n in range(1, ys.size()):
@@ -1836,7 +1843,8 @@ func _test_panel_morph() -> void:
 			"下框目标宽也大于最小尺寸")
 
 	# ③ anticipation 蓄力：收窄结束瞬间应先**下沉**（正 y），再飞出
-	v.debug_set_morph((0.45 + 0.045) / PanelMorphDemo.MORPH_TOTAL)   # 蓄力段中点
+	v.debug_set_morph((PanelMorphDemo.DIALOG_SHRINK
+			+ PanelMorphDemo.ANTICIPATE_DUR * 0.5) / PanelMorphDemo.MORPH_TOTAL)   # 蓄力段中点
 	_check(v._dialog.offset_transform_position.y > 3.0,
 			"蓄力段先反向下沉（%.1fpx），建立重量感" % v._dialog.offset_transform_position.y)
 
@@ -1851,7 +1859,9 @@ func _test_panel_morph() -> void:
 
 	# 接触瞬间：左框刚好开始动、间距仍为 GAP
 	var tp_contact: float = sqrt(clampf(contact_k, 0.0, 1.0))
-	v.debug_set_morph((0.45 + 0.09 + tp_contact * 1.05) / PanelMorphDemo.MORPH_TOTAL)
+	var fly_start2: float = PanelMorphDemo.DIALOG_SHRINK + PanelMorphDemo.ANTICIPATE_DUR
+	v.debug_set_morph((fly_start2 + tp_contact * PanelMorphDemo.RISE_PUSH_DUR)
+			/ PanelMorphDemo.MORPH_TOTAL)
 	_check(absf(v.sidebar_visual_pos().y) < 1.0, "接触时刻左框仍在原位")
 	_check(absf(v.dialog_visual_pos().y - v._dialog_rise_y()) < 2.0, "接触时刻下框正好贴到左框底部")
 
