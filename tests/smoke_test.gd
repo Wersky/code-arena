@@ -1936,6 +1936,26 @@ func _test_mosaic_and_select() -> void:
 			"圆点行在底部（y=%.0f > 700）" % dot_row.position.y)
 	_check(sel._left_btn != null and sel._right_btn != null, "左右切换箭头仍在")
 
+	# ── 左下角转场调速器（2026-11-09 主人要求：可调 + 落盘 + 以主人填的为准）──
+	_check(sel._tuner_panel != null, "左下角调速器已构建")
+	_check(sel._tuner_panel.position.x < 100.0 and sel._tuner_panel.position.y > 600.0,
+			"调速器在左下角（pos=%s）" % sel._tuner_panel.position)
+	_eq(sel._tuner_labels.size(), 4, "四个转场各一行滑杆")
+	for key in ["ripple", "fan", "hex", "slash"]:
+		_check(GameSettings.select_swap_time.has(key), "设置里有 %s 的速度项" % key)
+		var tv := GameSettings.select_time_for(key)
+		_check(tv >= GameSettings.SELECT_SWAP_MIN and tv <= GameSettings.SELECT_SWAP_MAX,
+				"%s 速度在合法范围（%.2fs）" % [key, tv])
+	# 设置一个值 → 立即生效 + 落盘
+	var old_fan := GameSettings.select_time_for("fan")
+	GameSettings.set_select_time("fan", 1.234)
+	_eq(GameSettings.select_time_for("fan"), 1.234, "调参器写入即时生效")
+	_check(FileAccess.file_exists(GameSettings.PATH), "设置已落盘（%s）" % GameSettings.PATH)
+	# 越界会被夹紧
+	GameSettings.set_select_time("fan", 99.0)
+	_eq(GameSettings.select_time_for("fan"), GameSettings.SELECT_SWAP_MAX, "超上限被夹紧")
+	GameSettings.set_select_time("fan", old_fan)   # 还原，别污染主人配置
+
 	# ── 一人一款转场（2026-11-09 四轮：应用到大立绘切换）──
 	var styles := {}
 	for st in CharacterSelectScreen.TRANSITION_STYLE:

@@ -15,46 +15,79 @@ uniform float aspect = 1.0;
 uniform vec2 pivot_s = vec2(0.06, 0.94);             // 画面侧扇轴（左下，uv）
 uniform float a_start = -95.0;                       // 起始边角（度）：底边侧
 uniform float a_end = 8.0;                           // 终止边角（度）：另一边侧
+
 uniform float a_mid_t = -59.0;                       // 贴图角中位（度）
-uniform float fan_r = 1.02;                          // 扇布外沿半径（弧沿露在画框内）
+// 扇布外沿半径。**必须 >= 画框最远角到扇轴的距离**，否则扫不到角落、盖不满全屏。
+// pivot_s=(0.06,0.94)、aspect=16/9 时：左下 0.12 / 左上 0.95 / 右下 1.67 / 右上 1.92，
+// 取 2.00 保证四个角全被覆盖（实测原值 1.02 会让右上角约一半面积扫不到）。
+uniform float fan_r = 2.00;
 uniform float blades = 12.0;                         // 扇骨尖数（波浪边沿瓣数）
 uniform float r_scale = 0.6;                         // 屏幕半径 → 布贴图采样半径
 
 void fragment() {
+	// ── 扇面判定用**向量叉积**，不用 atan2 ──
+	// 为什么：扇轴在左下角时画面可见角跨度接近 360°，atan2 的返回值在 ±180 处
+	// 会绕回，角度数值比较必然出错（实测被切成 2~4 个分离色块）。
+	// 叉积只关心方向向量的相对顺逆时针关系，天然无环绕问题。
 	vec2 q = (UV - pivot_s) * vec2(aspect, 1.0);
 	float r = length(q);
-	float phi = degrees(atan(q.y, q.x));
+	vec2 d = q / max(r, 1.0e-6);          // 单位方向
 
-	// 扇面几何：整个角度带内 12 瓣 → 波浪外沿（骨尖凸、瓣间凹）+ 放射布褶
-	float span = a_end - a_start;
-	float pitch = span / 12.0;
-	float u = (phi - a_start) / pitch;
-	float cwave = cos(u * 3.14159);
-	float r_edge = fan_r * (0.93 + 0.07 * cwave);
+	float a_s = radians(a_start);
+	float a_e = radians(a_end);
+	float a_f = mix(a_s, a_e, clamp(sweep, 0.0, 1.0));   // 前缘方向（从起始边扫向终止边）
+	vec2 dir_s = vec2(cos(a_s), sin(a_s));
+	vec2 dir_e = vec2(cos(a_e), sin(a_e));
+	vec2 dir_f = vec2(cos(a_f), sin(a_f));
+
+	// cross(v, d) > 0  ⇒ d 在 v 的逆时针侧
+	float c_front = dir_f.x * d.y - dir_f.y * d.x;
+	float c_end   = dir_e.x * d.y - dir_e.y * d.x;
+	float c_start = dir_s.x * d.y - dir_s.y * d.x;
+
+	// 角度带为 [a_end, a_start]（角度递减）。d 在带内 ⇔
+	//   d 在 a_start 的顺时针侧（c_start <= 0）且 在 a_end 的逆时针侧（c_end >= 0）
+	float in_cone = step(c_start, 0.0) * step(0.0, c_end);
+	// 已展开 ⇔ d 已越过前缘（c_front <= 0）
+	float passed = step(c_front, 0.0);
+	float in_fan = in_cone * passed;
+
+	// ── 弧沿（扇骨波浪边）只在展开早期有意义 ──
+	float span = a_s - a_e;
+	float blades_n = max(blades, 1.0);
+	// 用方向角在带内的相对位置（atan 只在**带内**使用，跨度 <= 180° 不会绕回）
+	float rel = clamp((atan(d.y, d.x) - a_e) / max(span, 1.0e-4), 0.0, 1.0);
+	float cwave = cos(rel * blades_n * 3.14159);
+	float r_edge = fan_r * (0.90 + 0.10 * cwave);
 	float crease = (1.0 + cwave) * 0.5;
 
-	// 单边展开：前缘从起始边(a_start，右下)一路扫向终止边(a_end，左上)。
-	// 注意 a_start > a_end（角度递减），区间判定是 [front, a_start]，不能写反。
-	float front = mix(a_start, a_end, clamp(sweep, 0.0, 1.0));
-	float in_fan = step(front, phi) * step(phi, a_start) * step(r, r_edge);
+	// 半径门限：早期限制在弧沿内（扇形有边），末段放开保证整屏覆盖
+	float r_gate = mix(r_edge, 1.0e9, smoothstep(0.40, 0.92, sweep));
+	in_fan *= step(r, r_gate);
 
-	// 透明揭示：展开区域直接透出新立绘，只保留褶皱压暗做布的存在感
+	// ── 末段补满：扇形只覆盖中心扇面，画面四角不在带内 ──
+	// 线性过渡到「全屏都是新图」，保证 sweep→1 时 100% 覆盖
+	float fill = smoothstep(0.80, 0.995, sweep);
+	in_fan = max(in_fan, fill);
+
+	// 透明揭示：展开区域透出新立绘，保留褶皱压暗
 	vec4 next_c = texture(tex_next, UV);
 	vec3 fan_area = next_c.rgb * (1.0 - 0.14 * crease);
 
-	// 边沿描边（像素风深蓝描边，勾出波浪弧沿）
-	float edge_band = smoothstep(0.05, 0.015, r_edge - r) * in_fan;
+	// 弧沿描边（仅早期可见）
+	float edge_band = smoothstep(0.05, 0.015, abs(r - r_edge))
+			* in_cone * passed * (1.0 - smoothstep(0.40, 0.85, sweep));
 	fan_area = mix(fan_area, vec3(0.10, 0.13, 0.24), edge_band * 0.8);
 
-	// 扇面之外：旧立绘（dim 压暗；盖满后背后已换新立绘）
+	// 扇面之外：旧立绘
 	vec4 prev_c = texture(tex_prev, UV);
 	vec4 base = prev_c;
 	base.rgb *= (1.0 - dim * 0.94);
 
 	vec4 col = mix(base, vec4(fan_area, 1.0), in_fan);
 
-	// 单边推进的前缘金光（正在展开的那一条边）
-	float glow = exp(-abs(phi - front) * 30.0) * step(r, r_edge)
+	// 前缘金光
+	float glow = exp(-abs(c_front) * 26.0) * step(r, r_edge) * in_cone
 			* step(0.0001, sweep) * step(sweep, 0.9999);
 	col.rgb += vec3(1.0, 0.88, 0.55) * glow * 0.85;
 

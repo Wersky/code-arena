@@ -34,8 +34,8 @@ const TRANSITION_STYLE := [
 	RippleSwapPortrait.Style.HEX,
 	RippleSwapPortrait.Style.SLASH,
 ]
-## 转场时长（秒）。比 demo 页默认 0.7 略长，全屏大图需要更从容的节奏
-const SWAP_TIME := 0.85
+## 转场时长从 GameSettings 按风格单独取（左下角调参器可调、跨启动记住）
+const STYLE_KEYS := ["ripple", "fan", "hex", "slash"]   ## 与 TRANSITION_STYLE 一一对应
 
 var _ais: Array[AiData] = []
 var _big_texs: Array[Texture2D] = []         ## 铺满全屏的大立绘
@@ -43,6 +43,16 @@ var _idx := 0
 
 var _bg_layer: RippleSwapPortrait = null     ## 背景大立绘（带一人一款转场）
 var _swapping := false
+
+## 左下角调参器（Notes：只在选角界面出现，调整即时生效并落盘）
+var _tuner_panel: PanelContainer = null
+var _tuner_labels: Dictionary = {}           ## style_key -> Label（显示秒数）
+
+
+## 某位角色的转场时长（秒）：优先用主人调好的值
+func _swap_time_for(idx: int) -> float:
+	var key: String = String(STYLE_KEYS[idx % STYLE_KEYS.size()])
+	return GameSettings.select_time_for(key)
 var _dots: Array[Panel] = []
 var _left_btn: Button = null
 var _right_btn: Button = null
@@ -98,6 +108,7 @@ func _build() -> void:
 	_build_background()
 	_build_dots()
 	_build_start()
+	_build_tuner()
 	_refresh()
 
 
@@ -107,7 +118,7 @@ func _build_background() -> void:
 	_bg_layer.name = "BigPortraitBg"
 	_bg_layer.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	_bg_layer.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	_bg_layer.swap_time = SWAP_TIME
+	_bg_layer.swap_time = _swap_time_for(_idx)
 	_bg_layer.style = int(TRANSITION_STYLE[_idx % TRANSITION_STYLE.size()])
 	_bg_layer.swap_finished.connect(func() -> void: _swapping = false)
 	add_child(_bg_layer)
@@ -185,6 +196,66 @@ func _refresh_dots() -> void:
 		_dots[i].add_theme_stylebox_override("panel", sb)
 
 
+# ── 左下角：转场调速器（2026-11-09 主人要求，数值落盘跨启动记住）──
+const TUNER_NAMES := ["水波", "折扇", "龙鳞", "乱斩"]
+
+func _build_tuner() -> void:
+	_tuner_panel = PanelContainer.new()
+	_tuner_panel.name = "SwapTuner"
+	var sb := StyleBoxFlat.new()
+	# 半透明深色底：立绘再亮也读得清，但不会挡住画面
+	sb.bg_color = Color(0.02, 0.03, 0.06, 0.80)
+	sb.border_color = Color(0.28, 0.42, 0.62, 0.85)
+	sb.set_border_width_all(1)
+	sb.set_corner_radius_all(4)
+	sb.content_margin_left = 12.0
+	sb.content_margin_right = 12.0
+	sb.content_margin_top = 8.0
+	sb.content_margin_bottom = 8.0
+	_tuner_panel.add_theme_stylebox_override("panel", sb)
+	_tuner_panel.position = Vector2(18.0, 690.0)
+	_tuner_panel.custom_minimum_size = Vector2(300.0, 0.0)
+	add_child(_tuner_panel)
+
+	var v := VBoxContainer.new()
+	v.add_theme_constant_override("separation", 3)
+	_tuner_panel.add_child(v)
+
+	var title := UiKit.dim("转场速度（秒，拖动即存）", 12, Color(0.68, 0.80, 0.94))
+	v.add_child(title)
+
+	for i in STYLE_KEYS.size():
+		var key := String(STYLE_KEYS[i])
+		var row := HBoxContainer.new()
+		row.add_theme_constant_override("separation", 6)
+		v.add_child(row)
+
+		var nm := UiKit.dim(String(TUNER_NAMES[i]), 12, Color(0.85, 0.92, 1.0))
+		nm.custom_minimum_size = Vector2(34.0, 0.0)
+		row.add_child(nm)
+
+		var slider := HSlider.new()
+		slider.min_value = float(GameSettings.SELECT_SWAP_MIN)
+		slider.max_value = float(GameSettings.SELECT_SWAP_MAX)
+		slider.step = 0.01
+		slider.value = float(GameSettings.select_time_for(key))
+		slider.custom_minimum_size = Vector2(180.0, 14.0)
+		slider.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		row.add_child(slider)
+
+		var val_lbl := UiKit.dim("%.2f" % GameSettings.select_time_for(key), 12,
+				Color(0.60, 0.88, 1.0))
+		val_lbl.custom_minimum_size = Vector2(34.0, 0.0)
+		row.add_child(val_lbl)
+		_tuner_labels[key] = val_lbl
+
+		# 拖动：即时改数值 + 落盘（主人要求「以我填的数值为准」）
+		slider.value_changed.connect(func(v2: float) -> void:
+			GameSettings.set_select_time(key, v2)
+			if _tuner_labels.has(key):
+				(_tuner_labels[key] as Label).text = "%.2f" % v2)
+
+
 # ── 右下角「开始游戏」──
 func _build_start() -> void:
 	_start_btn = UiKit.accent_button("开始游戏", 24)
@@ -215,7 +286,7 @@ func _swap_to_character(next: int) -> void:
 	_swapping = true
 	# 风格取**目标角色**的专属款：切过去时呈现的是它
 	_bg_layer.style = int(TRANSITION_STYLE[next % TRANSITION_STYLE.size()])
-	_bg_layer.swap_time = SWAP_TIME
+	_bg_layer.swap_time = _swap_time_for(next)
 	_bg_layer.swap_to(_big_texs[next])
 
 

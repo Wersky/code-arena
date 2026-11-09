@@ -7,7 +7,7 @@ extends Object
 
 const PATH := "user://arena_settings.cfg"
 ## 配置版本。**改默认值时必须 +1**，否则主人本地存的旧值会盖掉新默认（迁移见 load_from_disk）。
-const CFG_VERSION := 2
+const CFG_VERSION := 3
 
 ## 三档速度：名字 / 该档的**目标总时长**(ms)
 ## 为什么用「目标总时长」而不是每字间隔：文案会加长，而主人要求「行数加长但总耗时不变」。
@@ -22,6 +22,19 @@ static var term_fullscreen: bool = true
 ## demo 页滑杆拖完即存盘——主人调好的数值跨启动记住。
 static var ripple_swap_time := 0.7
 
+## ── 选角界面一人一款转场的**独立**速度（2026-11-09 主人要求每款单独可调）──
+## 键名对应 RippleSwapPortrait.Style：ripple / fan / slash / hex
+## 默认值就是之前统一的 0.85s；主人在左下角调参器改了就以此为准，跨启动记住。
+static var select_swap_time := {
+	"ripple": 0.85,
+	"fan": 0.85,
+	"slash": 0.85,
+	"hex": 0.85,
+}
+## 调参器允许范围（秒）
+const SELECT_SWAP_MIN := 0.20
+const SELECT_SWAP_MAX := 3.00
+
 
 static func load_from_disk() -> void:
 	var cfg := ConfigFile.new()
@@ -31,6 +44,10 @@ static func load_from_disk() -> void:
 	term_speed = clampi(int(cfg.get_value("term", "speed", 0)), 0, 2)
 	term_fullscreen = bool(cfg.get_value("term", "fullscreen", true))
 	ripple_swap_time = clampf(float(cfg.get_value("ripple", "swap_time", 0.7)), 0.15, 10.0)
+	# 选角转场速度（v3 起）：缺项沿用默认 0.85
+	for k in select_swap_time.keys():
+		var v := float(cfg.get_value("select_swap", String(k), float(select_swap_time[k])))
+		select_swap_time[k] = clampf(v, SELECT_SWAP_MIN, SELECT_SWAP_MAX)
 	if ver < CFG_VERSION:
 		# v2：窗口模式默认改成真全屏。老配置只迁移这一次，之后主人自己切就尊重设置。
 		term_fullscreen = true
@@ -43,7 +60,24 @@ static func save_to_disk() -> void:
 	cfg.set_value("term", "speed", term_speed)
 	cfg.set_value("term", "fullscreen", term_fullscreen)
 	cfg.set_value("ripple", "swap_time", ripple_swap_time)
+	for k in select_swap_time.keys():
+		cfg.set_value("select_swap", String(k), float(select_swap_time[k]))
 	cfg.save(PATH)
+
+
+## 取某个转场风格在选角界面的时长（秒）
+static func select_time_for(style_key: String) -> float:
+	if not select_swap_time.has(style_key):
+		return 0.85
+	return clampf(float(select_swap_time[style_key]), SELECT_SWAP_MIN, SELECT_SWAP_MAX)
+
+
+## 设置并立刻存盘（调参器滑杆用）
+static func set_select_time(style_key: String, sec: float) -> void:
+	if not select_swap_time.has(style_key):
+		return
+	select_swap_time[style_key] = clampf(sec, SELECT_SWAP_MIN, SELECT_SWAP_MAX)
+	save_to_disk()
 
 
 static func speed_name() -> String:

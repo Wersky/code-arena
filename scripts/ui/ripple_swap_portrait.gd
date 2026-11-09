@@ -156,21 +156,24 @@ func _update_fan_geo() -> void:
 	if _mat == null or size.y <= 0.0:
 		return
 	var asp := size.x / size.y
-	# 扇轴在左下；单边展开角度带：起始边（底边侧）→ 终止边（另一边侧）
-	# 用画框可见角的 atan 范围反算，保证扫过整张卡
-	var a_ur: float = rad_to_deg(atan2(-(FAN_PIVOT_S.y * size.y), (1.0 - FAN_PIVOT_S.x) * size.x * asp))
-	var a_ul: float = rad_to_deg(atan2(-(FAN_PIVOT_S.y * size.y), -(FAN_PIVOT_S.x * size.x) * asp))
-	var a_lr: float = rad_to_deg(atan2((1.0 - FAN_PIVOT_S.y) * size.y, (1.0 - FAN_PIVOT_S.x) * size.x * asp))
 	_mat.set_shader_parameter("pivot_s", FAN_PIVOT_S)
-	# 起始边：底边侧（a_lr 是右下角方向）再外扩，兜住右下整条底边
-	# 终止边：左上侧（a_ul 是左上角方向）再外扩，兜住左上整条左边
-	# 画框右上也必须被扫到：它角度最大（a_ur），所以起始边取 max(a_lr, a_ur)+外扩
-	var ang_top: float = maxf(a_lr, a_ur)
-	_mat.set_shader_parameter("a_start", ang_top + 6.0)
-	_mat.set_shader_parameter("a_end", a_ul - 6.0)
-	_mat.set_shader_parameter("fan_r", 1.02)
-	_mat.set_shader_parameter("r_scale", 0.6)
 	_mat.set_shader_parameter("aspect", asp)
+
+	# ── 角度带 ──
+	# 扇轴在左下角，画面在它的右上方。可见角跨度接近 360°（左边中段能到 -174°，
+	# 右下能到 +150°）—— **用整段做扇形是错的**：跨度 >360° 会让归一化退化，
+	# 画面被切成两块（实测出现过左右两个分离色块）。
+	# 正确做法：扇形只覆盖「轴 → 画面中心」方向的一个自然扇面（约 130°），
+	# 视觉上是真扇子；剩余区域由 shader 在 sweep 末段线性补满，保证终态全覆盖。
+	var px: float = FAN_PIVOT_S.x
+	var py: float = FAN_PIVOT_S.y
+	var to_center: float = rad_to_deg(atan2(0.5 - py, (0.5 - px) * asp))
+	var half_span := 65.0
+	_mat.set_shader_parameter("a_start", to_center + half_span)
+	_mat.set_shader_parameter("a_end", to_center - half_span)
+	# 半径取到最远角（右上 ≈1.92）留余量
+	_mat.set_shader_parameter("fan_r", 2.1)
+	_mat.set_shader_parameter("r_scale", 0.6)
 
 
 func _apply_fan(p: float) -> void:

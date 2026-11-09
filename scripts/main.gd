@@ -571,7 +571,7 @@ func _maybe_capture() -> void:
 	if screen in ["menu", "arena", "battle", "intro", "reward", "result",
 			"menuhover", "rig", "rigwalk", "loadrun", "card", "cardtext", "cardcost", "terminal", "termgif",
 			"termdump", "hero", "stairs", "launch", "launch2", "arenalayout", "sendtest", "ricetest",
-			"patchdemo", "wishpanel", "ripple", "morph", "select", "mosaic", "flow", "exitmorph"]:
+			"patchdemo", "wishpanel", "ripple", "morph", "select", "mosaic", "flow", "exitmorph", "fandbg"]:
 		run.reset_run()
 		if screen == "launch" or screen == "launch2":
 			var sc := _current as LaunchScreen
@@ -859,6 +859,33 @@ func _maybe_capture() -> void:
 				get_viewport().get_texture().get_image().save_png(
 						"%s-f%02d.png" % [out_path, i * 2 + 2])
 			print("[shot=select] 已存 9 帧 → %s-fNN.png" % out_path)
+		elif screen == "fandbg":
+			# 扇子专属隔离验收：全屏 1600x900、只跑 FAN，逐进度定格
+			var probe_bg := ColorRect.new()
+			probe_bg.color = Color("#101820")
+			probe_bg.set_anchors_preset(Control.PRESET_FULL_RECT)
+			var holder := Control.new()
+			holder.set_anchors_preset(Control.PRESET_FULL_RECT)
+			holder.add_child(probe_bg)
+			var fp := RippleSwapPortrait.new()
+			fp.position = Vector2(0, 50)
+			fp.size = Vector2(1600, 900)
+			fp.style = RippleSwapPortrait.Style.FAN
+			holder.add_child(fp)
+			_swap(holder)
+			await get_tree().process_frame
+			var ta: Texture2D = load("res://assets/art/select/qwen.png")
+			var tb: Texture2D = load("res://assets/art/select/gpt.png")
+			fp.set_portrait(ta)
+			fp.debug_prepare(ta, tb)
+			for i in 7:
+				var pr: float = [0.10, 0.25, 0.40, 0.55, 0.70, 0.82, 0.94][i]
+				fp.debug_set_progress(pr)
+				await get_tree().process_frame
+				await get_tree().process_frame
+				get_viewport().get_texture().get_image().save_png(
+						"%s-f%02d.png" % [out_path, i])
+			print("[shot=fandbg] 已存 7 帧 → %s-fNN.png" % out_path)
 		elif screen == "ripple":
 			# 转场逐帧验收（2026-11-08）：--ripstyle=ripple|fan|slash|hex 选风格，
 			# 手动推进 shader 进度，8 个采样点各存一帧 <shotout>-fNN.png
