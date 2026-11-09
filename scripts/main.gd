@@ -528,7 +528,7 @@ func _maybe_capture() -> void:
 	if screen in ["menu", "arena", "battle", "intro", "reward", "result",
 			"menuhover", "rig", "rigwalk", "loadrun", "card", "cardtext", "cardcost", "terminal", "termgif",
 			"termdump", "hero", "stairs", "launch", "launch2", "arenalayout", "sendtest", "ricetest",
-			"patchdemo", "wishpanel", "ripple"]:
+			"patchdemo", "wishpanel", "ripple", "morph"]:
 		run.reset_run()
 		if screen == "launch" or screen == "launch2":
 			var sc := _current as LaunchScreen
@@ -704,6 +704,20 @@ func _maybe_capture() -> void:
 				ar_wish.debug_open_wish_panel()
 				# 再等 0.8s：代码雨落下几帧，画面不是空的
 				await get_tree().create_timer(0.8).timeout
+		elif screen == "morph":
+			# 面板伸缩逐帧验收（2026-11-09）：6 个进度点各存一帧
+			var morph := PanelMorphDemo.new()
+			morph.size = Vector2(1600, 900)
+			_swap(morph)
+			await get_tree().process_frame
+			var mts := [0.0, 0.2, 0.4, 0.6, 0.8, 1.0]
+			for i in mts.size():
+				morph.debug_set_morph(float(mts[i]))
+				await get_tree().process_frame
+				await get_tree().process_frame
+				get_viewport().get_texture().get_image().save_png(
+						"%s-f%02d.png" % [out_path, i])
+			print("[shot=morph] 已存 6 帧 → %s-fNN.png" % out_path)
 		elif screen == "ripple":
 			# 转场逐帧验收（2026-11-08）：--ripstyle=ripple|fan|slash|hex 选风格，
 			# 手动推进 shader 进度，8 个采样点各存一帧 <shotout>-fNN.png

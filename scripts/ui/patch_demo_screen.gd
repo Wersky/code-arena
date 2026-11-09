@@ -117,7 +117,8 @@ func _build_left() -> void:
 		["定价", "模拟跑分：p50 定费用、p95 封禁，超模卡当场判禁用"],
 		["组合审计", "2–6 张组容斥差分，抓「单卡无害合起来超模」"],
 		["好感度", "金币（伤害对数结算）+ 商店礼物 + 喂饭；好感抬许愿卡品质"],
-		["角色转场", "试验：水波从立绘中心不规则扩散，波内显现新角色——第 7 页可玩"],
+		["角色转场", "一人一款：水波 / 折扇单边展开 / 龙鳞剥落 / 乱斩火烧——第 7 页可玩"],
+		["面板伸缩", "左边框向上收（上边不动）+ 下边框收到左下再上移对齐——第 8 页可玩"],
 	]
 	for r in rows:
 		var d := UiKit.dim("%s：%s" % [String(r[0]), String(r[1]).replace("\n", " ")], 13, Color(0.55, 0.68, 0.85))
@@ -135,11 +136,11 @@ func _build_tabs() -> void:
 	tab_row.size = Vector2(1020, 36)
 	tab_row.add_theme_constant_override("separation", 5)
 	add_child(tab_row)
-	var names := ["效果工坊", "翻面卡牌", "算力", "定价", "组合审计", "好感度", "角色转场"]
+	var names := ["效果工坊", "翻面卡牌", "算力", "定价", "组合审计", "好感度", "角色转场", "面板伸缩"]
 	for i in names.size():
 		var b := UiKit.button(String(names[i]), 15)
 		b.toggle_mode = true
-		b.custom_minimum_size = Vector2(142, 34)
+		b.custom_minimum_size = Vector2(120, 34)
 		b.button_pressed = i == 0
 		var idx := i
 		b.toggled.connect(func(on: bool) -> void:
@@ -165,6 +166,7 @@ func _build_tabs() -> void:
 	_build_combo_tab()
 	_build_affection_tab()
 	_build_ripple_tab()
+	_build_morph_tab()
 
 
 func _switch_tab(idx: int) -> void:
@@ -860,3 +862,42 @@ func _rp_swap(i: int) -> void:
 		_rp_state.text = "转场中… → %s" % RIPPLE_NAMES[i]
 	for k in _rp_btns.size():
 		_rp_btns[k].button_pressed = k == i
+
+
+# ═══ Tab7 面板伸缩 ═══════════════════════════════════
+
+var _morph_view: PanelMorphDemo = null
+
+
+func _build_morph_tab() -> void:
+	var root := Control.new()
+	root.name = "TabMorph"
+	root.set_anchors_preset(Control.PRESET_FULL_RECT)
+	root.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_content.add_child(root)
+
+	var title := UiKit.label("面板动态伸缩：左边框向上收（上边不动）｜下边框收到左下角再上移对齐", 17,
+			Color(0.55, 0.85, 1.0))
+	title.position = Vector2(24, 16)
+	root.add_child(title)
+
+	var info := UiKit.dim("动画分两段：① 左边框上边固定、下边向上挪（高度 900→300）；② 下边框先向左收到左下角，再上移贴到左边框下方、侧边对齐。全部 Tween 驱动，可重复播放。", 13,
+			Color(0.55, 0.68, 0.85))
+	info.position = Vector2(24, 42)
+	info.size = Vector2(966, 40)
+	info.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	root.add_child(info)
+
+	var holder := Control.new()
+	holder.position = Vector2(24, 92)
+	holder.size = Vector2(960, 540)
+	holder.clip_contents = true
+	root.add_child(holder)
+
+	_morph_view = PanelMorphDemo.new()
+	_morph_view.position = Vector2.ZERO
+	_morph_view.size = Vector2(1600, 900)
+	_morph_view.scale = Vector2(0.6, 0.6)   ## 1600×900 缩到 960×540 内
+	_morph_view.back_requested.connect(func() -> void: pass)
+	holder.add_child(_morph_view)
+

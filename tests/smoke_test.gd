@@ -36,6 +36,7 @@ func _initialize() -> void:
 	await _test_wish_canvas_edit()
 	await _test_card_flip()
 	await _test_ripple_swap()
+	await _test_panel_morph()
 	await _test_patch_demo()
 	_test_affection_system()
 	await _test_shop_gifts()
@@ -1683,8 +1684,8 @@ func _test_patch_demo() -> void:
 	_host.add_child(demo)
 	await process_frame
 	await process_frame
-	_check(demo._content != null and demo._content.get_child_count() == 7,
-			"七个演示标签页全部构建（含角色转场试验）")
+	_check(demo._content != null and demo._content.get_child_count() == 8,
+			"八个演示标签页全部构建（含角色转场 + 面板伸缩）")
 	# Tab0 效果工坊：编译 + 试打
 	_check(demo._fx_desc.text.contains("编译通过"), "效果工坊实时编译出人话")
 	demo._fx_run()
@@ -1741,5 +1742,58 @@ func _test_ripple_swap() -> void:
 		v.debug_prepare(ta, tb)
 		v.debug_set_progress(0.5)
 		_check(true, "风格 %d 手动推进不炸" % st)
+	v.queue_free()
+	await process_frame
+
+func _test_panel_morph() -> void:
+	print("[面板伸缩]")
+	var v := PanelMorphDemo.new()
+	_host.add_child(v)
+	v.size = Vector2(1600, 900)
+	await process_frame
+	await process_frame
+
+	# 起始态：左边框满高贴顶、下边框在右下
+	var sb0: Vector2 = v._sidebar.position
+	var sb_sz0: Vector2 = v._sidebar.size
+	var dl0: Vector2 = v._dialog.position
+	var dl_sz0: Vector2 = v._dialog.size
+	_check(is_equal_approx(sb_sz0.y, PanelMorphDemo.SIDEBAR_H), "初始左边框满高 900")
+	_check(is_equal_approx(dl_sz0.x, PanelMorphDemo.DIALOG_W), "初始下边框宽 880")
+
+	# 真点按钮：走完整 Tween 链路（不是 debug 快照）
+	v._btn.emit_signal("pressed")
+	await create_timer(0.35).timeout
+	var sb_mid: Vector2 = v._sidebar.size
+	_check(sb_mid.y < sb_sz0.y, "① 播放中左边框高度已在收缩")
+	_check(is_equal_approx(v._sidebar.position.y, sb0.y), "① 收缩时上边固定不动（position.y 不变）")
+
+	await create_timer(0.5).timeout
+	var sb_sz1: Vector2 = v._sidebar.size
+	_check(absf(sb_sz1.y - 300.0) < 1.0, "① 左边框收到高度 300")
+	_check(is_equal_approx(v._sidebar.position.y, 0.0), "① 左边框顶边仍在 y=0")
+
+	await create_timer(1.3).timeout
+	var dl1: Vector2 = v._dialog.position
+	var dl_sz1: Vector2 = v._dialog.size
+	_check(dl_sz1.x < dl_sz0.x, "② 下边框宽度已收窄")
+	_check(dl1.x < dl0.x, "② 下边框向左收拢")
+	_check(absf(dl1.x - v._sidebar.position.x) < 1.0, "② 下边框左边线与左边框对齐（x）")
+	_check(absf(dl1.y - (v._sidebar.position.y + v._sidebar.size.y + 12.0)) < 1.0,
+			"② 下边框上移贴到左边框底部下方")
+	_check(v._btn.disabled == false, "播放结束后按钮恢复可点")
+
+	# 复位可再来一次
+	v._reset_layout()
+	await process_frame
+	_check(is_equal_approx(v._sidebar.size.y, PanelMorphDemo.SIDEBAR_H)
+			and is_equal_approx(v._dialog.size.x, PanelMorphDemo.DIALOG_W), "复位回到初始布局")
+
+	# debug 快照端点（逐帧验收钩子）
+	v.debug_set_morph(0.0)
+	_check(is_equal_approx(v._sidebar.size.y, PanelMorphDemo.SIDEBAR_H), "debug p0 = 初始")
+	v.debug_set_morph(1.0)
+	_check(absf(v._sidebar.size.y - 300.0) < 1.0
+			and is_equal_approx(v._dialog.size.x, 320.0), "debug p1 = 终态")
 	v.queue_free()
 	await process_frame
