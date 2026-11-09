@@ -1918,12 +1918,12 @@ func _test_mosaic_and_select() -> void:
 	_check(not sel_src.contains("_intro_lbl"), "一句话介绍已移除")
 	_check(not sel_src.contains("_bg_dim"), "背景暗纱已移除（保持原图明度）")
 	_check(not sel_src.contains("_thumb"), "左侧小立绘选框已移除")
+	_check(sel_src.contains("RippleSwapPortrait"), "背景换图走转场控件（而非淡入）")
+	_check(not sel_src.contains("BG_FADE"), "旧淡入常量已移除")
 	_check(sel._bg_layer != null, "背景大立绘层仍在")
 	_check(sel._bg_layer.size.x > 1000.0 and sel._bg_layer.size.y > 500.0,
 			"背景层铺满全屏（%s）" % sel._bg_layer.size)
-	_eq(int(sel._bg_layer.stretch_mode), int(TextureRect.STRETCH_KEEP_ASPECT_COVERED),
-			"背景等比覆盖不变形")
-	_check(sel._bg_layer.texture != null, "背景已载入大立绘")
+	_check(sel._bg_layer is RippleSwapPortrait, "背景层带一人一款转场控件")
 
 	# 圆点+箭头在底部水平居中
 	_check(sel._dots.size() == 4, "底部 4 个位置点")
@@ -1936,20 +1936,43 @@ func _test_mosaic_and_select() -> void:
 			"圆点行在底部（y=%.0f > 700）" % dot_row.position.y)
 	_check(sel._left_btn != null and sel._right_btn != null, "左右切换箭头仍在")
 
-	# 切换：背景立即换图，指示器跟随
-	var bg0: Texture2D = sel._bg_layer.texture
+	# ── 一人一款转场（2026-11-09 四轮：应用到大立绘切换）──
+	var styles := {}
+	for st in CharacterSelectScreen.TRANSITION_STYLE:
+		styles[int(st)] = true
+	_eq(styles.size(), 4, "4 位角色各配一款不同转场")
+	_eq(int(CharacterSelectScreen.TRANSITION_STYLE[0]), RippleSwapPortrait.Style.RIPPLE,
+			"DeepDeek = 水波")
+	_eq(int(CharacterSelectScreen.TRANSITION_STYLE[1]), RippleSwapPortrait.Style.FAN,
+			"Kweno = 折扇")
+	_eq(int(CharacterSelectScreen.TRANSITION_STYLE[2]), RippleSwapPortrait.Style.HEX,
+			"ChatPPT = 龙鳞")
+	_eq(int(CharacterSelectScreen.TRANSITION_STYLE[3]), RippleSwapPortrait.Style.SLASH,
+			"Grock = 乱斩")
+
+	# 切换：播目标角色的转场
 	var before_idx: int = sel.current_index()
 	sel._right_btn.emit_signal("pressed")
 	await process_frame
 	_check(sel.current_index() != before_idx, "点右箭头切换到下一位")
 	_eq(sel.current_id(), "kweno", "切到第 2 位 Kweno")
-	_check(sel._bg_layer.texture != bg0, "背景大立绘已直接换掉")
-	_check(sel._left_btn != null, "左箭头仍可切回")
-
-	# 切回第一位
-	sel._left_btn.emit_signal("pressed")
+	_check(sel._swapping, "切换中进入转场状态（连点被挡）")
+	_eq(int(sel._bg_layer.style), int(RippleSwapPortrait.Style.FAN),
+			"切到 Kweno 时用折扇转场（取目标角色风格）")
+	# 转场期间连点应无效
+	sel._right_btn.emit_signal("pressed")
 	await process_frame
-	_eq(sel.current_id(), "deepdeek", "左箭头可切回")
+	_eq(sel.current_id(), "kweno", "转场期间连点被忽略")
+	await create_timer(1.2).timeout
+	_check(not sel._swapping, "转场结束后解锁")
+
+	# 再切到下一位，风格应换成龙鳞
+	sel._right_btn.emit_signal("pressed")
+	await process_frame
+	_eq(sel.current_id(), "chatppt", "切到第 3 位 ChatPPT")
+	_eq(int(sel._bg_layer.style), int(RippleSwapPortrait.Style.HEX),
+			"切到 ChatPPT 时用龙鳞转场")
+	await create_timer(1.2).timeout
 
 	# 开始游戏按钮发信号
 	var started := [""]
@@ -1958,9 +1981,8 @@ func _test_mosaic_and_select() -> void:
 	await process_frame
 	_eq(started[0], sel.current_id(), "开始游戏带回当前选中角色 id")
 
-	# 背景大立绘等比覆盖由 COVERED 保证（已在上面断言过），这里只确认一次
-	_eq(int(sel._bg_layer.stretch_mode), int(TextureRect.STRETCH_KEEP_ASPECT_COVERED),
-			"背景大立绘等比覆盖不拉伸（复核）")
+	# 转场结束后不应残留转场态
+	_check(not sel._swapping, "全部切换结束后无残留转场状态")
 	sel.queue_free()
 	await process_frame
 

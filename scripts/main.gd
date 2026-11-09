@@ -839,8 +839,8 @@ func _maybe_capture() -> void:
 						"%s-f%02d.png" % [out_path, i])
 			print("[shot=mosaic] 已存 %d 档 → %s-fNN.png" % [steps.size(), out_path])
 		elif screen == "select":
-			# 选角界面验收（2026-11-09）：
-			#   -f00 布局 / -f01..04 四个角色各自的转场中段
+			# 选角界面验收（2026-11-09 四轮）：
+			#   f00 初始布局 / f01..f08 四种转场各取「中段 + 结束」两帧
 			var sel := CharacterSelectScreen.new()
 			sel.setup(AiPool.all_ais())
 			_swap(sel)
@@ -848,13 +848,17 @@ func _maybe_capture() -> void:
 			await get_tree().process_frame
 			get_viewport().get_texture().get_image().save_png("%s-f00.png" % out_path)
 			for i in 4:
-				sel.select_by_index(i)
-				# 转场中段（swap_time 默认 0.7s）
-				await get_tree().create_timer(0.34).timeout
+				var target: int = (i + 1) % 4
+				sel.select_by_index(target)
+				# 中段：转场进度约 30%（SWAP_TIME=0.85），各风格差异最明显的时刻
+				await get_tree().create_timer(0.26).timeout
 				get_viewport().get_texture().get_image().save_png(
-						"%s-f%02d.png" % [out_path, i + 1])
-				await get_tree().create_timer(0.45).timeout
-			print("[shot=select] 已存 5 帧 → %s-fNN.png" % out_path)
+						"%s-f%02d.png" % [out_path, i * 2 + 1])
+				# 结束态
+				await get_tree().create_timer(0.65).timeout
+				get_viewport().get_texture().get_image().save_png(
+						"%s-f%02d.png" % [out_path, i * 2 + 2])
+			print("[shot=select] 已存 9 帧 → %s-fNN.png" % out_path)
 		elif screen == "ripple":
 			# 转场逐帧验收（2026-11-08）：--ripstyle=ripple|fan|slash|hex 选风格，
 			# 手动推进 shader 进度，8 个采样点各存一帧 <shotout>-fNN.png

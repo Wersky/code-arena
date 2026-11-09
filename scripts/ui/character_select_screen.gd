@@ -4,13 +4,15 @@ extends Control
 ##   · **背景**：当前角色的大立绘铺满全屏，**不加任何暗纱**（主人要求保持原图明度）
 ##   · 底部居中：← 圆点圆点圆点圆点 →（左右箭头 + 4 个位置点）
 ##   · 右下角：UI「开始游戏」
-##   · 切换时背景直接换图（短淡入），无转场
+##   · 切换时用该角色专属转场播到它（一人一款，见 TRANSITION_STYLE）
 ##
 ## 修订记录：
 ##   一轮：框内小立绘用 RippleSwapPortrait 播一人一款转场
 ##   二轮：选框不用转场直接切；背景用大立绘
 ##   三轮（2026-11-09）：去掉左上角介绍文字（角色名/家族/一句话）、去掉左侧小立绘选框、
 ##                      去掉背景暗纱；圆点与箭头移到底部水平居中
+##   四轮（2026-11-09）：**背景换图用一人一款转场**（水波/折扇/龙鳞/乱斩），
+##                      素材已换成 1600x900 与画布同比，转场控件可直接 UV 采样
 ##
 ## 布局基准 1600×900。
 
@@ -24,14 +26,23 @@ const DOT_R := 5.0
 const DOT_GAP := 30.0
 const START_BTN_POS := Vector2(1330.0, 800.0)
 const START_BTN_SIZE := Vector2(228.0, 62.0)
-## 背景换图的淡入淡出时长（不是角色转场，只是避免生硬跳变）
-const BG_FADE := 0.22
+## 一人一款转场：下标与 AiPool.all_ais() 顺序一致
+##   DeepDeek 水波 / Kweno 折扇 / ChatPPT 龙鳞 / Grock 乱斩
+const TRANSITION_STYLE := [
+	RippleSwapPortrait.Style.RIPPLE,
+	RippleSwapPortrait.Style.FAN,
+	RippleSwapPortrait.Style.HEX,
+	RippleSwapPortrait.Style.SLASH,
+]
+## 转场时长（秒）。比 demo 页默认 0.7 略长，全屏大图需要更从容的节奏
+const SWAP_TIME := 0.85
 
 var _ais: Array[AiData] = []
 var _big_texs: Array[Texture2D] = []         ## 铺满全屏的大立绘
 var _idx := 0
 
-var _bg_layer: TextureRect = null            ## 背景大立绘（唯一视觉主体）
+var _bg_layer: RippleSwapPortrait = null     ## 背景大立绘（带一人一款转场）
+var _swapping := false
 var _dots: Array[Panel] = []
 var _left_btn: Button = null
 var _right_btn: Button = null
@@ -90,16 +101,17 @@ func _build() -> void:
 	_refresh()
 
 
-# ── 背景：当前角色大立绘铺满全屏（无暗纱）──
+# ── 背景：当前角色大立绘铺满全屏（无暗纱，带一人一款转场）──
 func _build_background() -> void:
-	_bg_layer = TextureRect.new()
+	_bg_layer = RippleSwapPortrait.new()
 	_bg_layer.name = "BigPortraitBg"
 	_bg_layer.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-	_bg_layer.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
-	# 铺满全屏且不变形：等比放大到覆盖整个画布，超出部分裁掉
-	_bg_layer.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED
 	_bg_layer.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_bg_layer.swap_time = SWAP_TIME
+	_bg_layer.style = int(TRANSITION_STYLE[_idx % TRANSITION_STYLE.size()])
+	_bg_layer.swap_finished.connect(func() -> void: _swapping = false)
 	add_child(_bg_layer)
+	_bg_layer.set_portrait(_big_texs[_idx])
 
 
 # ── 底部居中：箭头 + 圆点 ──
@@ -183,34 +195,37 @@ func _build_start() -> void:
 	add_child(_start_btn)
 
 
-## 刷新当前角色：背景直接换图（短淡入避免生硬跳变）
+## 刷新指示器（背景换图由 _swap_to_character 负责）
 func _refresh(animate_bg: bool = false) -> void:
 	if _ais.is_empty():
 		return
 	_refresh_dots()
-	if _bg_layer != null:
-		_bg_layer.texture = _big_texs[_idx]
-		if animate_bg:
-			_bg_layer.modulate.a = 0.0
-			var tw := create_tween()
-			tw.tween_property(_bg_layer, "modulate:a", 1.0, BG_FADE) \
-					.set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_OUT)
+	if _bg_layer != null and not animate_bg:
+		_bg_layer.set_portrait(_big_texs[_idx])
 
 
-## 左右切换：背景直接换，指示器立即跟随
-func _step(dir: int) -> void:
-	if _ais.is_empty():
-		return
-	var next := wrapi(_idx + dir, 0, _ais.size())
-	if next == _idx:
+## 切到第 next 位：用**目标角色**的专属转场播过去
+func _swap_to_character(next: int) -> void:
+	if next < 0 or next >= _ais.size() or next == _idx or _swapping:
 		return
 	_idx = next
-	_refresh(true)
-
-
-## 供测试/调试：直接切到第 i 位
-func select_by_index(i: int) -> void:
-	if i < 0 or i >= _ais.size() or i == _idx:
+	_refresh_dots()          # 指示器立即跟随（转场是视觉层，状态不该滞后）
+	if _bg_layer == null:
 		return
-	_idx = i
-	_refresh(true)
+	_swapping = true
+	# 风格取**目标角色**的专属款：切过去时呈现的是它
+	_bg_layer.style = int(TRANSITION_STYLE[next % TRANSITION_STYLE.size()])
+	_bg_layer.swap_time = SWAP_TIME
+	_bg_layer.swap_to(_big_texs[next])
+
+
+## 左右切换
+func _step(dir: int) -> void:
+	if _ais.is_empty() or _swapping:
+		return
+	_swap_to_character(wrapi(_idx + dir, 0, _ais.size()))
+
+
+## 供测试/调试：直接切到第 i 位（走转场）
+func select_by_index(i: int) -> void:
+	_swap_to_character(i)
