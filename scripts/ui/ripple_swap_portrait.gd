@@ -147,24 +147,28 @@ func _apply_slash_params(shake: bool) -> void:
 
 
 ## 像素扇布分镜（p 0→1，由 tween/逐帧验收推进）：
-##   0~0.06  啪：对角线出现（合拢的扇）
-##   0.06~0.5  向两边展开（绕对角线对称开花，扇骨从对角线向两侧长出），扇面渐盖满
-##   0.5~0.58  盖满定住——背后已换成新立绘
-##   0.58~0.92 逆向收拢回对角线，露出新立绘
-##   0.92~1  收尾淡出
+##   0~0.06   起手：扇布收在起始边（底边侧）
+##   0.06~0.52 单边展开：前缘从起始边一路扫到另一边，扇面渐盖满全框
+##   0.52~0.60 盖满定住——背后已换成新立绘
+##   0.60~0.92 逆向收拢回起始边，露出新立绘
+##   0.92~1   收尾淡出
 func _update_fan_geo() -> void:
 	if _mat == null or size.y <= 0.0:
 		return
 	var asp := size.x / size.y
-	# 开花中心 = 合拢对角线角（扇轴左下 → 画框右上角）
-	var diag := Vector2((1.0 - FAN_PIVOT_S.x) * size.x * asp, -(FAN_PIVOT_S.y * size.y))
-	var a_diag := rad_to_deg(atan2(diag.y, diag.x))
+	# 扇轴在左下；单边展开角度带：起始边（底边侧）→ 终止边（另一边侧）
+	# 用画框可见角的 atan 范围反算，保证扫过整张卡
+	var a_ur: float = rad_to_deg(atan2(-(FAN_PIVOT_S.y * size.y), (1.0 - FAN_PIVOT_S.x) * size.x * asp))
+	var a_ul: float = rad_to_deg(atan2(-(FAN_PIVOT_S.y * size.y), -(FAN_PIVOT_S.x * size.x) * asp))
+	var a_lr: float = rad_to_deg(atan2((1.0 - FAN_PIVOT_S.y) * size.y, (1.0 - FAN_PIVOT_S.x) * size.x * asp))
 	_mat.set_shader_parameter("pivot_s", FAN_PIVOT_S)
-	_mat.set_shader_parameter("a_mid_s", a_diag)
-	_mat.set_shader_parameter("a_half_s", 48.0)
-	_mat.set_shader_parameter("a_mid_t", -59.0)
+	# 起始边：底边侧（a_lr 是右下角方向）再外扩，兜住右下整条底边
+	# 终止边：左上侧（a_ul 是左上角方向）再外扩，兜住左上整条左边
+	# 画框右上也必须被扫到：它角度最大（a_ur），所以起始边取 max(a_lr, a_ur)+外扩
+	var ang_top: float = maxf(a_lr, a_ur)
+	_mat.set_shader_parameter("a_start", ang_top + 6.0)
+	_mat.set_shader_parameter("a_end", a_ul - 6.0)
 	_mat.set_shader_parameter("fan_r", 1.02)
-	_mat.set_shader_parameter("blades", 12.0)
 	_mat.set_shader_parameter("r_scale", 0.6)
 	_mat.set_shader_parameter("aspect", asp)
 
