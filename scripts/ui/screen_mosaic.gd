@@ -18,7 +18,12 @@ extends Control
 ## **块数语义（极易搞反）**：blocks = 横排块数。blocks 大 → 块小 → 清晰；blocks=1 → 整屏一块 → 最糊。
 ## 所以 cover() 是 FINE→COARSE，reveal() 是 COARSE→FINE。
 const FINE_BLOCKS := 400     ## 清晰档（>= 屏幕像素列数即完全清晰，400 足够）
-const COARSE_BLOCKS := 1     ## 最糊档（整屏一块）
+const COARSE_BLOCKS := 1     ## 极限档：整屏一块（**转场不使用**，见 PEAK_BLOCKS）
+## 转场实际峰值：横排 26 块（1600 宽下约 62px 一块）。
+## 为什么不用 COARSE_BLOCKS=1：整屏变成一个平均色时看起来只是「淡出成纯色」，
+## 看不出任何马赛克 —— 主人反馈「马赛克化没出现」正是此因。
+## 停在 26 块能清楚看到方块颗粒，同时细节已糊到认不出。
+const PEAK_BLOCKS := 26
 ## 过渡阶梯：索引 0 = 清晰，末尾 = 最糊
 const STEPS := [400, 160, 96, 64, 44, 30, 20, 13, 8, 5, 3, 2, 1]
 
@@ -75,20 +80,23 @@ func _apply_blocks(blocks: int) -> void:
 	visible = true
 
 
-## 块化：画面逐渐糊掉
+## 块化：画面逐渐糊掉（blocks FINE → PEAK，停在能看清方块颗粒的档位）
 func cover(dur: float = 0.45) -> void:
 	if _snapshot == null:
 		await grab()
 	if _snapshot == null:
 		return
 	visible = true
-	var peak: int = int(STEPS[STEPS.size() - 1])
+	# 注意：这里曾写成 1.0 → peak(=1)，全程停在 blocks=1（整屏一个平均色），
+	# 视觉上只是「淡出成纯色」，完全看不到马赛克 —— 这就是主人反馈
+	# 「马赛克化没出现」的根因。必须从 FINE_BLOCKS 往 PEAK_BLOCKS 插值。
 	var tw := create_tween()
 	tw.tween_method(func(v: float) -> void:
-		_apply_blocks(int(round(v))), 1.0, float(peak), maxf(0.05, dur)) \
+		_apply_blocks(int(round(v))), float(FINE_BLOCKS), float(PEAK_BLOCKS),
+			maxf(0.05, dur)) \
 		.set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_IN)
 	await tw.finished
-	_apply_blocks(peak)
+	_apply_blocks(PEAK_BLOCKS)
 
 
 ## 换场景后重新抓帧：遮罩先藏一帧抓新画面，再以「最糊」状态贴回去。
@@ -106,7 +114,7 @@ func recapture() -> void:
 	var img := vp.get_texture().get_image()
 	if img != null:
 		_snapshot = img
-	_apply_blocks(COARSE_BLOCKS)
+	_apply_blocks(PEAK_BLOCKS)
 	visible = true
 
 

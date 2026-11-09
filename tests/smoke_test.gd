@@ -1891,6 +1891,9 @@ func _test_mosaic_and_select() -> void:
 	_check(mos._cur_blocks == 1, "blocks=1 = 整屏一块（最糊）")
 	mos.debug_set_blocks(32)
 	_check(mos._cur_blocks == 32, "blocks=32 = 32 块横排（较清晰）")
+	# 峰值必须是「能看到方块颗粒」的档位，不能是 1（整屏纯色 = 看起来只是淡出）
+	_check(ScreenMosaic.PEAK_BLOCKS > 8,
+			"马赛克峰值 = %d 块（>8 才看得出块状，1 会变成纯色淡出）" % ScreenMosaic.PEAK_BLOCKS)
 	_check(not mos.is_visible_in_tree() or mos.visible, "块化后可显示")
 	mos.queue_free()
 	await process_frame
@@ -1967,6 +1970,36 @@ func _test_mosaic_and_select() -> void:
 	_check(not lc_src.contains("_portrait"), "右侧模型立绘已移除（源码无残留）")
 	_check(not lc_src.contains("OptionButton"), "输入框旁模型下拉已移除（源码无残留）")
 	_check(lc._skill_list != null, "侧栏技能列表仍正常构建")
+
+	# ── 主界面退出动画（2026-11-09 接入 LaunchMorphExit）──
+	# 真实面板的 custom_minimum_size 会把 size 钳死（下框 880 宽 → 收不窄），必须先清零
+	_check(lc._dialog.custom_minimum_size.x > 700.0, "对话框初始 custom_min 会钳住收窄（880 宽）")
+	var ex := LaunchMorphExit.new(lc._sidebar, lc._dialog, lc)
+	_check(lc._dialog.offset_transform_enabled, "退出动画已启用 offset_transform（侧栏）")
+	_check(lc._sidebar.offset_transform_enabled, "退出动画已启用 offset_transform（对话）")
+	# 定格验证：起始 / 收窄完成 / 完全出画
+	ex.debug_set_progress(0.0)
+	_check(is_equal_approx(lc._dialog.size.x, LaunchMorphExit.DIALOG_W),
+			"p0：对话框仍为原始宽度 880")
+	_check(is_equal_approx(lc._sidebar.size.y, LaunchMorphExit.SIDEBAR_H),
+			"p0：侧栏仍为原始高度 900")
+	ex.debug_set_progress(0.55)   # 收窄段结束附近
+	_check(absf(lc._dialog.size.x - LaunchMorphExit.DIALOG_COMPACT_W) < 2.0,
+			"收窄段结束：对话框已收到与侧栏同宽 232（不再被 custom_min 钳住）")
+	_check(absf((lc._dialog.position.x + lc._dialog.size.x)
+			- (LaunchMorphExit.SIDEBAR_BASE.x + LaunchMorphExit.SIDEBAR_W)) < 1.0,
+			"收窄段结束：右边线对齐原侧栏右边线")
+	ex.debug_set_progress(1.0)
+	_check(lc._sidebar.position.y + lc._sidebar.offset_transform_position.y
+			+ lc._sidebar.size.y < 0.0, "p1：侧栏完全移出画面")
+	_check(lc._dialog.position.y + lc._dialog.offset_transform_position.y
+			+ lc._dialog.size.y < 0.0, "p1：对话框完全移出画面")
+	# 复位后 custom_min 恢复（否则下次进主界面布局会坏）
+	ex.restore_layout()
+	await process_frame
+	_check(is_equal_approx(lc._dialog.size.x, LaunchMorphExit.DIALOG_W)
+			and lc._dialog.custom_minimum_size.x > 700.0, "复位后对话框尺寸与 custom_min 都复原")
+	_check(is_equal_approx(lc._sidebar.size.y, LaunchMorphExit.SIDEBAR_H), "复位后侧栏高度复原")
 	_check(lc.get_node_or_null("AgentDialog") != null, "Agent 对话框已展开")
 	# 空输入也能发送
 	var fired := [""]

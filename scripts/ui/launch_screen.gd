@@ -101,6 +101,15 @@ func expand() -> void:
 	dialog_expanded.emit()
 
 
+## 主界面退出：面板收缩 + 顶飞（2026-11-09 主人要求，把 demo 第 8 页动画用到真实界面）。
+## main 在「发送 → 马赛克 → 选角」流程里 await 它，播完两框已飞出画面。
+func play_exit_morph() -> void:
+	if _sidebar == null or _dialog == null:
+		return
+	var ex := LaunchMorphExit.new(_sidebar, _dialog, self)
+	await ex.play()
+
+
 func _frame(c: Color) -> StyleBoxFlat:
 	var sb := StyleBoxFlat.new()
 	sb.bg_color = Color(0, 0, 0, 0.0)

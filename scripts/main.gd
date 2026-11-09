@@ -175,13 +175,23 @@ func _show_launch() -> void:
 	sc.patch_demo_requested.connect(_show_patch_demo)
 
 
-## 启动页 → 选角：先让整屏马赛克化，糊住后再换界面，然后从马赛克里清晰出来
+## 启动页 → 选角（2026-11-09 主人要求接入主界面面板动画）：
+##   ① 面板退出动画：侧栏向上收 + 下框收窄右移 → 蓄力 → 顶飞（LaunchMorphExit）
+##   ② 两者都飞出去后，整屏马赛克化 → 换界面 → 从马赛克里清晰出来
+## 注意顺序：**先播面板动画再马赛克**。反过来马赛克会先把面板糊掉，
+## 观众看不到收缩过程（主人反馈「框框没动」就是没接上这一步）。
 func _goto_character_select(default_ai_id: String) -> void:
 	var mosaic := ScreenMosaic.new()
 	mosaic.name = "ScreenMosaic"
 	add_child(mosaic)
 	mosaic.move_to_front()
+	# 抓帧要在面板动画**之前**：此时画面还是完整的主界面
 	await mosaic.grab()
+	# 面板退出动画（约 1.24s），两框一路飞出画面顶部
+	var sc_cur := _current as LaunchScreen
+	if sc_cur != null:
+		await sc_cur.play_exit_morph()
+	# 面板已出画 → 剩下的空背景逐渐马赛克化
 	await mosaic.cover(0.5)
 	var sel := CharacterSelectScreen.new()
 	sel.setup(AiPool.all_ais())
@@ -560,7 +570,7 @@ func _maybe_capture() -> void:
 	if screen in ["menu", "arena", "battle", "intro", "reward", "result",
 			"menuhover", "rig", "rigwalk", "loadrun", "card", "cardtext", "cardcost", "terminal", "termgif",
 			"termdump", "hero", "stairs", "launch", "launch2", "arenalayout", "sendtest", "ricetest",
-			"patchdemo", "wishpanel", "ripple", "morph", "select", "mosaic", "flow"]:
+			"patchdemo", "wishpanel", "ripple", "morph", "select", "mosaic", "flow", "exitmorph"]:
 		run.reset_run()
 		if screen == "launch" or screen == "launch2":
 			var sc := _current as LaunchScreen
@@ -752,29 +762,42 @@ func _maybe_capture() -> void:
 						"%s-f%02d.png" % [out_path, i])
 			print("[shot=morph] 已存 %d 帧 → %s-fNN.png" % [mts.size(), out_path])
 		elif screen == "flow":
-			# 端到端流程验收（2026-11-09）：启动页 → 发送 → 马赛克 → 选角 → 开始游戏
-			await get_tree().create_timer(0.6).timeout
-			get_viewport().get_texture().get_image().save_png("%s-f00.png" % out_path)
+			# 端到端流程验收（2026-11-09）。
+			# 注意：实时连续抓帧在隐藏桌面下会拿到**过期缓冲**（实测 f01~f06 像素完全相同），
+			# 所以这里用「定格 + 每帧等两帧」的方式，保证抓到的就是该进度的真实画面。
+			await get_tree().create_timer(0.5).timeout
 			var lc2 := _current as LaunchScreen
 			if lc2 == null:
 				lc2 = LaunchScreen.new()
 				_swap(lc2)
 				await get_tree().process_frame
 			lc2.expand()
-			await get_tree().create_timer(1.0).timeout
-			get_viewport().get_texture().get_image().save_png("%s-f01.png" % out_path)
-			# 空输入直接发送 → 触发马赛克 + 选角
-			lc2._input.text = ""
-			lc2._send()
-			await get_tree().create_timer(0.28).timeout      # 马赛克块化中
-			get_viewport().get_texture().get_image().save_png("%s-f02.png" % out_path)
-			await get_tree().create_timer(0.45).timeout      # 糊满、正在换界面
-			get_viewport().get_texture().get_image().save_png("%s-f03.png" % out_path)
-			await get_tree().create_timer(0.30).timeout      # 新界面正在清晰出来
-			get_viewport().get_texture().get_image().save_png("%s-f04.png" % out_path)
-			await get_tree().create_timer(0.7).timeout       # 选角界面稳定
-			get_viewport().get_texture().get_image().save_png("%s-f05.png" % out_path)
-			print("[shot=flow] 已存 6 帧 → %s-fNN.png" % out_path)
+			await get_tree().create_timer(0.8).timeout
+			get_viewport().get_texture().get_image().save_png("%s-f00.png" % out_path)
+			var ex := LaunchMorphExit.new(lc2._sidebar, lc2._dialog, lc2)
+			var steps := [0.0, 0.18, 0.36, 0.52, 0.70, 0.88, 1.0]
+			for i in steps.size():
+				ex.debug_set_progress(float(steps[i]))
+				await get_tree().process_frame
+				await get_tree().process_frame
+				get_viewport().get_texture().get_image().save_png(
+						"%s-f%02d.png" % [out_path, i + 1])
+			print("[shot=flow] 已存 %d 帧 → %s-fNN.png" % [steps.size() + 1, out_path])
+		elif screen == "exitmorph":
+			# 主界面退出动画逐帧验收（2026-11-09）：真实 LaunchScreen 面板 + debug 定格
+			var lc3 := LaunchScreen.new()
+			_swap(lc3)
+			await get_tree().process_frame
+			lc3.expand()
+			await get_tree().create_timer(0.9).timeout
+			var ex := LaunchMorphExit.new(lc3._sidebar, lc3._dialog, lc3)
+			for i in 7:
+				ex.debug_set_progress([0.0, 0.18, 0.36, 0.45, 0.52, 0.72, 1.0][i])
+				await get_tree().process_frame
+				await get_tree().process_frame
+				get_viewport().get_texture().get_image().save_png(
+						"%s-f%02d.png" % [out_path, i])
+			print("[shot=exitmorph] 已存 7 帧 → %s-fNN.png" % out_path)
 		elif screen == "mosaic":
 			# 马赛克转场逐帧验收（2026-11-09）：在真实启动页画面（代码雨 + 对话框）上块化，
 			# 这才是主人实际看到的转场起点
