@@ -14,6 +14,7 @@ uniform float progress : hint_range(0.0, 1.0) = 0.0;
 uniform float aspect = 1.0;
 uniform vec4 slashes[5];
 uniform float seed_n = 0.0;
+uniform float debug_pieces = 0.0;   // 1 = 按碎块编号染色（仅验收用）
 
 float hash21(vec2 p) {
 	p = fract(p * vec2(234.34, 435.345));
@@ -60,26 +61,27 @@ void fragment() {
 	}
 
 	// ---- 2 该像素所属碎块 + 到「自己边界」的距离 ----
-	// 第 k 片的边界 = 画框四边 + d_0..d_k 这些切口线；残余中心块的边界 = 画框 + 全部 5 条线
-	float bd = 10.0;     // 到本块边界的最短距离（= 燃烧起点，外侧为 0）
-	float owner = -1.0;  // 所属块编号（-1 = 残余中心块）
+	// 第 k 片 = 前 k 刀全部保留（都在负侧）且第 k 刀切走（正侧）；
+	// 残余中心块 = 5 刀全部保留。逐刀扫描，先命中先归属。
+	float owner = -1.0;
 	float keep_all = 1.0;
+	float bd_edge = 1e5;   // 到「本块所有边界面」的最短距离
 	for (int k = 0; k < 5; k++) {
 		vec4 s = slashes[k];
 		float d = dot(q, s.xy) - s.z;
-		if (owner < 0.0) {
-			bd = min(bd, abs(d));                       // 这条切口线是本块的边界
-			if (keep_all > 0.5 && d > 0.0) {
-				owner = float(k);                       // 本块确定为第 k 片
-			} else {
-				keep_all *= (1.0 - step(0.0, d));
-			}
+		bool cut_here = (d > 0.0);
+		if (owner < -0.5 && keep_all > 0.5 && cut_here) {
+			owner = float(k);              // 归属该块（先命中先得）
 		}
+		if (owner < -0.5 || owner >= float(k) - 0.5) {
+			// 该块自己的切口 + 它之前的所有切口（keep 侧的边），都是它的边界
+			bd_edge = min(bd_edge, abs(d));
+		}
+		keep_all *= (1.0 - step(0.0, d));
 	}
-	// 边界只用切口线（不含画框边）：这样每条切口的**两侧**各烧各的，
-	// 接缝处两条火线相向推进/对撞，视觉上才看得出「碎块各自独立在烧」。
-	// 画框边只在不属于任何切口时兜底（避免最外层块永远烧不到）
-	bd = min(bd, 0.52);
+	// 画框四边同样是边界（碎块贴着画框的那几条边也要从边缘起烧）
+	bd_edge = min(bd_edge, min(0.5 * aspect - abs(q.x), 0.5 - abs(q.y)));
+	float bd = min(bd_edge, 0.52);
 
 	// 有机烧沿（每块自己的噪声相位，形态各异；速度仍统一）
 	float phase = (owner < 0.0) ? seed_n + 41.7 : owner * 13.7 + seed_n;
@@ -111,6 +113,29 @@ void fragment() {
 
 	// 焦黑退掉 -> 新立绘
 	col = mix(col, next_rgb, burned * (1.0 - char_t));
+
+	// 验收调试：按碎块编号染色（0..4 各色 + 残余块白色）
+	if (debug_pieces > 0.5) {
+		vec3 tint;
+		if (owner < 0.0) {
+			tint = vec3(1.0, 1.0, 1.0);          // 残余中心块 = 白
+		} else if (owner < 0.5) {
+			tint = vec3(1.0, 0.3, 0.3);          // 块0 = 红
+		} else if (owner < 1.5) {
+			tint = vec3(0.3, 1.0, 0.3);          // 块1 = 绿
+		} else if (owner < 2.5) {
+			tint = vec3(0.3, 0.5, 1.0);          // 块2 = 蓝
+		} else if (owner < 3.5) {
+			tint = vec3(1.0, 0.9, 0.3);          // 块3 = 黄
+		} else {
+			tint = vec3(0.9, 0.4, 1.0);          // 块4 = 紫
+		}
+		// 火焰前缘用暗色描一下，同时显示各块当前烧到哪
+		float flame_mark = (1.0 - burned) * (1.0 - smoothstep(0.0, 0.03, ahead));
+		tint = mix(tint, vec3(0.0), flame_mark * 0.9);
+		tint = mix(tint * 0.25, tint, 1.0 - burned * 0.85);
+		col = tint;
+	}
 
 	COLOR = vec4(col, 1.0);
 }

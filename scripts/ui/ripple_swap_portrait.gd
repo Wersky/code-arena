@@ -117,13 +117,20 @@ func swap_to(tex: Texture2D) -> void:
 func _apply_slash_params(shake: bool) -> void:
 	var rng := RandomNumberGenerator.new()
 	rng.randomize()
+	var asp := (size.x / size.y) if size.y > 0.0 else 0.75
 	var arr := PackedVector4Array()
-	var base_ang := rng.randf_range(0.0, 72.0)   ## 四面八方：法线角铺满 360°，每刀隔 72°
+	var base_ang := rng.randf_range(0.0, 360.0)
 	for k in 5:
-		## 均匀分布：方向四面八方 + 截距等距穿过画框，只留小抖动（不密、盖满全卡）
-		var ang := deg_to_rad(base_ang + k * 72.0 + rng.randf_range(-8.0, 8.0))
-		var c: float = -0.32 + k * 0.16 + rng.randf_range(-0.04, 0.04)
-		var delay: float = 0.04 + k * 0.05 + rng.randf_range(-0.008, 0.008)   ## 全部斩完 ≈0.25
+		# 法线角均匀铺满全向（每刀错 36°；法线翻转等价），加小抖动
+		var ang := deg_to_rad(base_ang + k * 36.0 + rng.randf_range(-10.0, 10.0))
+		# 关键：每条线**强制穿进画面内的一个分散点**——否则随机截距会让线落在画面外，
+		# 实际只切出 2~3 块（染色验收实锤）。5 条线都过画面 → 必然互相交叉切分。
+		var ring := deg_to_rad(base_ang * 1.7 + k * 72.0)
+		var rad := 0.10 + 0.16 * rng.randf()
+		var px := cos(ring) * rad * asp
+		var py := sin(ring) * rad
+		var c: float = px * cos(ang) + py * sin(ang)
+		var delay: float = 0.04 + k * 0.05 + rng.randf_range(-0.008, 0.008)
 		arr.append(Vector4(cos(ang), sin(ang), c, delay))
 	_mat.set_shader_parameter("slashes", arr)
 	_mat.set_shader_parameter("seed_n", rng.randf_range(0.0, 10.0))

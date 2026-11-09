@@ -731,7 +731,13 @@ func _maybe_capture() -> void:
 			var next_tex: Texture2D = load("res://assets/art/ai-%s.png" % style_name \
 					if style_name in ["kweno", "grock", "chatppt"] else "res://assets/art/ai-kweno.png")
 			rp.debug_prepare(load("res://assets/art/ai-deepdeek.png"), next_tex)
-			var ts := [0.0, 0.1, 0.22, 0.34, 0.46, 0.58, 0.72, 1.0]
+			var dbg_pieces := false
+			for a3 in OS.get_cmdline_user_args():
+				if a3 == "--ripdebug":
+					dbg_pieces = true
+			if dbg_pieces:
+				(rp._mat as ShaderMaterial).set_shader_parameter("debug_pieces", 1.0)
+			var ts := [0.0, 0.05, 0.12, 0.2, 0.28, 0.36, 0.44, 0.52, 0.6, 0.7, 0.8, 0.9, 1.0]
 			for i in ts.size():
 				rp.debug_set_progress(float(ts[i]))
 				await get_tree().process_frame
