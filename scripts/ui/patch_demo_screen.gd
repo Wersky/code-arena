@@ -881,7 +881,7 @@ func _build_morph_tab() -> void:
 	title.position = Vector2(24, 16)
 	root.add_child(title)
 
-	var info := UiKit.dim("动画分两段：① 左边框上边固定、下边向上挪（高度 900→300）；② 下边框先向左收到左下角，再上移贴到左边框下方、侧边对齐。全部 Tween 驱动，可重复播放。", 13,
+	var info := UiKit.dim("两个框同时收缩、各自收完即停：① 左边框上边固定、下边向上挪（900→300）；② 下边框向左收到左下角（右边线对齐原左边框右边线 x=256），再上移贴到左边框底部。全部 Tween 驱动，可重复播放。", 13,
 			Color(0.55, 0.68, 0.85))
 	info.position = Vector2(24, 42)
 	info.size = Vector2(966, 40)

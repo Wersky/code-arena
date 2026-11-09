@@ -1761,27 +1761,34 @@ func _test_panel_morph() -> void:
 	_check(is_equal_approx(sb_sz0.y, PanelMorphDemo.SIDEBAR_H), "初始左边框满高 900")
 	_check(is_equal_approx(dl_sz0.x, PanelMorphDemo.DIALOG_W), "初始下边框宽 880")
 
-	# 真点按钮：走完整 Tween 链路（不是 debug 快照）
+	# 真点按钮：走完整 Tween 链路（两个框同时开始）
 	v._btn.emit_signal("pressed")
-	await create_timer(0.35).timeout
-	var sb_mid: Vector2 = v._sidebar.size
-	_check(sb_mid.y < sb_sz0.y, "① 播放中左边框高度已在收缩")
+	await create_timer(0.30).timeout
+	_check(v._sidebar.size.y < sb_sz0.y, "① 播放中左边框高度已在收缩")
+	_check(v._dialog.size.x < dl_sz0.x, "② 播放中下边框宽度也已在收缩（两框同时进行）")
 	_check(is_equal_approx(v._sidebar.position.y, sb0.y), "① 收缩时上边固定不动（position.y 不变）")
 
-	await create_timer(0.5).timeout
-	var sb_sz1: Vector2 = v._sidebar.size
-	_check(absf(sb_sz1.y - 300.0) < 1.0, "① 左边框收到高度 300")
+	# 0.55s 左边框先收完并停住；此刻下边框第一段（0.45s）已结束、正在上移
+	await create_timer(0.50).timeout
+	_check(absf(v._sidebar.size.y - PanelMorphDemo.SIDEBAR_COMPACT_H) < 1.0, "① 左边框收到高度 300")
 	_check(is_equal_approx(v._sidebar.position.y, 0.0), "① 左边框顶边仍在 y=0")
+	_check(v._btn.disabled, "左框先结束时按钮仍锁着（另一个还没收完）")
+	var dl_right_mid: float = v._dialog.position.x + v._dialog.size.x
+	_check(absf(dl_right_mid - v._orig_sidebar_right()) < 1.0, "② 下边框右边线已对齐原左边框右边线")
 
-	await create_timer(1.3).timeout
+	# 全部收完
+	await create_timer(0.9).timeout
 	var dl1: Vector2 = v._dialog.position
 	var dl_sz1: Vector2 = v._dialog.size
-	_check(dl_sz1.x < dl_sz0.x, "② 下边框宽度已收窄")
-	_check(dl1.x < dl0.x, "② 下边框向左收拢")
-	_check(absf(dl1.x - v._sidebar.position.x) < 1.0, "② 下边框左边线与左边框对齐（x）")
-	_check(absf(dl1.y - (v._sidebar.position.y + v._sidebar.size.y + 12.0)) < 1.0,
-			"② 下边框上移贴到左边框底部下方")
-	_check(v._btn.disabled == false, "播放结束后按钮恢复可点")
+	_check(absf(dl_sz1.x - PanelMorphDemo.DIALOG_COMPACT_W) < 1.0, "② 下边框收到与原左边框同宽 232")
+	_check(absf((dl1.x + dl_sz1.x) - v._orig_sidebar_right()) < 1.0,
+			"② 右边线对齐原左边框右边线 x=256")
+	_check(absf(dl1.y - v._dialog_rise_y()) < 1.0, "② 下边框上移贴到左边框底部下方")
+	_check(not v._btn.disabled, "两个框都收完后按钮才恢复")
+	# 左边框收完后不再动（终态稳定）
+	_check(absf(v._sidebar.size.y - PanelMorphDemo.SIDEBAR_COMPACT_H) < 1.0
+			and absf(v._sidebar.size.x - PanelMorphDemo.SIDEBAR_COMPACT_W) < 1.0,
+			"① 左边框收完后保持终态不动")
 
 	# 复位可再来一次
 	v._reset_layout()
@@ -1793,7 +1800,8 @@ func _test_panel_morph() -> void:
 	v.debug_set_morph(0.0)
 	_check(is_equal_approx(v._sidebar.size.y, PanelMorphDemo.SIDEBAR_H), "debug p0 = 初始")
 	v.debug_set_morph(1.0)
-	_check(absf(v._sidebar.size.y - 300.0) < 1.0
-			and is_equal_approx(v._dialog.size.x, 320.0), "debug p1 = 终态")
+	_check(absf(v._sidebar.size.y - PanelMorphDemo.SIDEBAR_COMPACT_H) < 1.0
+			and absf((v._dialog.position.x + v._dialog.size.x) - v._orig_sidebar_right()) < 1.0,
+			"debug p1 = 终态（右对齐成立）")
 	v.queue_free()
 	await process_frame
