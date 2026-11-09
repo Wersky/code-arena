@@ -185,13 +185,14 @@ func _goto_character_select(default_ai_id: String) -> void:
 	mosaic.name = "ScreenMosaic"
 	add_child(mosaic)
 	mosaic.move_to_front()
-	# 抓帧要在面板动画**之前**：此时画面还是完整的主界面
-	await mosaic.grab()
-	# 面板退出动画（约 1.24s），两框一路飞出画面顶部
+	# ① 面板退出动画（约 1.24s）：两框收缩 → 蓄力 → 顶飞。
+	#    此时遮罩**不可见**（grab 只备图不显示），动画全程可见。
 	var sc_cur := _current as LaunchScreen
 	if sc_cur != null:
 		await sc_cur.play_exit_morph()
-	# 面板已出画 → 剩下的空背景逐渐马赛克化
+	# ② 面板飞走后再抓帧：抓的是「空背景」，这才是该被马赛克化的画面
+	await mosaic.grab()
+	# ③ 逐渐马赛克化（停在能看清方块颗粒的 PEAK_BLOCKS）
 	await mosaic.cover(0.5)
 	var sel := CharacterSelectScreen.new()
 	sel.setup(AiPool.all_ais())
@@ -762,9 +763,9 @@ func _maybe_capture() -> void:
 						"%s-f%02d.png" % [out_path, i])
 			print("[shot=morph] 已存 %d 帧 → %s-fNN.png" % [mts.size(), out_path])
 		elif screen == "flow":
-			# 端到端流程验收（2026-11-09）。
-			# 注意：实时连续抓帧在隐藏桌面下会拿到**过期缓冲**（实测 f01~f06 像素完全相同），
-			# 所以这里用「定格 + 每帧等两帧」的方式，保证抓到的就是该进度的真实画面。
+			# 端到端流程验收（2026-11-09）：面板动画 → 抓帧 → 马赛克 → 选角
+			# 注意：隐藏桌面实时抓帧会拿过期缓冲，所以分两段：
+			#   A 段用定格保证动画帧可信；B 段用真实流程验证顺序与马赛克
 			await get_tree().create_timer(0.5).timeout
 			var lc2 := _current as LaunchScreen
 			if lc2 == null:
@@ -774,15 +775,35 @@ func _maybe_capture() -> void:
 			lc2.expand()
 			await get_tree().create_timer(0.8).timeout
 			get_viewport().get_texture().get_image().save_png("%s-f00.png" % out_path)
+			# A 段：面板动画定格（f01~f06）
 			var ex := LaunchMorphExit.new(lc2._sidebar, lc2._dialog, lc2)
-			var steps := [0.0, 0.18, 0.36, 0.52, 0.70, 0.88, 1.0]
+			var steps := [0.18, 0.36, 0.52, 0.70, 0.88, 1.0]
 			for i in steps.size():
 				ex.debug_set_progress(float(steps[i]))
 				await get_tree().process_frame
 				await get_tree().process_frame
 				get_viewport().get_texture().get_image().save_png(
 						"%s-f%02d.png" % [out_path, i + 1])
-			print("[shot=flow] 已存 %d 帧 → %s-fNN.png" % [steps.size() + 1, out_path])
+			# B 段：真实流程（复位后点发送，验证「动画 → 马赛克」的顺序）
+			ex.restore_layout()
+			await get_tree().process_frame
+			await get_tree().process_frame
+			lc2._input.text = ""
+			lc2._send()
+			# 面板动画 1.24s → 抓帧 ~2 帧 → 马赛克 0.5s → 切界面 → reveal 0.5s
+			var log := FileAccess.open("res://.tmp/flow_seq.txt", FileAccess.WRITE)
+			for i in 8:
+				await get_tree().create_timer(0.22).timeout
+				get_viewport().get_texture().get_image().save_png(
+						"%s-b%02d.png" % [out_path, i])
+				if log != null:
+					var cur := _current
+					log.store_line("b%02d scene=%s" % [i, cur.get_class() if cur != null else "null"])
+			if log != null:
+				log.close()
+			await get_tree().create_timer(1.2).timeout
+			get_viewport().get_texture().get_image().save_png("%s-b08.png" % out_path)
+			print("[shot=flow] 已存 A:7 + B:9 帧 → %s-f%02d / %s-b%02d" % [out_path, 0, out_path, 0])
 		elif screen == "exitmorph":
 			# 主界面退出动画逐帧验收（2026-11-09）：真实 LaunchScreen 面板 + debug 定格
 			var lc3 := LaunchScreen.new()
@@ -799,32 +820,24 @@ func _maybe_capture() -> void:
 						"%s-f%02d.png" % [out_path, i])
 			print("[shot=exitmorph] 已存 7 帧 → %s-fNN.png" % out_path)
 		elif screen == "mosaic":
-			# 马赛克转场逐帧验收（2026-11-09）：在真实启动页画面（代码雨 + 对话框）上块化，
-			# 这才是主人实际看到的转场起点
+			# 马赛克逐档定格验收（2026-11-09）：每档等两帧再抓，避开过期缓冲
 			var sc2 := LaunchScreen.new()
 			_swap(sc2)
 			await get_tree().process_frame
 			sc2.expand()
-			await get_tree().create_timer(1.2).timeout
-			await get_tree().process_frame
-			var mosaic := ScreenMosaic.new()
-			add_child(mosaic)
-			mosaic.move_to_front()
-			await mosaic.grab()
-			var dbg := FileAccess.open("res://.tmp/mosaic_dbg.txt", FileAccess.WRITE)
-			if dbg != null:
-				dbg.store_line("has_snapshot=%s size=%s mosaic_size=%s rect_size=%s" % [
-					mosaic.has_snapshot(), mosaic.size, 
-					(mosaic._tex_rect.size if mosaic._tex_rect != null else Vector2.ZERO),
-					(mosaic._snapshot.get_size() if mosaic._snapshot != null else Vector2i.ZERO)])
-				dbg.close()
-			for i in 7:
-				mosaic.debug_set_step([0, 3, 5, 7, 9, 12, 0][i])
+			await get_tree().create_timer(1.0).timeout
+			var mz := ScreenMosaic.new()
+			add_child(mz)
+			mz.move_to_front()
+			await mz.grab()
+			var steps := [400, 200, 120, 72, 48]
+			for i in steps.size():
+				mz.debug_set_blocks(int(steps[i]))
 				await get_tree().process_frame
 				await get_tree().process_frame
 				get_viewport().get_texture().get_image().save_png(
 						"%s-f%02d.png" % [out_path, i])
-			print("[shot=mosaic] 已存 7 帧 → %s-fNN.png" % out_path)
+			print("[shot=mosaic] 已存 %d 档 → %s-fNN.png" % [steps.size(), out_path])
 		elif screen == "select":
 			# 选角界面验收（2026-11-09）：
 			#   -f00 布局 / -f01..04 四个角色各自的转场中段

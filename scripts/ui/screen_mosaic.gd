@@ -19,11 +19,12 @@ extends Control
 ## 所以 cover() 是 FINE→COARSE，reveal() 是 COARSE→FINE。
 const FINE_BLOCKS := 400     ## 清晰档（>= 屏幕像素列数即完全清晰，400 足够）
 const COARSE_BLOCKS := 1     ## 极限档：整屏一块（**转场不使用**，见 PEAK_BLOCKS）
-## 转场实际峰值：横排 26 块（1600 宽下约 62px 一块）。
+## 转场实际峰值：横排 48 块（1600 宽下约 33px 一块）。
 ## 为什么不用 COARSE_BLOCKS=1：整屏变成一个平均色时看起来只是「淡出成纯色」，
 ## 看不出任何马赛克 —— 主人反馈「马赛克化没出现」正是此因。
-## 停在 26 块能清楚看到方块颗粒，同时细节已糊到认不出。
-const PEAK_BLOCKS := 26
+## 48 块：方块颗粒清楚可辨，画面结构（面板轮廓、代码雨分布）仍在，
+## 不会糊成一片深色让观众以为"画面灭了"。
+const PEAK_BLOCKS := 48
 ## 过渡阶梯：索引 0 = 清晰，末尾 = 最糊
 const STEPS := [400, 160, 96, 64, 44, 30, 20, 13, 8, 5, 3, 2, 1]
 
@@ -77,7 +78,9 @@ func _apply_blocks(blocks: int) -> void:
 	small.resize(sw, sh, Image.INTERPOLATE_NEAREST)
 	_tex_rect.texture = ImageTexture.create_from_image(small)
 	_cur_blocks = w
-	visible = true
+	# 注意：这里**不**设 visible。可见性必须由调用方显式控制。
+	# 早期版本在此 visible=true，导致 grab() 抓完帧就把遮罩盖上去，
+	# 后面的面板退出动画全在冻结截图底下播、观众完全看不见（主人实测反馈）。
 
 
 ## 块化：画面逐渐糊掉（blocks FINE → PEAK，停在能看清方块颗粒的档位）
@@ -139,11 +142,13 @@ func debug_set_step(index: int) -> void:
 		return
 	var i: int = clampi(index, 0, STEPS.size() - 1)
 	_apply_blocks(int(STEPS[i]))
+	visible = true
 
 
 ## 调试用：块数直接给（1..48）
 func debug_set_blocks(blocks: int) -> void:
 	_apply_blocks(maxi(1, blocks))
+	visible = true      # 调试接口：设了块数就是要看，必须显示
 
 
 func has_snapshot() -> bool:
