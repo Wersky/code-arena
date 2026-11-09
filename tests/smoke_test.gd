@@ -1862,42 +1862,50 @@ func _test_mosaic_and_select() -> void:
 	_check(sel._start_btn != null, "右下角「开始游戏」已建")
 	_eq(sel.current_id(), "deepdeek", "默认选中第 1 位 DeepDeek")
 
-	# 一人一款转场：4 个风格各不相同
-	var styles := {}
-	for i in 4:
-		styles[int(CharacterSelectScreen.TRANSITION_STYLE[i])] = true
-	_eq(styles.size(), 4, "4 位角色各配一款不同转场")
-	_eq(int(CharacterSelectScreen.TRANSITION_STYLE[0]), RippleSwapPortrait.Style.RIPPLE,
-			"DeepDeek = 水波")
-	_eq(int(CharacterSelectScreen.TRANSITION_STYLE[1]), RippleSwapPortrait.Style.FAN,
-			"Kweno = 折扇")
-	_eq(int(CharacterSelectScreen.TRANSITION_STYLE[2]), RippleSwapPortrait.Style.HEX,
-			"ChatPPT = 龙鳞")
-	_eq(int(CharacterSelectScreen.TRANSITION_STYLE[3]), RippleSwapPortrait.Style.SLASH,
-			"Grock = 乱斩")
+	# ── 选框：切换时**直接换图**（不播转场）──
+	# 一轮曾用 RippleSwapPortrait 播一人一款转场，主人 2026-11-09 二次修订要求去掉
+	var thumb0: Texture2D = sel._thumb.texture
+	_check(thumb0 != null, "选框内小立绘已显示")
+	_check(sel._thumb is TextureRect, "选框是普通 TextureRect（非转场控件）")
 
-	# 切换：点右箭头走到第 2 位，圆点跟着走
+	# ── 背景：大立绘铺满全屏 ──
+	_check(sel._bg_layer != null, "背景大立绘层已建")
+	_check(sel._bg_layer.size.x > 1000.0 and sel._bg_layer.size.y > 500.0,
+			"背景层铺满全屏（%s）" % sel._bg_layer.size)
+	_eq(int(sel._bg_layer.stretch_mode), int(TextureRect.STRETCH_KEEP_ASPECT_COVERED),
+			"背景等比覆盖不变形")
+	_check(sel._bg_layer.texture != null, "背景已载入大立绘")
+	_check(String(AiPool.get_ai("deepdeek").bust_path) != "", "大立绘路径已接入 bust_path")
+
+	# 切换：选框立即换图、背景立即换图（无转场状态）
 	var before_idx: int = sel.current_index()
 	sel._right_btn.emit_signal("pressed")
 	await process_frame
 	_check(sel.current_index() != before_idx, "点右箭头切换到下一位")
 	_eq(sel.current_id(), "kweno", "切到第 2 位 Kweno")
-	# 转场期间不允许连点（防状态错乱）
-	_check(sel._swapping, "切换中 _swapping 置位（连点被挡）")
-	await create_timer(0.9).timeout
-	_check(not sel._swapping, "转场结束后解锁")
+	_check(sel._thumb.texture != thumb0, "选框立绘已直接换掉")
+	_check(not sel._busy, "切换不进入忙碌态（无转场，可立即再切）")
+	var thumb1: Texture2D = sel._thumb.texture
+	sel._right_btn.emit_signal("pressed")
+	await process_frame
+	_check(sel._thumb.texture != thumb1, "连续切换无需等待（连点有效）")
+	_eq(sel.current_id(), "chatppt", "连点后到第 3 位")
+	# 切回第一位
+	sel._left_btn.emit_signal("pressed")
+	sel._left_btn.emit_signal("pressed")
+	await process_frame
+	_eq(sel.current_id(), "deepdeek", "左箭头可切回")
 
 	# 开始游戏按钮发信号
 	var started := [""]
 	sel.started.connect(func(id: String) -> void: started[0] = id)
 	sel._start_btn.emit_signal("pressed")
 	await process_frame
-	_eq(started[0], "kweno", "开始游戏带回当前选中角色 id")
+	_eq(started[0], sel.current_id(), "开始游戏带回当前选中角色 id")
 
-	# 立绘等比适配：宽度不超出框、不拉伸
-	_check(sel._swap_view.size.x <= CharacterSelectScreen.FRAME_W + 0.5
-			and sel._swap_view.size.y <= CharacterSelectScreen.FRAME_H + 0.5,
-			"立绘等比适配后不超出框")
+	# 选框立绘等比适配（KEEP_ASPECT_CENTERED 由 TextureRect 负责，不会拉伸）
+	_eq(int(sel._thumb.stretch_mode), int(TextureRect.STRETCH_KEEP_ASPECT_CENTERED),
+			"选框立绘等比居中不拉伸")
 	sel.queue_free()
 	await process_frame
 

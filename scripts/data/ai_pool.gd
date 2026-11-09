@@ -16,6 +16,16 @@ const UNLOCK_AT := {
 ## 锁定态剪影图（不换资源，由 UI 把形象替换成这张纯黑剪影）
 const LOCKED_SILHOUETTE := "res://assets/art/ai-locked.png"
 
+## 选角界面背景用的大立绘（铺满全屏）：按 id 索引。
+## 主人后续提供正式全屏大图 → 放进 assets/art/big/ 并改这里即可，
+## 缺文件时 CharacterSelectScreen 自动退回小立绘放大，不会报错。
+const BIG_PORTRAITS := {
+	"deepdeek": "res://assets/art/select/deepseek.png",
+	"kweno": "res://assets/art/select/qwen.png",
+	"chatppt": "res://assets/art/select/gpt.png",
+	"grock": "res://assets/art/select/grok.png",
+}
+
 ## 4 位 AI 娘，顺序固定：DeepDeek / Kweno / ChatPPT / Grock
 static func all_ais() -> Array[AiData]:
 	var out: Array[AiData] = []
@@ -117,7 +127,7 @@ static func _make(id: String, display_name: String, family: String, tint: Color,
 	a.locked = locked
 	a.taste_rules = taste
 	a.intro_line = intro
-	a.bust_path = ""
+	a.bust_path = String(BIG_PORTRAITS.get(id, ""))
 	a.unlock_hint = hint
 	a.prototype_note = note
 	return a
