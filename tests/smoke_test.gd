@@ -1910,36 +1910,43 @@ func _test_mosaic_and_select() -> void:
 	_check(sel._start_btn != null, "右下角「开始游戏」已建")
 	_eq(sel.current_id(), "deepdeek", "默认选中第 1 位 DeepDeek")
 
-	# ── 选框：切换时**直接换图**（不播转场）──
-	# 一轮曾用 RippleSwapPortrait 播一人一款转场，主人 2026-11-09 二次修订要求去掉
-	var thumb0: Texture2D = sel._thumb.texture
-	_check(thumb0 != null, "选框内小立绘已显示")
-	_check(sel._thumb is TextureRect, "选框是普通 TextureRect（非转场控件）")
-
-	# ── 背景：大立绘铺满全屏 ──
-	_check(sel._bg_layer != null, "背景大立绘层已建")
+	# ── 三轮修订（2026-11-09 主人要求）──
+	# 去掉左上角介绍文字、左侧小立绘选框、背景暗纱；圆点与箭头移到底部居中
+	var sel_src := FileAccess.get_file_as_string("res://scripts/ui/character_select_screen.gd")
+	_check(not sel_src.contains("_name_lbl"), "左上角角色名已移除")
+	_check(not sel_src.contains("_family_lbl"), "家族标签已移除")
+	_check(not sel_src.contains("_intro_lbl"), "一句话介绍已移除")
+	_check(not sel_src.contains("_bg_dim"), "背景暗纱已移除（保持原图明度）")
+	_check(not sel_src.contains("_thumb"), "左侧小立绘选框已移除")
+	_check(sel._bg_layer != null, "背景大立绘层仍在")
 	_check(sel._bg_layer.size.x > 1000.0 and sel._bg_layer.size.y > 500.0,
 			"背景层铺满全屏（%s）" % sel._bg_layer.size)
 	_eq(int(sel._bg_layer.stretch_mode), int(TextureRect.STRETCH_KEEP_ASPECT_COVERED),
 			"背景等比覆盖不变形")
 	_check(sel._bg_layer.texture != null, "背景已载入大立绘")
-	_check(String(AiPool.get_ai("deepdeek").bust_path) != "", "大立绘路径已接入 bust_path")
 
-	# 切换：选框立即换图、背景立即换图（无转场状态）
+	# 圆点+箭头在底部水平居中
+	_check(sel._dots.size() == 4, "底部 4 个位置点")
+	var dot_row: Control = sel._dots[0].get_parent() as Control
+	_check(dot_row != null, "圆点行容器存在")
+	var row_center: float = dot_row.position.x + dot_row.size.x * 0.5
+	_check(absf(row_center - 800.0) < 2.0,
+			"圆点行水平居中（中心 x=%.0f，应为 800）" % row_center)
+	_check(dot_row.position.y > 700.0,
+			"圆点行在底部（y=%.0f > 700）" % dot_row.position.y)
+	_check(sel._left_btn != null and sel._right_btn != null, "左右切换箭头仍在")
+
+	# 切换：背景立即换图，指示器跟随
+	var bg0: Texture2D = sel._bg_layer.texture
 	var before_idx: int = sel.current_index()
 	sel._right_btn.emit_signal("pressed")
 	await process_frame
 	_check(sel.current_index() != before_idx, "点右箭头切换到下一位")
 	_eq(sel.current_id(), "kweno", "切到第 2 位 Kweno")
-	_check(sel._thumb.texture != thumb0, "选框立绘已直接换掉")
-	_check(not sel._busy, "切换不进入忙碌态（无转场，可立即再切）")
-	var thumb1: Texture2D = sel._thumb.texture
-	sel._right_btn.emit_signal("pressed")
-	await process_frame
-	_check(sel._thumb.texture != thumb1, "连续切换无需等待（连点有效）")
-	_eq(sel.current_id(), "chatppt", "连点后到第 3 位")
+	_check(sel._bg_layer.texture != bg0, "背景大立绘已直接换掉")
+	_check(sel._left_btn != null, "左箭头仍可切回")
+
 	# 切回第一位
-	sel._left_btn.emit_signal("pressed")
 	sel._left_btn.emit_signal("pressed")
 	await process_frame
 	_eq(sel.current_id(), "deepdeek", "左箭头可切回")
@@ -1951,9 +1958,9 @@ func _test_mosaic_and_select() -> void:
 	await process_frame
 	_eq(started[0], sel.current_id(), "开始游戏带回当前选中角色 id")
 
-	# 选框立绘等比适配（KEEP_ASPECT_CENTERED 由 TextureRect 负责，不会拉伸）
-	_eq(int(sel._thumb.stretch_mode), int(TextureRect.STRETCH_KEEP_ASPECT_CENTERED),
-			"选框立绘等比居中不拉伸")
+	# 背景大立绘等比覆盖由 COVERED 保证（已在上面断言过），这里只确认一次
+	_eq(int(sel._bg_layer.stretch_mode), int(TextureRect.STRETCH_KEEP_ASPECT_COVERED),
+			"背景大立绘等比覆盖不拉伸（复核）")
 	sel.queue_free()
 	await process_frame
 
