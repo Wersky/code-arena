@@ -35,6 +35,33 @@ static var select_swap_time := {
 const SELECT_SWAP_MIN := 0.20
 const SELECT_SWAP_MAX := 3.00
 
+## ── 选角大立绘「呼吸」参数（2026-11-09，F1 呼吸调试面板 BreathDebugPanel）──
+## 四人共用这一组基线；各自错相由 CharacterSelectScreen 按角色下标叠加，不在这里存。
+## mode: 0 = UV 微起伏（默认）｜1 = 仅整图缩放｜2 = 关闭
+## 注意：这是**新增**键，不是改默认值 —— 缺项时 get_value 会回落默认，
+## 所以 CFG_VERSION 保持 3 不变（若 +1 会触发下面 v2 迁移把 term_fullscreen 重置成 true，
+## 反而把主人选过的「铺满屏幕」冲掉）。
+## 默认值单独立成常量：load 时的 fallback 必须用**常量**，不能用 static var 自己
+## （否则内存里被改脏过就再也回不到出厂值了，实测踩过）。
+const BREATH_AMP_DEF := 0.008   ## 位移幅度（UV 单位，0.008 = 0.8%）
+const BREATH_PERIOD_DEF := 4.0  ## 周期（秒）
+const BREATH_PHASE_DEF := 0.0   ## 基准相位（0~1，1 = 一个整周期）
+const BREATH_MODE_DEF := 0      ## 0=UV 微起伏 1=仅整图缩放 2=关闭
+
+static var breath_amp := BREATH_AMP_DEF
+static var breath_period := BREATH_PERIOD_DEF
+static var breath_phase := BREATH_PHASE_DEF
+static var breath_mode := BREATH_MODE_DEF
+
+## 面板滑杆的取值范围（唯一真相，BreathDebugPanel 直接引用）
+const BREATH_AMP_MIN := 0.0
+const BREATH_AMP_MAX := 0.03
+const BREATH_PERIOD_MIN := 1.0
+const BREATH_PERIOD_MAX := 8.0
+const BREATH_PHASE_MIN := 0.0
+const BREATH_PHASE_MAX := 1.0
+const BREATH_MODE_MAX := 2
+
 
 static func load_from_disk() -> void:
 	var cfg := ConfigFile.new()
@@ -48,6 +75,15 @@ static func load_from_disk() -> void:
 	for k in select_swap_time.keys():
 		var v := float(cfg.get_value("select_swap", String(k), float(select_swap_time[k])))
 		select_swap_time[k] = clampf(v, SELECT_SWAP_MIN, SELECT_SWAP_MAX)
+	# 立绘呼吸参数（独立 section；本项**新增**，老配置取不到就回落常量默认，无需迁移）
+	breath_amp = clampf(float(cfg.get_value("breath", "amp", BREATH_AMP_DEF)),
+			BREATH_AMP_MIN, BREATH_AMP_MAX)
+	breath_period = clampf(float(cfg.get_value("breath", "period", BREATH_PERIOD_DEF)),
+			BREATH_PERIOD_MIN, BREATH_PERIOD_MAX)
+	breath_phase = clampf(float(cfg.get_value("breath", "phase", BREATH_PHASE_DEF)),
+			BREATH_PHASE_MIN, BREATH_PHASE_MAX)
+	breath_mode = clampi(int(cfg.get_value("breath", "mode", BREATH_MODE_DEF)),
+			0, BREATH_MODE_MAX)
 	if ver < CFG_VERSION:
 		# v2：窗口模式默认改成真全屏。老配置只迁移这一次，之后主人自己切就尊重设置。
 		term_fullscreen = true
@@ -62,6 +98,10 @@ static func save_to_disk() -> void:
 	cfg.set_value("ripple", "swap_time", ripple_swap_time)
 	for k in select_swap_time.keys():
 		cfg.set_value("select_swap", String(k), float(select_swap_time[k]))
+	cfg.set_value("breath", "amp", breath_amp)
+	cfg.set_value("breath", "period", breath_period)
+	cfg.set_value("breath", "phase", breath_phase)
+	cfg.set_value("breath", "mode", breath_mode)
 	cfg.save(PATH)
 
 
@@ -78,6 +118,25 @@ static func set_select_time(style_key: String, sec: float) -> void:
 		return
 	select_swap_time[style_key] = clampf(sec, SELECT_SWAP_MIN, SELECT_SWAP_MAX)
 	save_to_disk()
+
+
+## ── 立绘呼吸参数（F1 面板用；四个值一次写清，避免滑杆连拖时刷 4 次盘）──
+## 注意：**不自动存盘**，由调用方决定何时 save_to_disk()（面板在拖动结束时存）。
+static func set_breath(p_amp: float, p_period: float, p_phase: float, p_mode: int) -> void:
+	breath_amp = clampf(p_amp, BREATH_AMP_MIN, BREATH_AMP_MAX)
+	breath_period = clampf(p_period, BREATH_PERIOD_MIN, BREATH_PERIOD_MAX)
+	breath_phase = clampf(p_phase, BREATH_PHASE_MIN, BREATH_PHASE_MAX)
+	breath_mode = clampi(p_mode, 0, BREATH_MODE_MAX)
+
+
+## 呼吸参数快照（键名与 BreathDebugPanel.get_params() 一致）
+static func breath_params() -> Dictionary:
+	return {
+		"amp": breath_amp,
+		"period": breath_period,
+		"phase": breath_phase,
+		"mode": breath_mode,
+	}
 
 
 static func speed_name() -> String:

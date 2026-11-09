@@ -15,6 +15,11 @@ extends Control
 ##                      素材已换成 1600x900 与画布同比，转场控件可直接 UV 采样
 ##
 ## 布局基准 1600×900。
+##
+## 五轮（2026-11-09 integrate）：**大立绘加呼吸**。做法与理由见 PortraitBreathLayer 文件头：
+##   RippleSwapPortrait 内部是独占材质的全屏不透明 ColorRect，所以呼吸只能做成它的**子节点**
+##   （后入树 = 画在上面），转场期间整体隐藏，转场结束换图后 0.15s 淡入接管。
+##   四人各自错相（第 i 位 = i/4 周期），切角色不重置相位；参数来自 F2 呼吸面板。
 
 signal started(ai_id: String)
 signal back_requested
@@ -37,11 +42,25 @@ const TRANSITION_STYLE := [
 ## 转场时长从 GameSettings 按风格单独取（左下角调参器可调、跨启动记住）
 const STYLE_KEYS := ["ripple", "fan", "hex", "slash"]   ## 与 TRANSITION_STYLE 一一对应
 
+## 呼吸遮罩（生图灰度图，白区 = 位移大）：按**角色 id** 索引，与上面的大立绘一一对应。
+## 注意 id 与美术原型名不是同名映射（AiPool.BIG_PORTRAITS 里 deepdeek→deepseek、
+## kweno→qwen、chatppt→gpt、grock→grok），遮罩跟着原型名走。
+## 缺文件时该角色自动降级纯 shader（use_region=false），不报错。
+const BREATH_MASKS := {
+	"deepdeek": "res://assets/art/select/mask-deepseek.png",
+	"kweno": "res://assets/art/select/mask-qwen.png",
+	"chatppt": "res://assets/art/select/mask-gpt.png",
+	"grock": "res://assets/art/select/mask-grok.png",
+}
+
 var _ais: Array[AiData] = []
 var _big_texs: Array[Texture2D] = []         ## 铺满全屏的大立绘
+var _big_masks: Array[Texture2D] = []        ## 与 _big_texs 一一对应的呼吸遮罩（可为 null）
 var _idx := 0
 
 var _bg_layer: RippleSwapPortrait = null     ## 背景大立绘（带一人一款转场）
+var _breath: PortraitBreathLayer = null      ## 呼吸层（_bg_layer 的子节点，画在它上面）
+var _breath_panel: BreathDebugPanel = null   ## F2 呼吸调试面板
 var _swapping := false
 
 ## 左下角调参器（Notes：只在选角界面出现，调整即时生效并落盘）
@@ -74,12 +93,15 @@ func _ready() -> void:
 func setup(ais: Array[AiData]) -> void:
 	_ais = ais
 	_big_texs.clear()
+	_big_masks.clear()
 	for a in _ais:
 		# 大立绘优先用 bust_path（全屏大图），没有就退回小立绘
 		var big := _load_tex(a.bust_path)
 		if big == null:
 			big = _load_tex(a.portrait_path)
 		_big_texs.append(big)
+		# 呼吸遮罩按 id 查表；缺文件返回 null，呼吸层自动降级纯 shader
+		_big_masks.append(_load_tex(String(BREATH_MASKS.get(a.id, ""))))
 	if is_inside_tree():
 		_build()
 
@@ -109,20 +131,39 @@ func _build() -> void:
 	_build_dots()
 	_build_start()
 	_build_tuner()
+	_build_breath_panel()   # 最后挂：F2 面板永远在所有控件之上
 	_refresh()
 
 
 # ── 背景：当前角色大立绘铺满全屏（无暗纱，带一人一款转场）──
 func _build_background() -> void:
-	_bg_layer = RippleSwapPortrait.new()
-	_bg_layer.name = "BigPortraitBg"
-	_bg_layer.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-	_bg_layer.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	# _build 可能被跑两次（_ready 一次、之后 setup() 再一次）：背景层只建一次，
+	# 否则会叠出两层转场、两层呼吸，既费资源又会看到鬼影。
+	if _bg_layer == null or not is_instance_valid(_bg_layer):
+		_bg_layer = RippleSwapPortrait.new()
+		_bg_layer.name = "BigPortraitBg"
+		_bg_layer.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+		_bg_layer.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		_bg_layer.swap_finished.connect(_on_swap_finished)
+		add_child(_bg_layer)
+		_build_breath()
 	_bg_layer.swap_time = _swap_time_for(_idx)
 	_bg_layer.style = int(TRANSITION_STYLE[_idx % TRANSITION_STYLE.size()])
-	_bg_layer.swap_finished.connect(func() -> void: _swapping = false)
-	add_child(_bg_layer)
 	_bg_layer.set_portrait(_big_texs[_idx])
+	_sync_breath_char()
+
+
+## 呼吸层：作为 _bg_layer 的**子节点**后挂 → 画在 RippleRect 之上。
+## 为什么不做成兄弟节点：兄弟要靠 z_index 抢层序，而 _bg_layer 的 SLASH 风格还会在
+## 转场时抖动自身 position，挂成子节点能自动跟着走，层序也天然正确。
+func _build_breath() -> void:
+	if is_instance_valid(_breath) and _breath.get_parent() == _bg_layer:
+		return
+	_breath = PortraitBreathLayer.new()
+	_breath.name = "PortraitBreath"
+	_breath.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_bg_layer.add_child(_breath)
+	_sync_breath_char()
 
 
 # ── 底部居中：箭头 + 圆点 ──
@@ -273,6 +314,7 @@ func _refresh(animate_bg: bool = false) -> void:
 	_refresh_dots()
 	if _bg_layer != null and not animate_bg:
 		_bg_layer.set_portrait(_big_texs[_idx])
+		_sync_breath_char()
 
 
 ## 切到第 next 位：用**目标角色**的专属转场播过去
@@ -284,10 +326,38 @@ func _swap_to_character(next: int) -> void:
 	if _bg_layer == null:
 		return
 	_swapping = true
+	# 转场期间呼吸层让位：两个动画同时改同一张画面会打架（呼吸的采样 UV 与转场的
+	# tex_prev/tex_next 双图语义不兼容），等转场播完再淡入接管新图。
+	if _breath != null:
+		_breath.visible = false
 	# 风格取**目标角色**的专属款：切过去时呈现的是它
 	_bg_layer.style = int(TRANSITION_STYLE[next % TRANSITION_STYLE.size()])
 	_bg_layer.swap_time = _swap_time_for(next)
 	_bg_layer.swap_to(_big_texs[next])
+
+
+## 转场结束：解锁连点 + 呼吸层接管新立绘
+func _on_swap_finished() -> void:
+	_swapping = false
+	_sync_breath_char()
+	if _breath == null or not _breath.has_portrait():
+		return
+	# 淡入而不是硬切：转场末帧与新图相同，但相位可能正在半周期，直接显会看到一下跳变
+	_breath.visible = true
+	_breath.modulate.a = 0.0
+	var tw := create_tween()
+	tw.tween_property(_breath, "modulate:a", 1.0, 0.15)
+
+
+## 把当前角色的立绘/遮罩/错相下标推给呼吸层
+func _sync_breath_char() -> void:
+	if _breath == null or _big_texs.is_empty():
+		return
+	var i := clampi(_idx, 0, _big_texs.size() - 1)
+	var mask: Texture2D = null
+	if i < _big_masks.size():
+		mask = _big_masks[i]
+	_breath.set_character(i, _big_texs[i], mask)
 
 
 ## 左右切换
@@ -300,3 +370,67 @@ func _step(dir: int) -> void:
 ## 供测试/调试：直接切到第 i 位（走转场）
 func select_by_index(i: int) -> void:
 	_swap_to_character(i)
+
+
+# ── F2 呼吸调试面板（2026-11-09）：挂在本界面右上角，与 UiTuner 的 F1 互不冲突 ──
+func _build_breath_panel() -> void:
+	if _breath_panel != null:
+		return
+	_breath_panel = BreathDebugPanel.new()
+	_breath_panel.name = "BreathDebugPanel"
+	add_child(_breath_panel)
+	_breath_panel.params_changed.connect(_on_breath_params_changed)
+	# 启动回填：用存档值显式 set_params(..., emit_changed=false) —— 只同步面板 UI，
+	# **不发信号**，所以开局不会因为回填把呼吸重播/重置相位。回填完再手动推一次
+	# 给呼吸层（这条路径不发信号，必须显式调）。
+	var sp := GameSettings.breath_params()
+	var sp_amp := float(sp.get("amp", GameSettings.BREATH_AMP_DEF))
+	var sp_per := float(sp.get("period", GameSettings.BREATH_PERIOD_DEF))
+	var sp_ph := float(sp.get("phase", GameSettings.BREATH_PHASE_DEF))
+	var sp_md := int(sp.get("mode", GameSettings.BREATH_MODE_DEF))
+	_breath_panel.set_params(sp_amp, sp_per, sp_ph, sp_md, false)
+	_on_breath_params_changed(sp_amp, sp_per, sp_ph, sp_md)
+
+
+## 面板参数变化 → 呼吸层即时生效（周期变了 Tween 会重建，但相位连续，见呼吸层注释）
+func _on_breath_params_changed(a: float, per: float, ph: float, m: int) -> void:
+	if _breath == null:
+		return
+	_breath.set_params(a, per, ph, m)
+
+
+## 供测试/调试：开关呼吸面板（等同按一下 F2）
+func toggle_breath_panel(force: Variant = null) -> bool:
+	if _breath_panel == null:
+		return false
+	var v := (not _breath_panel.visible) if force == null else bool(force)
+	_breath_panel.set_visible_state(v)
+	return _breath_panel.visible
+
+
+# ── 截图验收接口（verify 任务用）──────────────────────────────────────────
+## 定格呼吸到某个进度（0..1）。p < 0 表示恢复自动呼吸。
+## 定格期间 Tween 的写入被忽略，画面停在该相位，适合截图逐帧比对。
+func debug_set_breath(p: float, amp_override: float = -1.0) -> void:
+	if _breath == null:
+		return
+	if amp_override >= 0.0:
+		_breath.set_params(amp_override, _breath.period, _breath.base_phase, _breath.mode)
+	if p < 0.0:
+		_breath.debug_resume_breath()
+	else:
+		_breath.debug_set_breath(p)
+
+
+## 呼吸层当前状态快照（smoke / verify 断言都读它，避免直接摸私有字段）
+func breath_state() -> Dictionary:
+	if _breath == null:
+		return {}
+	return _breath.breath_state()
+
+
+## 呼吸面板当前参数（没挂面板时返回 GameSettings 里的值）
+func breath_panel_params() -> Dictionary:
+	if _breath_panel == null:
+		return GameSettings.breath_params()
+	return _breath_panel.get_params()

@@ -16,6 +16,17 @@ func _initialize() -> void:
 	_host.size = Vector2(1920, 1080)
 	get_root().add_child(_host)
 
+	# ── 先读盘一次：让内存基线 = 磁盘，后面任何 save_to_disk() 都只是原样写回 ──
+	# 为什么需要这一句（2026-11-09 smoke 任务实测）：
+	#   GameSettings 的静态字段出厂即默认值，测试里有多处 save_to_disk()（调参器断言、
+	#   呼吸持久化断言）。save_to_disk 会把**全量内存值**写回配置文件——包括本测试
+	#   从没碰过的 term_speed / ripple_swap_time。若内存仍是出厂默认，就会把主人调好的
+	#   值抹平。实测：盘上写 ripple=1.50 / speed=2，只在**没实例化 main.gd** 的情况下
+	#   跑保存路径 → 变成 0.85 / 0；而完整 smoke 里 _test_screen_router 会 new 一个
+	#   main.gd（其 _ready 自己 load_from_disk），于是"碰巧"被救回来。
+	#   靠执行顺序保命太脆：这里显式 load 一次，把安全性从"碰巧"变成"必然"。
+	GameSettings.load_from_disk()
+
 	_test_sts_cards()
 	_test_level_pool()
 	_test_sts_combat()
@@ -38,6 +49,7 @@ func _initialize() -> void:
 	await _test_ripple_swap()
 	await _test_panel_morph()
 	await _test_mosaic_and_select()
+	await _test_breath()
 	await _test_patch_demo()
 	_test_affection_system()
 	await _test_shop_gifts()
@@ -2059,3 +2071,269 @@ func _test_mosaic_and_select() -> void:
 	_check(not fired[0].is_empty(), "输入框空着也能发送（进选角）")
 	lc.queue_free()
 	await process_frame
+
+
+# ── ⑯ 立绘呼吸（2026-11-09 integrate 五轮：大立绘呼吸 + F2 调试面板）──────
+## 覆盖三层：shader 资源本身 / BreathDebugPanel 契约 / CharacterSelectScreen 接线。
+## 关键回归：呼吸接进来之后，原来的「一人一款转场」不能被打坏（_bg_layer.style 仍要跟着角色走）。
+func _test_breath() -> void:
+	print("[立绘呼吸]")
+	# 本段必须真的落盘再读回才能证明 [breath] 段生效，因此会写主人的真实配置文件。
+	# 收尾处用内存值还原，并用**原始字节**快照逐行核对「[breath] 以外的设置没被顺手改掉」。
+	# （注意：这是事后核对，不是崩溃保护——中途崩了仍是脏值，所以本段不能插在长流程中间。）
+	var orig := GameSettings.breath_params()
+	var had_cfg := FileAccess.file_exists(GameSettings.PATH)
+	var orig_bytes := PackedByteArray()
+	if had_cfg:
+		orig_bytes = FileAccess.get_file_as_bytes(GameSettings.PATH)
+	# 断言「默认值」时先把内存值压回出厂常量，否则跑过一次调参就再也测不到默认
+	GameSettings.set_breath(GameSettings.BREATH_AMP_DEF, GameSettings.BREATH_PERIOD_DEF,
+			GameSettings.BREATH_PHASE_DEF, GameSettings.BREATH_MODE_DEF)
+
+	# ── ① shader 资源：存在、能 load、uniform 契约齐、无 maxf 白屏陷阱 ──
+	var sh_path := "res://assets/shaders/portrait_breath.gdshader"
+	_check(ResourceLoader.exists(sh_path), "呼吸 shader 资源存在")
+	var sh := load(sh_path)
+	_check(sh != null and sh is Shader, "呼吸 shader 能 load 且是 Shader")
+	var unames := []
+	if sh is Shader:
+		for u in (sh as Shader).get_shader_uniform_list(false):
+			unames.append(String(u.get("name", "")))
+	# 这五个 uniform 是 GDScript 侧按名写进去的，少一个就静默不生效
+	for need in ["tex_src", "progress", "amp", "tex_region", "use_region"]:
+		_check(unames.has(need), "shader 暴露 uniform：%s" % need)
+	# 项目踩过的坑：shader 里写 maxf 会静默白屏（注释里提到不算，只看代码行）
+	var bad_maxf := []
+	var src_lines := FileAccess.get_file_as_string(sh_path).split("\n")
+	for i in src_lines.size():
+		var ln := String(src_lines[i]).strip_edges()
+		if ln.begins_with("//") or ln.is_empty():
+			continue
+		if ln.contains("maxf("):
+			bad_maxf.append(i + 1)
+	_eq(bad_maxf.size(), 0, "shader 代码里没有 maxf（踩过白屏，行号=%s）" % str(bad_maxf))
+
+	# ── ② BreathDebugPanel：可实例化 + 四键 + 默认值 ──
+	var panel := BreathDebugPanel.new()
+	_host.add_child(panel)
+	await process_frame
+	var dp: Dictionary = panel.get_params()
+	for k in ["amp", "period", "phase", "mode"]:
+		_check(dp.has(k), "面板 get_params() 含键 %s" % k)
+	_check(is_equal_approx(float(dp.get("amp", -1.0)), 0.008),
+			"面板默认幅度 = 0.8%%（得 %s）" % str(dp.get("amp")))
+	_check(is_equal_approx(float(dp.get("period", -1.0)), 4.0),
+			"面板默认周期 = 4.0s（得 %s）" % str(dp.get("period")))
+	_check(int(dp.get("mode", -1)) == 0, "面板默认方案 = UV 微起伏（mode 0，得 %s）"
+			% str(dp.get("mode")))
+	_eq(int(BreathDebugPanel.Mode.UV), 0, "Mode.UV = 0")
+	_eq(int(BreathDebugPanel.Mode.SCALE), 1, "Mode.SCALE = 1")
+	_eq(int(BreathDebugPanel.Mode.OFF), 2, "Mode.OFF = 2")
+
+	# ── ③ set_params 写→读一致 + params_changed 真的发且数值对 ──
+	var sig_args: Array = []
+	panel.params_changed.connect(func(a: float, pe: float, ph: float, m: int) -> void:
+		sig_args.append([a, pe, ph, m]))
+	panel.set_params(0.012, 5.0, 0.3, 1)
+	var dp2: Dictionary = panel.get_params()
+	_check(is_equal_approx(float(dp2.get("amp", 0.0)), 0.012), "set_params 后读回幅度 0.012")
+	_check(is_equal_approx(float(dp2.get("period", 0.0)), 5.0), "set_params 后读回周期 5.0")
+	_check(is_equal_approx(float(dp2.get("phase", 0.0)), 0.3), "set_params 后读回相位 0.3")
+	_eq(int(dp2.get("mode", -1)), 1, "set_params 后读回方案 SCALE")
+	_eq(sig_args.size(), 1, "params_changed 恰好触发 1 次")
+	if sig_args.size() == 1:
+		var sa: Array = sig_args[0]
+		_check(is_equal_approx(float(sa[0]), 0.012) and is_equal_approx(float(sa[1]), 5.0)
+				and is_equal_approx(float(sa[2]), 0.3) and int(sa[3]) == 1,
+				"params_changed 携带的数值与写入一致（%s）" % str(sa))
+	# emit_changed=false：只回填 UI，不应该再发信号（启动回填靠这个语义避免重播）
+	sig_args.clear()
+	panel.set_params(0.008, 4.0, 0.0, 0, false)
+	_eq(sig_args.size(), 0, "emit_changed=false 时静默回填不发信号")
+	panel.queue_free()
+	await process_frame
+	# 面板自己把值写进了 GameSettings，压回默认再让选角界面建（保证基线干净）
+	GameSettings.set_breath(GameSettings.BREATH_AMP_DEF, GameSettings.BREATH_PERIOD_DEF,
+			GameSettings.BREATH_PHASE_DEF, GameSettings.BREATH_MODE_DEF)
+
+	# ── ④ 选角界面接线：呼吸层 / 面板 / 节点路径 ──
+	var sel := CharacterSelectScreen.new()
+	sel.setup(AiPool.all_ais())
+	_host.add_child(sel)
+	await process_frame
+	await process_frame
+	_check(sel._breath != null, "选角界面构建了呼吸层（_breath 非 null）")
+	_check(sel._breath_panel != null, "选角界面挂了呼吸调试面板（_breath_panel 非 null）")
+	var by_path := sel.get_node_or_null("BigPortraitBg/PortraitBreath")
+	_check(by_path != null, "节点路径 BigPortraitBg/PortraitBreath 可寻址")
+	_check(sel._breath != null and sel._breath.get_parent() == sel._bg_layer,
+			"呼吸层是转场层的子节点（层序 = 画在转场之上）")
+	_check(sel._breath is PortraitBreathLayer, "呼吸层类型是 PortraitBreathLayer")
+	_check(sel._bg_layer is RippleSwapPortrait, "转场层仍在（RippleSwapPortrait 没被呼吸替换）")
+	# 面板必须最后挂：不然圆点/箭头/开始键会压在它上面
+	var last_child: Node = sel.get_child(sel.get_child_count() - 1)
+	_check(last_child == sel._breath_panel, "呼吸面板是最后一个子节点（永远在最上层）")
+
+	# ── ⑤ 遮罩非静默降级：四人表齐全，且至少一张真的加载成功 ──
+	# integrate 特别提醒：缺遮罩时 set_character 会 use_region=false 静默退化，
+	# 所以这里必须断言「真的加载到了」，不能只断言「没报错」。
+	var missing_key := []
+	for i in sel._ais.size():
+		if not CharacterSelectScreen.BREATH_MASKS.has(sel._ais[i].id):
+			missing_key.append(sel._ais[i].id)
+	_eq(missing_key.size(), 0, "四位角色在 BREATH_MASKS 表里都有遮罩路径（缺=%s）"
+			% str(missing_key))
+	# 用 get() 取而不是直接点属性：将来若把 _big_masks 改私有/改名，这里退化为
+	# 「按表里的四条路径直接查 ResourceLoader.exists」，不会因为属性消失整个测试崩掉。
+	var masks_raw: Variant = sel.get("_big_masks")
+	var texs_raw: Variant = sel.get("_big_texs")
+	var mask_ok := 0
+	var mask_total := 0
+	if masks_raw is Array and (masks_raw as Array).size() > 0:
+		mask_total = (masks_raw as Array).size()
+		for m in masks_raw:
+			# 注意：这里的「非 null」= 真加载成功，不是「文件存在」（见 _load_tex）
+			if m != null and m is Texture2D and (m as Texture2D).get_size().x > 0.0:
+				mask_ok += 1
+		_check(mask_ok >= 1, "四人遮罩至少一张真的加载成功（%d/%d，防静默降级）"
+				% [mask_ok, mask_total])
+		# 遮罩数组必须与大立绘数组同长，否则 _sync_breath_char 会取不到对应遮罩
+		if texs_raw is Array:
+			_check(mask_total == (texs_raw as Array).size(),
+					"遮罩数组与大立绘数组同长（%d vs %d）"
+					% [mask_total, (texs_raw as Array).size()])
+		# 遮罩按 id 查表、跟着原型名走（deepdeek→deepseek / kweno→qwen / chatppt→gpt / grock→grok）
+		_check(bool(sel.breath_state().get("use_region", false)),
+				"当前角色走遮罩分支（use_region=true，未降级）")
+	else:
+		# 退化分支（spec 兜底）：字段没了就直接查四条路径，至少一条要存在
+		var path_ok := 0
+		var paths := []
+		for k in CharacterSelectScreen.BREATH_MASKS.keys():
+			var p := String(CharacterSelectScreen.BREATH_MASKS[k])
+			paths.append(p)
+			if ResourceLoader.exists(p):
+				path_ok += 1
+		_check(path_ok >= 1, "遮罩路径至少一条 ResourceLoader.exists（%d/%d，退化检查）"
+				% [path_ok, paths.size()])
+	if texs_raw is Array and (texs_raw as Array).size() > 0:
+		_check((texs_raw as Array).size() == sel._ais.size(), "大立绘数组与角色数一一对应")
+	_check(bool(sel.breath_state().get("has_tex", false)), "呼吸层已拿到立绘纹理")
+
+	# ── ⑥ debug_set_breath 定格 / 恢复 ──
+	sel.debug_set_breath(0.42)
+	var st1: Dictionary = sel.breath_state()
+	_check(absf(float(st1.get("progress", -1.0)) - 0.42) < 1e-4,
+			"定格 p=0.42 → progress 0.42（得 %s）" % str(st1.get("progress")))
+	_check(bool(st1.get("frozen", false)), "定格后 frozen=true")
+	sel.debug_set_breath(0.77)
+	_check(absf(float(sel.breath_state().get("progress", -1.0)) - 0.77) < 1e-4,
+			"改定格 p=0.77 → progress 跟着变 0.77")
+	sel.debug_set_breath(-1.0)
+	_check(not bool(sel.breath_state().get("frozen", true)), "debug_set_breath(-1) 恢复自动呼吸")
+	# 恢复后进度必须真的在走（不是停在定格的 0.77）
+	var pa := float(sel.breath_state().get("progress"))
+	await create_timer(0.25).timeout
+	var pb := float(sel.breath_state().get("progress"))
+	_check(not is_equal_approx(pa, pb), "恢复后进度持续推进（%.4f → %.4f）" % [pa, pb])
+	# 进度必须落在 [0,1)：fposmod 归一化，落到外面 shader 就采样错位
+	_check(pb >= 0.0 and pb < 1.0, "进度归一化在 [0,1)（得 %.4f）" % pb)
+
+	# ── ⑦ 关键回归：呼吸没打坏一人一款转场 ──
+	_eq(int(sel._bg_layer.style), int(CharacterSelectScreen.TRANSITION_STYLE[0]),
+			"初始背景转场 = 第 1 位的风格（水波）")
+	sel._right_btn.emit_signal("pressed")
+	await process_frame
+	_eq(sel.current_id(), "kweno", "切到第 2 位 Kweno")
+	_eq(int(sel._bg_layer.style), int(RippleSwapPortrait.Style.FAN),
+			"呼吸接入后切到 Kweno 仍用折扇转场")
+	_check(sel._breath != null and not sel._breath.visible,
+			"转场期间呼吸层让位隐藏（两个动画不抢同一张画面）")
+	var fan_sec := GameSettings.select_time_for("fan")
+	_check(is_equal_approx(sel._bg_layer.swap_time, fan_sec),
+			"转场时长仍取主人调好的值（%.2fs）" % fan_sec)
+	await create_timer(fan_sec + 0.7).timeout
+	_check(not sel._swapping, "折扇转场结束并解锁")
+	_check(sel._breath != null and sel._breath.visible, "转场结束后呼吸层重新接管画面")
+	_check(int(sel.breath_state().get("char_index", -1)) == 1, "呼吸层错相下标跟到第 2 位")
+	_check(bool(sel.breath_state().get("use_region", false)), "切人后遮罩仍然生效（未降级）")
+	sel._right_btn.emit_signal("pressed")
+	await process_frame
+	_eq(int(sel._bg_layer.style), int(RippleSwapPortrait.Style.HEX),
+			"再切到 ChatPPT 仍用龙鳞转场")
+	await create_timer(GameSettings.select_time_for("hex") + 0.7).timeout
+	_check(not sel._swapping, "龙鳞转场结束并解锁")
+
+	# ── ⑧ 参数持久化（内存回读 + 真的落盘再读回来）──
+	GameSettings.set_breath(0.021, 6.5, 0.25, 1)
+	var rp: Dictionary = GameSettings.breath_params()
+	_check(is_equal_approx(float(rp.get("amp", 0.0)), 0.021), "set_breath 后 amp 回读一致")
+	_check(is_equal_approx(float(rp.get("period", 0.0)), 6.5), "set_breath 后 period 回读一致")
+	_check(is_equal_approx(float(rp.get("phase", 0.0)), 0.25), "set_breath 后 phase 回读一致")
+	_eq(int(rp.get("mode", -1)), 1, "set_breath 后 mode 回读一致")
+	# 越界必须夹紧（防手滑把 amp 写成 1.0 直接把画面撕开）
+	GameSettings.set_breath(99.0, 999.0, 99.0, 99)
+	var cp: Dictionary = GameSettings.breath_params()
+	_check(is_equal_approx(float(cp.get("amp", 0.0)), GameSettings.BREATH_AMP_MAX)
+			and is_equal_approx(float(cp.get("period", 0.0)), GameSettings.BREATH_PERIOD_MAX)
+			and is_equal_approx(float(cp.get("phase", 0.0)), GameSettings.BREATH_PHASE_MAX)
+			and int(cp.get("mode", -1)) == GameSettings.BREATH_MODE_MAX,
+			"越界值被夹到上限（amp/period/phase/mode）")
+	# 落盘 → 内存打回出厂值 → 从盘读回：证明 [breath] 段真的写进了配置文件
+	GameSettings.set_breath(0.017, 3.25, 0.6, 2)
+	GameSettings.save_to_disk()
+	_check(FileAccess.file_exists(GameSettings.PATH), "呼吸参数已落盘（%s）" % GameSettings.PATH)
+	GameSettings.set_breath(GameSettings.BREATH_AMP_DEF, GameSettings.BREATH_PERIOD_DEF,
+			GameSettings.BREATH_PHASE_DEF, GameSettings.BREATH_MODE_DEF)
+	GameSettings.load_from_disk()
+	var dp3: Dictionary = GameSettings.breath_params()
+	_check(is_equal_approx(float(dp3.get("amp", 0.0)), 0.017)
+			and is_equal_approx(float(dp3.get("period", 0.0)), 3.25)
+			and is_equal_approx(float(dp3.get("phase", 0.0)), 0.6)
+			and int(dp3.get("mode", -1)) == 2,
+			"落盘后重新 load 能读回同一组呼吸参数（跨启动记住）")
+
+	# ── ⑨ F2 面板开关（toggle 语义 + force 语义）──
+	_check(not sel._breath_panel.visible, "呼吸面板默认收起")
+	var t1: bool = sel.toggle_breath_panel()
+	_check(t1 and sel._breath_panel.visible, "toggle 一次 → 面板打开且返回 true")
+	var t2: bool = sel.toggle_breath_panel()
+	_check(not t2 and not sel._breath_panel.visible, "再 toggle → 面板关闭且返回 false")
+	_check(sel.toggle_breath_panel(true) and sel._breath_panel.visible, "force=true 显式打开")
+	_check(not sel.toggle_breath_panel(false) and not sel._breath_panel.visible,
+			"force=false 显式关闭")
+	# 面板参数快照要和 GameSettings 对得上（没挂面板时的回落分支也走同一个键名）
+	var pp: Dictionary = sel.breath_panel_params()
+	_check(pp.has("amp") and pp.has("period") and pp.has("phase") and pp.has("mode"),
+			"breath_panel_params() 四键齐全")
+
+	# ── 收尾：还原主人配置，别留脏值 ──
+	sel.queue_free()
+	await process_frame
+	GameSettings.set_breath(float(orig.get("amp", GameSettings.BREATH_AMP_DEF)),
+			float(orig.get("period", GameSettings.BREATH_PERIOD_DEF)),
+			float(orig.get("phase", GameSettings.BREATH_PHASE_DEF)),
+			int(orig.get("mode", GameSettings.BREATH_MODE_DEF)))
+	GameSettings.save_to_disk()
+	var back: Dictionary = GameSettings.breath_params()
+	_check(is_equal_approx(float(back.get("amp", -1.0)), float(orig.get("amp", -2.0)))
+			and is_equal_approx(float(back.get("period", -1.0)), float(orig.get("period", -2.0)))
+			and int(back.get("mode", -1)) == int(orig.get("mode", -2)),
+			"测试后主人的呼吸配置已还原")
+	# 字节级核对：配置文件除 [breath] 段外一个字节都没动过。
+	# 比对时把 breath 四行抠掉（它们被写回了同样的值，但 Godot 的序列化可能换格式）。
+	if had_cfg and not orig_bytes.is_empty():
+		var now_bytes := FileAccess.get_file_as_bytes(GameSettings.PATH)
+		var strip := func(txt: String) -> String:
+			var out := ""
+			for ln in txt.split("\n"):
+				var s: String = String(ln).strip_edges()
+				if s.begins_with("amp =") or s.begins_with("period =") \
+						or s.begins_with("phase =") or s.begins_with("mode ="):
+					continue
+				out += String(ln) + "\n"
+			return out
+		var a_txt: String = strip.call(orig_bytes.get_string_from_utf8())
+		var b_txt: String = strip.call(now_bytes.get_string_from_utf8())
+		_check(a_txt == b_txt,
+				"配置文件除 [breath] 段外逐行未变（其它设置没被顺手改掉）")
