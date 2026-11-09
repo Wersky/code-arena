@@ -1,11 +1,11 @@
 shader_type canvas_item;
 render_mode unshaded;
 
-// 乱斩转场 v11（2026-11-09，Grock 专属，主人定稿）：
-// 把「整张图燃烧」那套漂亮特效**逐块复制**——每个被斩出的碎块有自己独立的
-// 噪声火场与前缘，各自烧穿（火线橙红 -> 短暂焦黑 -> 烧净露新立绘），互不同步。
-// 1 五刀四面八方依次劈下，在完整旧立绘上留斩痕
-// 2 停顿后各碎块按自己的火场燃烧殆尽（每块噪声相位不同，形态各异）
+// 乱斩转场 v12（2026-11-09，Grock 专属，主人定稿）：
+// 1 五刀四面八方依次劈下，在完整旧立绘上留斩痕（细亮线+暗缝）
+// 2 停顿后：**统一燃烧速度**——所有碎块共用同一条时间曲线，各自从**自己的外边界**
+//    （切口线 / 画框边）向内烧（到边界距离场驱动），火线橙红 -> 短暂焦黑 -> 烧净露新立绘；
+//    时间到（progress≈1）全部碎块烧毁，无残留。
 // slashes[k] = vec4(法线x, 法线y, 截距c, 起刀时刻)，由 GDScript 随机种子生成。
 
 uniform sampler2D tex_prev : source_color, filter_linear;
@@ -32,38 +32,6 @@ float vnoise(vec2 p) {
 	return mix(mix(a, b, u.x), mix(c, e, u.x), u.y);
 }
 
-// 一个碎块的燃烧：本地噪声火场 + 前缘推进（与整图版同样的三段：火线/焦黑/烧净）
-vec3 burn_piece(vec3 base, vec3 next_rgb, vec2 uv, float bt, float phase) {
-	float n1 = vnoise(uv * 7.0 + vec2(phase * 13.7, phase * 4.1));
-	float n2 = vnoise(uv * 21.0 + vec2(phase * 7.3, phase * 9.5));
-	// 有机燃烧场：下限抬到 0.22（噪声天然会取到接近 0，会导致「一开始就烧穿了」），
-	// 保证 bt=0（front=0）时没有任何像素被判为已烧
-	float field = 0.22 + (n1 * 0.62 + n2 * 0.38) * 0.78;
-
-	float ignite = smoothstep(0.0, 0.18, bt);      // 点火渐亮：起步不冒火
-	float front = clamp(bt, 0.0, 1.0) * 1.25;     // 略超 1，保证整块烧透
-	float burned = step(field, front);            // 1 = 已烧过
-	float behind = front - field;                 // 烧过多久
-	float ahead = field - front;                  // 离火线还多远
-
-	vec3 ember = vec3(1.0, 0.42, 0.10)
-			* (1.15 + 0.55 * vnoise(uv * 45.0 + vec2(TIME * 4.0 + phase)));
-	vec3 char_c = vec3(0.045, 0.035, 0.038);
-
-	// 火线：只在前缘前方一窄条
-	float flame = (1.0 - burned) * (1.0 - smoothstep(0.0, 0.16, ahead));
-	vec3 col = mix(base, ember, flame * 0.95);
-
-	// 刚烧过的一小段短暂焦黑
-	float char_t = burned * (1.0 - smoothstep(0.10, 0.30, behind));
-	col = mix(col, char_c, char_t * 0.88 * ignite);
-
-	// 焦黑退掉 -> 新立绘
-	float clear_mask = burned * (1.0 - char_t);
-	col = mix(col, next_rgb, clear_mask);
-	return col;
-}
-
 void fragment() {
 	vec2 q = (UV - vec2(0.5)) * vec2(aspect, 1.0);
 
@@ -72,42 +40,75 @@ void fragment() {
 	vec2 nuv = (UV - vec2(0.5)) / punch + vec2(0.5);
 	vec3 next_rgb = texture(tex_next, nuv).rgb;
 
-	// --- 1 旧立绘 + 斩痕 ---
+	// ---- 1 旧立绘 + 斩痕 ----
 	vec3 col = texture(tex_prev, UV).rgb;
 
 	for (int k = 0; k < 5; k++) {
 		vec4 s = slashes[k];
 		float d = dot(q, s.xy) - s.z;
 
+		// 斩线白光：起刀后 0.07 进度内闪一下
 		float tw = clamp((progress - s.w) / 0.07, 0.0, 1.0);
 		float streak = exp(-abs(d) * 16.0) * (1.0 - tw) * step(0.001, progress)
 				* step(s.w, progress);
 		col += vec3(1.0) * streak * 0.95;
 
+		// 斩痕：细亮线 + 暗缝（燃烧推进后淡出）
 		float scar_a = step(s.w, progress) * (1.0 - smoothstep(0.55, 0.72, progress));
 		col = mix(col, vec3(0.92, 0.96, 1.0), exp(-abs(d) * 60.0) * scar_a * 0.7);
 		col = mix(col, vec3(0.05, 0.05, 0.09), exp(-abs(d) * 18.0) * scar_a * 0.35);
 	}
 
-	// --- 2 各碎块按自己的火场烧穿 ---
+	// ---- 2 该像素所属碎块 + 到「自己边界」的距离 ----
+	// 第 k 片的边界 = 画框四边 + d_0..d_k 这些切口线；残余中心块的边界 = 画框 + 全部 5 条线
+	float bd = 10.0;     // 到本块边界的最短距离（= 燃烧起点，外侧为 0）
+	float owner = -1.0;  // 所属块编号（-1 = 残余中心块）
 	float keep_all = 1.0;
 	for (int k = 0; k < 5; k++) {
 		vec4 s = slashes[k];
 		float d = dot(q, s.xy) - s.z;
-		float is_piece = keep_all * step(0.0, d);
-		if (is_piece > 0.5) {
-			// 每块错峰点火（0.34 起，每块 +0.025），错峰很小保证同时段整体烧
-			float bt = clamp((progress - 0.38 - float(k) * 0.03) / 0.50, 0.0, 1.0);
-			col = burn_piece(col, next_rgb, UV, bt, float(k) * 7.31 + seed_n);
+		if (owner < 0.0) {
+			bd = min(bd, abs(d));                       // 这条切口线是本块的边界
+			if (keep_all > 0.5 && d > 0.0) {
+				owner = float(k);                       // 本块确定为第 k 片
+			} else {
+				keep_all *= (1.0 - step(0.0, d));
+			}
 		}
-		keep_all *= (1.0 - step(0.0, d));
 	}
+	// 画框四边同样是边界
+	bd = min(bd, min(0.5 * aspect - abs(q.x), 0.5 - abs(q.y)));
 
-	// 残余中心块：同样的燃烧，稍晚一点
-	if (keep_all > 0.5) {
-		float bt = clamp((progress - 0.44) / 0.48, 0.0, 1.0);
-		col = burn_piece(col, next_rgb, UV, bt, seed_n + 41.7);
-	}
+	// 有机烧沿（每块自己的噪声相位，形态各异；速度仍统一）
+	float phase = (owner < 0.0) ? seed_n + 41.7 : owner * 13.7 + seed_n;
+	bd += (vnoise(UV * 9.0 + vec2(phase)) - 0.5) * 0.05
+			+ (vnoise(UV * 28.0 + vec2(phase * 2.3)) - 0.5) * 0.02;
+
+	// ---- 3 统一燃烧时间轴：所有碎块同一速度，各自由外向内 ----
+	float bt = clamp((progress - 0.38) / 0.55, 0.0, 1.0);   // 统一速度，不错峰
+	float ignite = smoothstep(0.0, 0.15, bt);               // 点火渐亮（起步不冒火）
+	// 前缘：线性推进但用平方缓入，前半段慢（能看到火线在内部游走）、尾段加速收净；
+	// 系数保证 bt=1 时超过最大边界距离（中心最深 ≈0.45）→ 全部烧毁
+	float front = (0.18 * bt + 0.32 * bt * bt) * 1.2;
+
+	float burned = step(bd, front);                          // 1 = 已烧过（由外向内）
+	float behind = front - bd;
+	float ahead = bd - front;
+
+	vec3 ember = vec3(1.0, 0.42, 0.10)
+			* (1.15 + 0.55 * vnoise(UV * 45.0 + vec2(TIME * 4.0 + phase)));
+	vec3 char_c = vec3(0.045, 0.035, 0.038);
+
+	// 火线：前缘前方一窄条
+	float flame = (1.0 - burned) * (1.0 - smoothstep(0.0, 0.16, ahead));
+	col = mix(col, ember, flame * 0.95 * ignite);
+
+	// 刚烧过的一小段短暂焦黑
+	float char_t = burned * (1.0 - smoothstep(0.10, 0.30, behind));
+	col = mix(col, char_c, char_t * 0.88 * ignite);
+
+	// 焦黑退掉 -> 新立绘
+	col = mix(col, next_rgb, burned * (1.0 - char_t));
 
 	COLOR = vec4(col, 1.0);
 }
