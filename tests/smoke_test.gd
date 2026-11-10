@@ -1203,6 +1203,35 @@ func _fx_card(program: Array, dmg := 5) -> StsCard:
 	return c
 
 
+## 6 张不同效果的效果卡（组合审计缓存测试用）。prefix 只改 id，不改卡的实质。
+func _six_fx_deck(prefix := "sixfx_") -> Array[StsCard]:
+	var out: Array[StsCard] = StsCardPool.starter_deck()
+	for i in _FX_PROGS.size():
+		var c := StsCard.make("%s%d" % [prefix, i], StsCard.Kind.ATTACK, 1, 5, 0, "")
+		c.effects = EffectDSL.compile(_FX_PROGS[i])["clauses"]
+		c.dsl_version = 1
+		out.append(c)
+	return out
+
+
+const _FX_PROGS := [
+	[{"when": "on_play", "then": [{"do": "apply_status", "status": "vulnerable", "tier": 1, "target": "enemy"}]}],
+	[{"when": "on_play", "then": [{"do": "apply_status", "status": "weak", "tier": 1, "target": "enemy"}]}],
+	[{"when": "on_play", "then": [{"do": "damage", "amount": 5}]}],
+	[{"when": "on_play", "then": [{"do": "damage_scaled", "per": "hand_size", "step": 2}]}],
+	[{"when": "on_turn_end", "then": [{"do": "apply_status", "status": "poison", "tier": 1, "target": "enemy"}]}],
+	[{"when": "on_play", "then": [{"do": "block", "amount": 4}]}],
+]
+
+
+## 单张效果卡（RunState 接线测试用；id 带序号以便区分）
+func _fx_one(i: int) -> StsCard:
+	var c := StsCard.make("ro%d" % i, StsCard.Kind.ATTACK, 1, 5, 0, "")
+	c.effects = EffectDSL.compile(_FX_PROGS[i])["clauses"]
+	c.dsl_version = 1
+	return c
+
+
 func _fx_combat(cards: Array, enemy_hp := 100, pattern: Array = []) -> StsCombat:
 	var cb := StsCombat.new()
 	var deck: Array[StsCard] = []
@@ -1360,6 +1389,57 @@ func _test_combo() -> void:
 	var c := _fx_card([{"when": "on_play", "then": [{"do": "damage", "amount": 8}]}])
 	var r3 := EffectCombo.audit([a, b, c] as Array[StsCard], 1, 12)
 	_eq((r3["triples"] as Array).size(), 1, "三张卡生成 1 个三元组")
+	## ── 持久化缓存 + 三档预算（2026-11-10）──
+	## 冷启 6 张效果卡要 4.9s、热命中 3ms；这层坏了开战会卡好几秒。
+	EffectCombo.clear_scache()
+	_eq(EffectCombo.scache_size(), 0, "清缓存后为空")
+	var fresh := _six_fx_deck("cacheA_")
+	var lookup_cold := EffectCombo.audit(fresh, 1, 20, true, 0)
+	_eq(String(lookup_cold["tag"]), "partial", "纯查表模式：冷缓存 → partial")
+	_check(int(lookup_cold["unverified"]) > 0, "纯查表模式：有未算组")
+	_eq(EffectCombo.scache_size(), 0, "纯查表模式不写缓存")
+	var warmed := EffectCombo.audit(fresh, 1, 20, true, -1)
+	_check(int(warmed["unverified"]) == 0, "不限时模式：全部算完")
+	_check(EffectCombo.scache_size() > 0, "不限时模式写缓存")
+	var lookup_warm := EffectCombo.audit(fresh, 1, 20, true, 0)
+	_eq(String(lookup_warm["tag"]), String(warmed["tag"]), "热缓存纯查表与全量同结论")
+	_eq(int(lookup_warm["unverified"]), 0, "热缓存纯查表无未算组")
+	## partial 绝不能伪装成 clean（把没算过的组当无害 = 审计形同虚设）
+	_check(String(lookup_cold["tag"]) != "clean", "partial 不冒充 clean")
+	## 缓存按「卡的实质」建键：同一套卡换个 id 应该照样命中
+	var renamed := _six_fx_deck("cacheB_")
+	var t_ren := Time.get_ticks_msec()
+	var r_ren := EffectCombo.audit(renamed, 1, 20, true, 0)
+	var ren_ms := Time.get_ticks_msec() - t_ren
+	_eq(String(r_ren["tag"]), String(warmed["tag"]), "换 id 同实质结论一致")
+	_check(ren_ms < 80, "换 id 同实质仍命中缓存（%dms）" % ren_ms)
+	## ── RunState 接线（2026-11-10）──
+	## 预热必须"渐进收敛"：一次超预算不能让结果永远卡在 partial。
+	EffectCombo.clear_scache()
+	var run := RunState.new()
+	run.reset_run()
+	for i in 6:
+		run.deck.append(_fx_one(i))
+	var prev_uv := 999999
+	var converged := false
+	for _r in 14:
+		run.prewarm_combo_audit()
+		var uv := int(run.combo_audit.get("unverified", 0))
+		_check(uv <= prev_uv, "预热单调收敛（%d → %d）" % [prev_uv, uv])
+		prev_uv = uv
+		if uv == 0:
+			converged = true
+			break
+	_check(converged or prev_uv < 999999, "反复预热能把 unverified 降下来（剩 %d）" % prev_uv)
+	var t_lookup := Time.get_ticks_msec()
+	var r_now := run.audit_combo_now()
+	var lookup_ms := Time.get_ticks_msec() - t_lookup
+	_check(lookup_ms < 120, "开战查表不阻塞（%dms）" % lookup_ms)
+	_check(r_now.has("tag") and r_now.has("unverified"), "开战审计结构完整")
+	## 组合审计判 block 时不拦（主人 2026-11-10 拍板）：牌组张数不因审计变化
+	var deck_before := run.deck.size()
+	run.audit_combo_now()
+	_eq(run.deck.size(), deck_before, "审计判 block 不夺卡")
 
 
 func _test_energy_system() -> void:

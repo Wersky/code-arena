@@ -266,6 +266,8 @@ func _on_buy_card(card: CardData) -> void:
 		return
 	run.compute -= CARD_PRICE
 	run.deck.append(card.duplicate())
+	## 组合审计预热：200ms 限时，不卡商店界面（2026-11-10）
+	run.prewarm_combo_audit()
 	_card_offers.erase(card)
 	_refresh()
 

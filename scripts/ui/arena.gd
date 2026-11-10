@@ -536,7 +536,37 @@ func _wish_tool_icon(path: String) -> TextureRect:
 	return r
 
 
-## 醒目提示条（屏幕中央偏上，2.6 秒淡出）——许愿卡完成等关键事件用
+## 组合审计标记（2026-11-10）：判 block 只在开战时提示一次，**不拦不夺卡**。
+## partial（有组没算完）刻意不提示——把"没算过"当风险告警会让玩家莫名其妙。
+func _show_combo_mark() -> void:
+	var a := run.combo_audit
+	if a.is_empty():
+		return
+	if String(a.get("tag", "")) != "block":
+		return
+	var names: Array[String] = []
+	for row in (a.get("pairs", []) as Array):
+		if String(row.get("tag", "")) != "block":
+			continue
+		names.append("%s × %s" % [
+			StsCardPool.card_name(String(row["a"])),
+			StsCardPool.card_name(String(row["b"]))])
+	if names.is_empty():
+		for row in ((a.get("triples", []) as Array) + (a.get("quads", []) as Array)):
+			if String(row.get("tag", "")) != "block":
+				continue
+			var ids: Array = row.get("cards", [])
+			var group: Array[String] = []
+			for cid in ids:
+				group.append(StsCardPool.card_name(String(cid)))
+			names.append(" × ".join(group))
+	if names.is_empty():
+		return
+	_toast("⚖ 组合警告（不拦）：%s 叠起来超模" % names[0],
+			Color(1.0, 0.78, 0.42))
+
+
+## 醒目提示条（屏幕中央偏上，2.6 秒淡出）——许愿卡完成、组合警告等关键事件用
 func _toast(text: String, col: Color = Color(0.62, 0.95, 1.0)) -> void:
 	var panel := PanelContainer.new()
 	panel.add_theme_stylebox_override("panel",
@@ -1115,6 +1145,8 @@ func _on_vision_card_done(r: Dictionary) -> void:
 		_close_wish_panel()
 		return
 	run.deck.append(card)
+	## 组合审计预热：200ms 限时，算不完下次继续（缓存累积），不卡界面（2026-11-10）
+	run.prewarm_combo_audit()
 	## 当前战斗立刻到手牌（手牌未满时）——画完就能看见、就能打；
 	## 手牌已满则进抽牌堆（下一抽即得）。两种都同步牌堆数字。
 	var got_in_hand := false
@@ -1643,6 +1675,9 @@ func _hand_tween(view: StsCardView) -> Tween:
 # ─────────────────────────────────────────────────────────
 func _start_battle() -> void:
 	combat = run.start_battle(level)
+	## 组合审计标记（2026-11-10 主人拍板：**判 block 不拦，只标记**）——
+	## 越界组合照打，只在开战时提示一次，处置权留给后面调平衡。
+	_show_combo_mark()
 	combat.set_refill(StsCombat.refill_for(run.ai.id))
 	combat.set_ai_id(run.ai.id)
 	if not combat.ult_ready_changed.is_connected(_on_ult_ready):
@@ -2641,6 +2676,8 @@ func _finish_battle(win: bool) -> void:
 	_busy = false
 	if _banter != null:
 		_banter.stop_battle()
+	## 组合审计续算：趁玩家看结算画面的空档把剩余组补算完（2026-11-10）
+	run.prewarm_combo_audit()
 	if win:
 		SfxNode.play("win")
 		var gain := run.win_battle(combat, level)

@@ -121,6 +121,57 @@ func add_card(card_id: String) -> void:
 	var c := StsCardPool.card(card_id)
 	if c != null:
 		deck.append(c)
+		prewarm_combo_audit()
+
+
+## ── 牌组级组合审计（2026-11-10 接线）────────────────────────
+## 圆桌第 3 轮的组合检测：两张单场无害的卡可能叠出跨场涌现。
+## 口径（2026-11-10 主人拍板）：**判 block 不拦，只标记**——
+##   越界但证不出来就记录，不封卡、不夺卡；处置权留给主人后面调。
+## 性能：全量审计冷启 4.9s、热命中 3ms，绝不能塞进开战。
+## 所以拆成两处：
+##   入牌组时 prewarm（给 200ms 慢慢算，不卡帧，多次调用渐进补齐）
+##   开战时 audit(budget_ms=0) 纯查表，保证零阻塞
+const COMBO_PREWARM_MS := 200
+
+## 最近一次审计结果（UI / 结算画面可读；tag=block 时里面的 pairs 就是标记）
+var combo_audit: Dictionary = {}
+
+## 上次审计的牌组指纹：牌组没变就不重复算
+var _combo_sig := ""
+
+
+## 牌组指纹：只有效果卡的集合变化才值得重审
+func _combo_deck_sig() -> String:
+	var ids: Array[String] = []
+	for c in deck:
+		if not c.effects.is_empty():
+			ids.append("%s|%s" % [c.id, JSON.stringify(c.effects).sha256_text().substr(0, 8)])
+	ids.sort()
+	return "%d:%s" % [ids.size(), ",".join(ids)]
+
+
+## 入牌组后预热：限时预算，算不完的留给下次调用继续（缓存会累积）
+## **牌组没变但上次是 partial 时仍然续算**——否则一次超预算就永远停在半成品，
+## 玩家加满 6 张卡也永远等不到 block 标记（实测踩过）。
+## 已经算全（无 unverified）且牌组没变，才是真正的"没活可干"。
+func prewarm_combo_audit() -> Dictionary:
+	var sig := _combo_deck_sig()
+	var same_deck := sig == _combo_sig and not combo_audit.is_empty()
+	if same_deck and int(combo_audit.get("unverified", 0)) == 0:
+		return combo_audit
+	combo_audit = EffectCombo.audit(deck, level_index, EffectCombo.DEFAULT_SAMPLES,
+			true, COMBO_PREWARM_MS)
+	_combo_sig = sig
+	return combo_audit
+
+
+## 开战前的组合审计：纯查表，一个子集都不新算 → 永不阻塞
+func audit_combo_now() -> Dictionary:
+	combo_audit = EffectCombo.audit(deck, level_index, EffectCombo.DEFAULT_SAMPLES,
+			true, 0)
+	_combo_sig = _combo_deck_sig()
+	return combo_audit
 
 
 ## 开一场战斗：卡组洗进抽牌堆、HP 续接上关、敌人数据来自关卡。
@@ -128,6 +179,8 @@ func add_card(card_id: String) -> void:
 func start_battle(level: LevelData, elite: bool = false) -> StsCombat:
 	## 试玩档校正：离线批次跑完后，把缓存里的真价套回许愿卡（2026-11-06）
 	reprice_deck()
+	## 组合审计：纯查表口径，热点 3ms、冷启也只是标 unverified 不阻塞（2026-11-10）
+	audit_combo_now()
 	# 电子木鱼（道具）：**先结算再开战**，否则战斗对象拿到的是旧 HP（2026-11-02 修）
 	for it in items:
 		if not it.broken and it.effect_id == "muyu":
