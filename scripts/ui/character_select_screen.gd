@@ -499,8 +499,21 @@ func _build_breath_panel() -> void:
 	if _breath != null:
 		_breath.set_engine(GameSettings.breath_engine == GameSettings.BREATH_ENGINE_MESH)
 	# 面板直接改 V4 的 mesh uniform
+	# 注意顺序：面板滑杆是在 _build() 里建的，那时 _mesh_ref 还是 null，
+	# 初始值读不到、回调也写不进去。bind 之后必须**重新同步一次滑杆值**，
+	# 否则主人会遇到「滑杆拖到 0，画面照样大幅动」（2026-11-10 实测踩到）。
 	if _breath_panel != null:
-		_breath_panel.bind_mesh(_breath.get_mesh_layer())
+		var mesh_now := _breath.get_mesh_layer()
+		_breath_panel.bind_mesh(mesh_now)
+		if mesh_now != null:
+			var v4 := mesh_now.get_v4_params()
+			for k in _breath_panel._layer_sliders.keys():
+				if v4.has(k):
+					var sl: HSlider = _breath_panel._layer_sliders[k]
+					sl.set_value_no_signal(float(v4[k]))
+					var lv: Label = _breath_panel._layer_vals.get(k)
+					if lv != null:
+						lv.text = "%.2f" % float(v4[k])
 	# 横向开关按配置（主人要「上下、左右」分开，默认只做上下）
 	var ml := _breath.get_mesh_layer()
 	if ml != null:

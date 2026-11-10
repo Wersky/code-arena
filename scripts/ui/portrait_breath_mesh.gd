@@ -36,6 +36,15 @@ const ROWS := 18
 var _mat: ShaderMaterial = null
 var _built := false
 var _phase := 0.0
+## 环境（背景）层权重（2026-11-10 主人反馈「有些地方动得过了」）：
+## 原值 0.10 让未被任何遮罩覆盖的区域也有轻微位移，避免「人物贴纸在动、背景是照片」。
+## 但主人在某些角色上觉得过了 → 做成可调，0 即背景完全静止。
+var env_weight := 0.10
+## 上次 setup 的四种纹理（重建网格时要用）
+var _tex_ref: Texture2D = null
+var _face_ref: Texture2D = null
+var _body_ref: Texture2D = null
+var _hair_ref: Texture2D = null
 
 
 func _ready() -> void:
@@ -75,6 +84,10 @@ func setup(portrait: Texture2D, face_mask: Texture2D, body_mask: Texture2D,
 	_mat.set_shader_parameter("y_bias", 0.35)
 	_mat.set_shader_parameter("use_horiz", true)
 	texture = portrait
+	_tex_ref = portrait
+	_face_ref = face_mask
+	_body_ref = body_mask
+	_hair_ref = hair_mask
 	mesh = _build_mesh(portrait, face_mask, body_mask, hair_mask)
 	_built = true
 
@@ -112,7 +125,7 @@ func _build_mesh(portrait: Texture2D, face_mask: Texture2D, body_mask: Texture2D
 			# 为什么需要：主体之外的大片区域若完全静止，视觉上像「人物贴纸在动、背景是照片」，
 			# 商业立绘里连背景都有 1~2px 的呼吸感。权重压到主体 1/10 以下。
 			var w_any: float = maxf(maxf(w_body, w_face), w_hair)
-			var w_env: float = clampf(1.0 - w_any * 1.6, 0.0, 1.0) * 0.10
+			var w_env: float = clampf(1.0 - w_any * 1.6, 0.0, 1.0) * env_weight
 			# 头发区域从躯干权重里扣除，避免同一像素既被胸口推又被头发拉
 			var inv_hair: float = 1.0 - w_hair * 0.85
 			w_body *= inv_hair
@@ -227,6 +240,14 @@ func set_axis_split(x_lag_deg: float, y_bias: float) -> void:
 		return
 	_mat.set_shader_parameter("x_lag_deg", x_lag_deg)
 	_mat.set_shader_parameter("y_bias", clampf(y_bias, 0.0, 1.0))
+
+
+## 环境层权重（0 = 背景完全不动；改完需要重建网格才生效）
+func set_env_weight(w: float) -> void:
+	env_weight = clampf(w, 0.0, 0.5)
+	# 权重烘在顶点色里，必须重建 mesh
+	if _tex_ref != null and _face_ref != null and _body_ref != null:
+		mesh = _build_mesh(_tex_ref, _face_ref, _body_ref, _hair_ref)
 
 
 ## 底部锁定比例
