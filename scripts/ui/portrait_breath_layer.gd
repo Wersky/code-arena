@@ -38,6 +38,15 @@ const SCALE_GAIN := 2.0
 
 const SHADER := preload("res://assets/shaders/portrait_breath.gdshader")
 
+## 三层各自的 gain / phase 偏移（2026-11-10 主人要求每层可调、且按角色独立）
+## 由 CharacterSelectScreen 在切角色时从 GameSettings 拉该角色的值填进来。
+var hair_gain := 1.00
+var face_gain := 0.60
+var body_gain := 0.32
+var hair_phase := 0.06
+var face_phase := 0.00
+var body_phase := -0.07
+
 ## 当前生效参数（唯一真相；面板改了就走 set_params）
 var amp := 0.008
 var period := 4.0
@@ -136,6 +145,18 @@ func set_params(new_amp: float, new_period: float, new_phase: float, new_mode: i
 	_apply()
 
 
+## 设置三层参数（CharacterSelectScreen 切角色时调用；面板改动也走这里）
+func set_layer_params(hg: float, fg: float, bg: float,
+		hp: float, fp: float, bp: float) -> void:
+	hair_gain = maxf(hg, 0.0)
+	face_gain = maxf(fg, 0.0)
+	body_gain = maxf(bg, 0.0)
+	hair_phase = hp
+	face_phase = fp
+	body_phase = bp
+	_apply()
+
+
 ## 有没有可画的立绘（没有时本层自动隐藏，让底下转场层兜底）
 func has_portrait() -> bool:
 	return _tex != null
@@ -154,6 +175,8 @@ func breath_state() -> Dictionary:
 		"has_hair": _mask_hair != null,
 		"has_face": _mask_face != null,
 		"has_body": _mask_body != null,
+		"hair_gain": hair_gain, "face_gain": face_gain, "body_gain": body_gain,
+		"hair_phase": hair_phase, "face_phase": face_phase, "body_phase": body_phase,
 		"has_tex": _tex != null,
 		"frozen": _frozen,
 		"cycle": _cycle,
@@ -241,4 +264,11 @@ func _apply() -> void:
 	# 两个轴互斥，所以永远不会出现「斜着走」的旋转观感。
 	_mat.set_shader_parameter("amp", amp)
 	_mat.set_shader_parameter("axis", 1 if mode == MODE_UV_HORZ else 0)
+	# 三层各自的 gain / phase：这是「头发先动、身体跟上」的实现处
+	_mat.set_shader_parameter("hair_gain", hair_gain)
+	_mat.set_shader_parameter("face_gain", face_gain)
+	_mat.set_shader_parameter("body_gain", body_gain)
+	_mat.set_shader_parameter("hair_phase", hair_phase)
+	_mat.set_shader_parameter("face_phase", face_phase)
+	_mat.set_shader_parameter("body_phase", body_phase)
 	scale = Vector2.ONE

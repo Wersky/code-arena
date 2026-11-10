@@ -36,6 +36,8 @@ extends Control
 ##   · 需要临时隐掉时走程序化接口 set_visible_state(false) / toggle_breath_panel()；
 ##   · 除非主人另行要求，不要再给它绑热键。
 signal params_changed(amp: float, period: float, phase: float, mode: int)
+## 三层参数变化（2026-11-10）：每角色独立，CharacterSelectScreen 收到后转给呼吸层
+signal layers_changed(layers: Dictionary)
 
 ## 呼吸方案。值直接进 params_changed 的 mode，不要另立编号。
 enum Mode {
@@ -78,6 +80,14 @@ var _period_val: Label = null
 var _phase_val: Label = null
 var _readout: Label = null
 var _mode_btns: Array[Button] = []
+
+## ── 2026-11-10 主人要求：每个角色的每一层都能单独调 ──────────────────
+## 面板只显示**当前角色**的参数，切角色时整体换成该角色的值（面板不会太大）。
+var _cur_char := "deepdeek"
+## 三层各自的 gain / phase 滑杆与数值 Label（键名同 GameSettings.BREATH_LAYER_KEYS）
+var _layer_sliders := {}
+var _layer_vals := {}
+var _char_lbl: Label = null
 
 
 func _init() -> void:
@@ -228,12 +238,41 @@ func _build() -> void:
 		mode_row.add_child(b)
 		_mode_btns.append(b)
 
+	v.add_child(UiKit.rule())
+
+	# —— 当前角色标题（切角色时刷新）——
+	_char_lbl = UiKit.dim("角色：deepdeek", FS, Color(0.95, 0.85, 0.55))
+	_char_lbl.name = "CharLabel"
+	v.add_child(_char_lbl)
+
+	# —— 三层各自的 gain / phase（每角色独立，共 6 条）——
+	# 顺序按语义排：头发→脸→身体，每条先幅度后相位。
+	_layer_sliders.clear()
+	_layer_vals.clear()
+	for spec in [
+			["hair_gain", "发·幅", GameSettings.BREATH_GAIN_MIN, GameSettings.BREATH_GAIN_MAX, 0.01],
+			["hair_phase", "发·相", GameSettings.BREATH_LAYER_PHASE_MIN, GameSettings.BREATH_LAYER_PHASE_MAX, 0.005],
+			["face_gain", "脸·幅", GameSettings.BREATH_GAIN_MIN, GameSettings.BREATH_GAIN_MAX, 0.01],
+			["face_phase", "脸·相", GameSettings.BREATH_LAYER_PHASE_MIN, GameSettings.BREATH_LAYER_PHASE_MAX, 0.005],
+			["body_gain", "身·幅", GameSettings.BREATH_GAIN_MIN, GameSettings.BREATH_GAIN_MAX, 0.01],
+			["body_phase", "身·相", GameSettings.BREATH_LAYER_PHASE_MIN, GameSettings.BREATH_LAYER_PHASE_MAX, 0.005]]:
+		var key := String(spec[0])
+		var row2 := _add_slider_row(v, String(spec[1]),
+				float(spec[2]), float(spec[3]), float(spec[4]),
+				GameSettings.breath_layer(_cur_char, key))
+		_layer_sliders[key] = row2["slider"]
+		_layer_vals[key] = row2["value"]
+		# 分层滑杆复用同一个回调，靠 key 区分是哪一个
+		(row2["slider"] as HSlider).value_changed.connect(
+				func(_v: float) -> void: _on_layer_changed(key))
+
 	# —— 一行只读汇总（截图取证用）——
 	_readout = UiKit.label("", FS, Color(0.60, 0.88, 1.0))
 	_readout.name = "Readout"
 	_readout.add_theme_color_override("font_outline_color", Color(0.0, 0.0, 0.0, 0.7))
 	_readout.add_theme_constant_override("outline_size", 2)
 	_readout.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_readout.autowrap_mode = TextServer.AUTOWRAP_OFF
 	v.add_child(_readout)
 
 
@@ -296,6 +335,55 @@ func _on_slider_changed(_v: float) -> void:
 	_emit_changed()
 
 
+## 分层滑杆变化：写进当前角色的那一层，并立即下发（不存盘，松手时存）
+func _on_layer_changed(key: String) -> void:
+	if not _layer_sliders.has(key):
+		return
+	var sl: HSlider = _layer_sliders[key]
+	GameSettings.set_breath_layer(_cur_char, key, float(sl.value))
+	var lv: Label = _layer_vals.get(key)
+	if lv != null:
+		lv.text = "%.3f" % float(sl.value)
+	_emit_layers()
+
+
+## 切到另一个角色：面板**整组换成该角色存着的值**（主人要求每个角色的调参器都不一样）
+## silent=true 时不发信号（选角流程里用，避免和 CharacterSelectScreen 自己的下发打架）
+func set_character(cid: String, silent: bool = true) -> void:
+	if not GameSettings.BREATH_CHARS.has(cid):
+		return
+	_cur_char = cid
+	if _char_lbl != null:
+		_char_lbl.text = "角色：%s" % cid
+	for key in _layer_sliders.keys():
+		var v := GameSettings.breath_layer(_cur_char, String(key))
+		(_layer_sliders[key] as HSlider).set_value_no_signal(v)
+		var lv2: Label = _layer_vals.get(key)
+		if lv2 != null:
+			lv2.text = "%.3f" % v
+	_refresh_readout()
+	if not silent:
+		_emit_layers()
+
+
+## 当前角色
+func current_character() -> String:
+	return _cur_char
+
+
+## 取当前角色三层参数快照
+func layer_params() -> Dictionary:
+	var out := {}
+	for key in _layer_sliders.keys():
+		out[key] = float((_layer_sliders[key] as HSlider).value)
+	return out
+
+
+
+func _emit_layers() -> void:
+	layers_changed.emit(layer_params())
+
+
 ## 松手才存盘：拖动中每帧都写会打爆磁盘
 func _on_drag_ended(_value_changed: bool) -> void:
 	GameSettings.save_to_disk()
@@ -343,8 +431,21 @@ func _refresh_readout() -> void:
 	_period_val.text = "%.2fs" % _period
 	_phase_val.text = "%.2f" % _phase
 	if _readout != null:
-		_readout.text = "amp %.4f   周期 %.2fs   相位 %.2f   %s" % [
-			_amp, _period, _phase, String(MODE_NAMES[clampi(_mode, 0, MODE_NAMES.size() - 1)])]
+		_readout.text = "amp %.4f  周期 %.2fs  %s" % [
+			_amp, _period, String(MODE_NAMES[clampi(_mode, 0, MODE_NAMES.size() - 1)])]
+		_readout.text += "
+%s 发 %.2f/%.2f  脸 %.2f/%.2f  身 %.2f/%.2f" % [
+			_cur_char,
+			float(_slider_val("hair_gain")), float(_slider_val("hair_phase")),
+			float(_slider_val("face_gain")), float(_slider_val("face_phase")),
+			float(_slider_val("body_gain")), float(_slider_val("body_phase"))]
+
+
+## 读某条分层滑杆的当前值（滑杆还没建时返回 0）
+func _slider_val(key: String) -> float:
+	if _layer_sliders.has(key):
+		return float((_layer_sliders[key] as HSlider).value)
+	return 0.0
 
 
 ## 选中态：青色描边 + 亮字；未选：暗描边 + 灰字。与选角界面的调参器同色系。

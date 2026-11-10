@@ -392,6 +392,24 @@ func _sync_breath_char() -> void:
 	if i < _big_body.size():
 		body = _big_body[i]
 	_breath.set_character(i, _big_texs[i], hair, face, body)
+	# 2026-11-10 主人要求：每个角色的呼吸参数都不一样 → 切角色时把该角色那套下发
+	var cid := current_id()
+	_apply_layers(cid)
+	if _breath_panel != null:
+		_breath_panel.set_character(cid)      # 面板整组换成该角色的值（静默，不回流）
+
+
+## 把某角色的三层参数从 GameSettings 读出来、推给呼吸层
+func _apply_layers(cid: String) -> void:
+	if _breath == null:
+		return
+	_breath.set_layer_params(
+			GameSettings.breath_layer(cid, "hair_gain"),
+			GameSettings.breath_layer(cid, "face_gain"),
+			GameSettings.breath_layer(cid, "body_gain"),
+			GameSettings.breath_layer(cid, "hair_phase"),
+			GameSettings.breath_layer(cid, "face_phase"),
+			GameSettings.breath_layer(cid, "body_phase"))
 
 
 ## 左右切换
@@ -414,6 +432,8 @@ func _build_breath_panel() -> void:
 	_breath_panel.name = "BreathDebugPanel"
 	add_child(_breath_panel)
 	_breath_panel.params_changed.connect(_on_breath_params_changed)
+	# 三层参数变化（每层 gain/phase）：面板改哪条就即时下发哪条
+	_breath_panel.layers_changed.connect(_on_breath_layers_changed)
 	# 启动回填：用存档值显式 set_params(..., emit_changed=false) —— 只同步面板 UI，
 	# **不发信号**，所以开局不会因为回填把呼吸重播/重置相位。回填完再手动推一次
 	# 给呼吸层（这条路径不发信号，必须显式调）。
@@ -424,6 +444,8 @@ func _build_breath_panel() -> void:
 	var sp_md := int(sp.get("mode", GameSettings.BREATH_MODE_DEF))
 	_breath_panel.set_params(sp_amp, sp_per, sp_ph, sp_md, false)
 	_on_breath_params_changed(sp_amp, sp_per, sp_ph, sp_md)
+	# 面板按当前角色刷新三层滑杆（静默，避免开局重播）
+	_breath_panel.set_character(current_id())
 
 
 ## 面板参数变化 → 呼吸层即时生效（周期变了 Tween 会重建，但相位连续，见呼吸层注释）
@@ -431,6 +453,16 @@ func _on_breath_params_changed(a: float, per: float, ph: float, m: int) -> void:
 	if _breath == null:
 		return
 	_breath.set_params(a, per, ph, m)
+
+
+## 三层参数变化 → 即时下发到呼吸层（面板已把值写进 GameSettings 对应角色分节）
+func _on_breath_layers_changed(layers: Dictionary) -> void:
+	if _breath == null:
+		return
+	_breath.set_layer_params(
+			float(layers.get("hair_gain", 0.0)), float(layers.get("face_gain", 0.0)),
+			float(layers.get("body_gain", 0.0)), float(layers.get("hair_phase", 0.0)),
+			float(layers.get("face_phase", 0.0)), float(layers.get("body_phase", 0.0)))
 
 
 ## 供测试/调试：开关呼吸面板（等同按一下 F2）

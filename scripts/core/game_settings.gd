@@ -62,6 +62,36 @@ const BREATH_PHASE_MIN := 0.0
 const BREATH_PHASE_MAX := 1.0
 const BREATH_MODE_MAX := 3
 
+## ── 2026-11-10 主人要求：呼吸参数按**角色**独立，且每层可单独调 ──────────
+## 每角色一套：amp / period / phase / mode + 三层各自的 gain / phase 偏移。
+## 四个角色的默认值不是随便填的，按各自画面里头发/身体的实际占比反推：
+##   Qwen  头发占比最大(23%) → 头发出彩、身体收敛
+##   GPT   头发仅 4%、身体 9% → 反向补偿，让可见部分动得明显
+##   Grok  双马尾弹性大 → 头发领先更多
+##   DeepSeek 长卷发居中
+const BREATH_CHARS := ["deepdeek", "kweno", "chatppt", "grock"]
+## 每角色的出厂预设：{layer_gain, layer_phase} × 3 层
+const BREATH_PRESETS := {
+	"deepdeek": {"hair_gain": 1.00, "face_gain": 0.60, "body_gain": 0.32,
+			"hair_phase": 0.06, "face_phase": 0.00, "body_phase": -0.07},
+	"kweno": {"hair_gain": 1.00, "face_gain": 0.58, "body_gain": 0.28,
+			"hair_phase": 0.07, "face_phase": 0.00, "body_phase": -0.08},
+	"chatppt": {"hair_gain": 0.85, "face_gain": 0.70, "body_gain": 0.42,
+			"hair_phase": 0.04, "face_phase": 0.00, "body_phase": -0.05},
+	"grock": {"hair_gain": 1.05, "face_gain": 0.62, "body_gain": 0.35,
+			"hair_phase": 0.06, "face_phase": 0.00, "body_phase": -0.07},
+}
+## 分层滑杆范围（gain 与 phase 共用一套，面板直接引用）
+const BREATH_GAIN_MIN := 0.0
+const BREATH_GAIN_MAX := 1.5
+const BREATH_LAYER_PHASE_MIN := -0.35
+const BREATH_LAYER_PHASE_MAX := 0.35
+const BREATH_LAYER_KEYS := ["hair_gain", "face_gain", "body_gain",
+		"hair_phase", "face_phase", "body_phase"]
+
+## 四个角色各自的分层参数（运行时唯一真相），初始 = 出厂预设
+static var breath_layers := {}
+
 
 static func load_from_disk() -> void:
 	var cfg := ConfigFile.new()
@@ -84,6 +114,17 @@ static func load_from_disk() -> void:
 			BREATH_PHASE_MIN, BREATH_PHASE_MAX)
 	breath_mode = clampi(int(cfg.get_value("breath", "mode", BREATH_MODE_DEF)),
 			0, BREATH_MODE_MAX)
+	# 四角色各自的分层参数：新键优先，缺项回落出厂预设（旧存档无这些键 → 全走出厂值）
+	breath_layers = {}
+	for cid in BREATH_CHARS:
+		var preset: Dictionary = BREATH_PRESETS[cid]
+		var d := {}
+		for k in BREATH_LAYER_KEYS:
+			var sect := "breath_%s" % cid
+			var lo := BREATH_GAIN_MIN if String(k).ends_with("gain") else BREATH_LAYER_PHASE_MIN
+			var hi := BREATH_GAIN_MAX if String(k).ends_with("gain") else BREATH_LAYER_PHASE_MAX
+			d[k] = clampf(float(cfg.get_value(sect, k, float(preset[k]))), lo, hi)
+		breath_layers[cid] = d
 	if ver < CFG_VERSION:
 		# v2：窗口模式默认改成真全屏。老配置只迁移这一次，之后主人自己切就尊重设置。
 		term_fullscreen = true
@@ -102,6 +143,13 @@ static func save_to_disk() -> void:
 	cfg.set_value("breath", "period", breath_period)
 	cfg.set_value("breath", "phase", breath_phase)
 	cfg.set_value("breath", "mode", breath_mode)
+	# 四角色分节（每角色一个 [breath_<id>] 段，六个键）
+	for cid in BREATH_CHARS:
+		if not breath_layers.has(cid):
+			continue
+		var d2: Dictionary = breath_layers[cid]
+		for k in BREATH_LAYER_KEYS:
+			cfg.set_value("breath_%s" % cid, k, float(d2.get(k, 0.0)))
 	cfg.save(PATH)
 
 
@@ -130,6 +178,42 @@ static func set_breath(p_amp: float, p_period: float, p_phase: float, p_mode: in
 
 
 ## 呼吸参数快照（键名与 BreathDebugPanel.get_params() 一致）
+## 取某角色某层的参数（缺项回落出厂预设，永不返回 null）
+static func breath_layer(cid: String, key: String) -> float:
+	if breath_layers.has(cid):
+		var d: Dictionary = breath_layers[cid]
+		if d.has(key):
+			return float(d[key])
+	var preset: Dictionary = BREATH_PRESETS.get(cid, BREATH_PRESETS["deepdeek"])
+	return float(preset.get(key, 0.0))
+
+
+## 取某角色三层参数的完整快照（面板切角色时整体刷新用）
+static func breath_layers_of(cid: String) -> Dictionary:
+	var out := {}
+	for k in BREATH_LAYER_KEYS:
+		out[k] = breath_layer(cid, k)
+	return out
+
+
+## 设某角色某层参数（夹到合法范围；**不自动存盘**，由面板松手时统一存）
+static func set_breath_layer(cid: String, key: String, v: float) -> void:
+	if not BREATH_CHARS.has(cid) or not BREATH_LAYER_KEYS.has(key):
+		return
+	var lo := BREATH_GAIN_MIN if String(key).ends_with("gain") else BREATH_LAYER_PHASE_MIN
+	var hi := BREATH_GAIN_MAX if String(key).ends_with("gain") else BREATH_LAYER_PHASE_MAX
+	if not breath_layers.has(cid):
+		breath_layers[cid] = breath_layers_of(cid)
+	(breath_layers[cid] as Dictionary)[key] = clampf(v, lo, hi)
+
+
+## 一次性设某角色三层参数（面板回填 / 测试用）
+static func set_breath_layers(cid: String, d: Dictionary) -> void:
+	for k in BREATH_LAYER_KEYS:
+		if d.has(k):
+			set_breath_layer(cid, k, float(d[k]))
+
+
 static func breath_params() -> Dictionary:
 	return {
 		"amp": breath_amp,
