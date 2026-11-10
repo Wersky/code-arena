@@ -70,6 +70,10 @@ func setup(portrait: Texture2D, face_mask: Texture2D, body_mask: Texture2D,
 	_mat.set_shader_parameter("head_lag_deg", 100.0)
 	_mat.set_shader_parameter("hair_lag_per_height", 240.0)
 	_mat.set_shader_parameter("lock_bottom", 0.12)
+	# 横竖分离：横向相位滞后 + 纵向偏移 + 横向总开关
+	_mat.set_shader_parameter("x_lag_deg", 0.0)
+	_mat.set_shader_parameter("y_bias", 0.35)
+	_mat.set_shader_parameter("use_horiz", true)
 	texture = portrait
 	mesh = _build_mesh(portrait, face_mask, body_mask, hair_mask)
 	_built = true
@@ -209,6 +213,50 @@ func set_hair(hair_x: float, hair_y: float, lag_per_height: float) -> void:
 	_mat.set_shader_parameter("hair_x", hair_x)
 	_mat.set_shader_parameter("hair_y", hair_y)
 	_mat.set_shader_parameter("hair_lag_per_height", lag_per_height)
+
+
+## 横向开关（主人可关掉 → 纯上下呼吸，彻底消除任何旋转观感）
+func set_horiz(on: bool) -> void:
+	if _mat != null:
+		_mat.set_shader_parameter("use_horiz", on)
+
+
+## 横竖分离参数：横向相对纵向的相位滞后（度）+ 纵向偏移量
+func set_axis_split(x_lag_deg: float, y_bias: float) -> void:
+	if _mat == null:
+		return
+	_mat.set_shader_parameter("x_lag_deg", x_lag_deg)
+	_mat.set_shader_parameter("y_bias", clampf(y_bias, 0.0, 1.0))
+
+
+## 底部锁定比例
+func set_lock_bottom(v: float) -> void:
+	if _mat != null:
+		_mat.set_shader_parameter("lock_bottom", clampf(v, 0.0, 0.5))
+
+
+## 读回全部 V4 参数（面板回填 / 测试用）
+func get_v4_params() -> Dictionary:
+	var out := {}
+	if _mat == null:
+		return out
+	for k in ["amp", "chest_x", "chest_y", "belly_x", "belly_y", "head_y",
+			"hair_x", "hair_y", "belly_lag_deg", "head_lag_deg",
+			"hair_lag_per_height", "lock_bottom", "x_lag_deg", "y_bias", "use_horiz"]:
+		var v = _mat.get_shader_parameter(k)
+		if v != null:
+			out[k] = v
+	return out
+
+
+## 一次性设多个 V4 参数（面板拖动用）
+func set_v4_param(key: String, value: float) -> void:
+	if _mat == null:
+		return
+	if key == "use_horiz":
+		_mat.set_shader_parameter(key, value > 0.5)
+	else:
+		_mat.set_shader_parameter(key, value)
 
 
 func set_lag(belly_deg: float, head_deg: float) -> void:

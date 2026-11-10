@@ -61,6 +61,11 @@ const BREATH_ENGINE_MESH := 1
 const BREATH_ENGINE_DEF := BREATH_ENGINE_MESH
 static var breath_engine := BREATH_ENGINE_DEF
 
+## 横向位移总开关（2026-11-10 主人反馈「像旋转」）：关掉 = 纯上下呼吸。
+## 横向是「胸腔左右外扩」，纵向是「上提回落」；两者同时做强时观感偏转。
+## 默认关 —— 主人明确要「上下、左右」分开，默认只做上下最稳。
+static var breath_use_horiz := false
+
 ## 面板滑杆的取值范围（唯一真相，BreathDebugPanel 直接引用）
 const BREATH_AMP_MIN := 0.0
 const BREATH_AMP_MAX := 0.08   ## 上限抬到 0.08（主人 2026-11-10 反馈 0.008 完全看不到，留足调试余量）
@@ -156,6 +161,7 @@ static func load_from_disk() -> void:
 			0, BREATH_MODE_MAX)
 	breath_engine = clampi(int(cfg.get_value("breath", "engine", BREATH_ENGINE_DEF)),
 			BREATH_ENGINE_UV, BREATH_ENGINE_MESH)
+	breath_use_horiz = bool(cfg.get_value("breath", "use_horiz", false))
 	# 四角色各自的分层参数：新键优先，缺项回落出厂预设（旧存档无这些键 → 全走出厂值）
 	breath_layers = {}
 	for cid in BREATH_CHARS:
@@ -186,6 +192,7 @@ static func save_to_disk() -> void:
 	cfg.set_value("breath", "phase", breath_phase)
 	cfg.set_value("breath", "mode", breath_mode)
 	cfg.set_value("breath", "engine", breath_engine)
+	cfg.set_value("breath", "use_horiz", breath_use_horiz)
 	# 四角色分节（每角色一个 [breath_<id>] 段，六个键）
 	for cid in BREATH_CHARS:
 		if not breath_layers.has(cid):

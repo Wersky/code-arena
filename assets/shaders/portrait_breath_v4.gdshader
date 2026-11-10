@@ -47,6 +47,16 @@ uniform float head_lag_deg : hint_range(0.0, 180.0) = 100.0;
 // 240° 表示发梢比发根晚约 2/3 个周期 —— 视觉上是「一波往下传」
 uniform float hair_lag_per_height : hint_range(0.0, 720.0) = 240.0;
 
+// ── 横竖分离（2026-11-10 主人反馈：整体观感像旋转）─────────────────
+// 根因：原来横向(chest_x)与纵向(chest_y)共用同一个 sin(phase)，两者同相且幅度固定，
+//       合成后是沿固定斜线的往复运动；再叠加头发的横向摆动，整体就像在「转」。
+// 修法：横向与纵向各用**独立相位**（可各自设滞后角），并且纵向改用「半波整流偏移」——
+//       纵向只做吸/呼单向推进（上提-回落），横向才做完整往复（外扩-回收），
+//       不再是同一条斜线来回，所以不会出现旋转观感。
+uniform float x_lag_deg : hint_range(0.0, 180.0) = 0.0;    // 横向相对纵向的相位滞后
+uniform float y_bias : hint_range(0.0, 1.0) = 0.35;        // 纵向偏移：越大越偏「持续上提」
+uniform bool use_horiz = true;             // 关掉横向 = 纯上下呼吸
+
 // 底部锁定：画面最下方 12% 不位移，避免脚/桌边被拉出画面
 uniform float lock_bottom : hint_range(0.0, 0.5) = 0.12;
 
@@ -64,30 +74,36 @@ void vertex() {
 	// 三个部位的相位（滞后用弧度）
 	float lag_b = radians(belly_lag_deg);
 	float lag_h = radians(head_lag_deg);
-	float s_chest = sin(phase);
-	float s_belly = sin(phase - lag_b);
-	float s_head = sin(phase - lag_h);
+	float lag_x = radians(x_lag_deg);
 
-	// 胸腔：**横向外扩 + 上提**同时进行（这是 UV 方案做不到的核心）
-	// sign(VERTEX.x - 中心x) 让左右两侧朝相反方向走 = 真正的扩张而非平移
-	// 网格局部坐标原点在立绘中心，所以直接用 VERTEX.x 的符号
+	// 横向与纵向用**不同相位**：x 走完整 cos 往复，y 走带偏移的 sin（偏上提）
+	float sx = cos(phase - lag_x);
+	float sy = sin(phase) * (1.0 - y_bias) + y_bias;
+	float sx_b = cos(phase - lag_b - lag_x);
+	float sy_b = sin(phase - lag_b) * (1.0 - y_bias) + y_bias;
+	float sy_h = sin(phase - lag_h) * (1.0 - y_bias) + y_bias;
+
+	float hx = use_horiz ? 1.0 : 0.0;   // 横向总开关
+
+	// 胸腔：横向外扩（左右反向）与纵向起伏各自独立
 	float chest_x_dir = sign(VERTEX.x);
-	VERTEX.x += chest_x_dir * wc * s_chest * chest_x * amp * lock;
-	VERTEX.y -= wc * s_chest * chest_y * amp * lock;
+	VERTEX.x += chest_x_dir * wc * sx * chest_x * amp * lock * hx;
+	VERTEX.y -= wc * (sy - y_bias) * chest_y * amp * lock;
 
 	// 腹部：更小幅度、滞后相位
-	VERTEX.x += sign(VERTEX.x) * wb * s_belly * belly_x * amp * lock;
-	VERTEX.y -= wb * s_belly * belly_y * amp * lock;
+	VERTEX.x += sign(VERTEX.x) * wb * sx_b * belly_x * amp * lock * hx;
+	VERTEX.y -= wb * (sy_b - y_bias) * belly_y * amp * lock;
 
 	// 头颈：只垂直，不做横向（避免五官被左右拉扯）
-	VERTEX.y += wh * s_head * head_y * amp * lock;
+	VERTEX.y += wh * (sy_h - y_bias) * head_y * amp * lock;
 
 	// 头发：相位随高度连续滞后（UV.y 越大越靠下 = 越发梢）
 	float hair_lag = radians(hair_lag_per_height) * UV.y;
-	float s_hair = sin(phase - hair_lag);
+	float sh_x = cos(phase - hair_lag - lag_x);
+	float sh_y = sin(phase - hair_lag) * (1.0 - y_bias) + y_bias;
 	// 横向飘：整片同向摆（头发是被气流带着走，不是左右对称扩张）
-	VERTEX.x += wr * s_hair * hair_x * amp * lock;
-	VERTEX.y += wr * cos(phase - hair_lag) * hair_y * amp * lock * 0.5;
+	VERTEX.x += wr * sh_x * hair_x * amp * lock * hx;
+	VERTEX.y += wr * (sh_y - y_bias) * hair_y * amp * lock;
 }
 
 void fragment() {

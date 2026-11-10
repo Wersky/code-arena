@@ -282,9 +282,13 @@ func _restart_tween() -> void:
 	if _frozen or not is_inside_tree():
 		return
 	var tw := create_tween()
+	# 2026-11-10 主人反馈修正：原 TRANS_SINE + EASE_IN_OUT 让相位推进速度
+	# 在 0 和 1 两端都趋近于 0 → 每个循环边界「停一下再加速」，观感别扭。
+	# sin 本身已是往复运动，外面不该再套一层缓动。
+	# 改 TRANS_LINEAR：相位匀速前进，速度由 period 唯一决定，全程无停顿。
 	tw.tween_method(_set_cycle, 0.0, 1.0, maxf(0.05, period)) \
-			.set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN_OUT)
-	tw.set_loops()        # 0 = 无限：0→1→0 无缝衔接（两端速度都为 0）
+			.set_trans(Tween.TRANS_LINEAR).set_ease(Tween.EASE_IN_OUT)
+	tw.set_loops()        # linear 推进 + sin 往复 = 周期运动，无停顿
 	_tween = tw
 
 
@@ -306,6 +310,11 @@ func _fit_mesh_to_canvas(tex: Texture2D) -> void:
 	var target := size if size.x > 0.0 else Vector2(1600, 900)
 	_mesh_layer.scale = Vector2(target.x / tsz.x, target.y / tsz.y)
 	_mesh_layer.position = target * 0.5      # 网格原点在纹理中心 → 放到画布中心
+
+
+## 取 V4 网格层（面板要直接改它的 uniform）
+func get_mesh_layer() -> PortraitBreathMesh:
+	return _mesh_layer
 
 
 ## 引擎切换（面板用）：true=V4 网格形变，false=V3 UV 平移

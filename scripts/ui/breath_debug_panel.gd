@@ -92,6 +92,9 @@ var _cur_char := "deepdeek"
 var _layer_sliders := {}
 var _layer_vals := {}
 var _char_lbl: Label = null
+## V4 引擎的 mesh 引用（面板直接改它的 uniform）
+var _mesh_ref: PortraitBreathMesh = null
+var _horiz_btn: Button = null
 
 
 func _init() -> void:
@@ -273,50 +276,73 @@ func _build() -> void:
 		_engine_btns.append(eb)
 	_sync_engine_buttons()
 
-	# —— 8 层各自的 gain / phase（每角色独立，共 16 条）——
-	# V3：头发细分成 5 段（呆毛顶/左鬓/右鬓/长垂发/发梢）+ 脸 + 身体 + 翅膀。
-	# 16 条竖排会太长，改成**左列调幅度、右列调相位**的双列网格。
+	# —— V4 引擎参数（2026-11-10 切到网格形变后的正确调参项）——
+	# V3 那套 8 层 gain/phase 是 UV 位移模型的产物，V4 用的是
+	# 「胸/腹/头/发的横竖像素幅度 + 滞后角」，两套参数模型不兼容。
+	# 面板只显示**当前引擎**对应的参数，切引擎自动换。
 	_layer_sliders.clear()
 	_layer_vals.clear()
 	var grid := HBoxContainer.new()
 	grid.name = "LayerGrid"
 	grid.add_theme_constant_override("separation", UiKit.SP_3)
 	v.add_child(grid)
+	var col_l := VBoxContainer.new()
+	col_l.add_theme_constant_override("separation", 2)
+	col_l.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	grid.add_child(col_l)
+	var col_r := VBoxContainer.new()
+	col_r.add_theme_constant_override("separation", 2)
+	col_r.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	grid.add_child(col_r)
 
-	# 左列：8 条幅度
-	var col_g := VBoxContainer.new()
-	col_g.add_theme_constant_override("separation", 2)
-	col_g.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	grid.add_child(col_g)
-	# 右列：8 条相位
-	var col_p := VBoxContainer.new()
-	col_p.add_theme_constant_override("separation", 2)
-	col_p.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	grid.add_child(col_p)
+	# 左列：幅度（像素单位，1600x900 画布下 10px ≈ 画面高 1.1%）
+	# 右列：相位滞后 / 其他
+	var specs := [
+		["chest_x", "胸横", 0.0, 30.0, 0.5, col_l],
+		["chest_y", "胸纵", 0.0, 30.0, 0.5, col_l],
+		["belly_x", "腹横", 0.0, 30.0, 0.5, col_l],
+		["belly_y", "腹纵", 0.0, 30.0, 0.5, col_l],
+		["head_y", "头纵", 0.0, 30.0, 0.5, col_l],
+		["hair_x", "发横", 0.0, 40.0, 0.5, col_l],
+		["hair_y", "发纵", 0.0, 40.0, 0.5, col_l],
+		["lock_bottom", "底锁", 0.0, 0.5, 0.01, col_l],
+		["belly_lag_deg", "腹滞°", 0.0, 180.0, 1.0, col_r],
+		["head_lag_deg", "头滞°", 0.0, 180.0, 1.0, col_r],
+		["hair_lag_per_height", "发高滞°", 0.0, 720.0, 5.0, col_r],
+		["x_lag_deg", "横相滞°", 0.0, 180.0, 1.0, col_r],
+		["y_bias", "纵偏移", 0.0, 1.0, 0.02, col_r],
+	]
+	var v4p := {}
+	if _mesh_ref != null:
+		v4p = _mesh_ref.get_v4_params()
+	for sp in specs:
+		var key := String(sp[0])
+		var cur := float(v4p.get(key, 0.0))
+		var row := _add_slider_row(sp[5] as VBoxContainer, String(sp[1]),
+				float(sp[2]), float(sp[3]), float(sp[4]), cur)
+		_layer_sliders[key] = row["slider"]
+		_layer_vals[key] = row["value"]
+		(row["slider"] as HSlider).value_changed.connect(
+				func(_v: float) -> void: _on_v4_changed(key))
 
-	var gain_keys := ["h1_gain", "h2_gain", "h3_gain", "h4_gain", "h5_gain",
-			"face_gain", "body_gain", "wing_gain"]
-	var phase_keys := ["h1_phase", "h2_phase", "h3_phase", "h4_phase", "h5_phase",
-			"face_phase", "body_phase", "wing_phase"]
-	for i in gain_keys.size():
-		var gk := String(gain_keys[i])
-		var pk := String(phase_keys[i])
-		# 幅度：0~1.5
-		var rg := _add_slider_row(col_g, gk.substr(0, gk.length() - 5),
-				GameSettings.BREATH_GAIN_MIN, GameSettings.BREATH_GAIN_MAX, 0.01,
-				GameSettings.breath_layer(_cur_char, gk))
-		_layer_sliders[gk] = rg["slider"]
-		_layer_vals[gk] = rg["value"]
-		(rg["slider"] as HSlider).value_changed.connect(
-				func(_v: float) -> void: _on_layer_changed(gk))
-		# 相位：-0.35~0.35
-		var rp := _add_slider_row(col_p, gk.substr(0, gk.length() - 5) + "相",
-				GameSettings.BREATH_LAYER_PHASE_MIN, GameSettings.BREATH_LAYER_PHASE_MAX, 0.005,
-				GameSettings.breath_layer(_cur_char, pk))
-		_layer_sliders[pk] = rp["slider"]
-		_layer_vals[pk] = rp["value"]
-		(rp["slider"] as HSlider).value_changed.connect(
-				func(_v: float) -> void: _on_layer_changed(pk))
+	# 横向总开关（关掉 = 纯上下呼吸，彻底没有旋转感）
+	var hz_row := HBoxContainer.new()
+	hz_row.add_theme_constant_override("separation", UiKit.SP_2)
+	v.add_child(hz_row)
+	var hz_lbl := UiKit.dim("横向", FS, Color(0.85, 0.92, 1.0))
+	hz_lbl.custom_minimum_size = Vector2(KEY_COL_W, 0)
+	hz_row.add_child(hz_lbl)
+	_horiz_btn = Button.new()
+	_horiz_btn.text = "开"
+	_horiz_btn.toggle_mode = true
+	_horiz_btn.focus_mode = Control.FOCUS_NONE
+	_horiz_btn.add_theme_font_size_override("font_size", FS)
+	_horiz_btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	var hz_on := bool(v4p.get("use_horiz", true))
+	_horiz_btn.set_pressed_no_signal(hz_on)
+	_style_mode_btn(_horiz_btn, hz_on)
+	_horiz_btn.pressed.connect(_on_horiz_toggle)
+	hz_row.add_child(_horiz_btn)
 
 	# —— 一行只读汇总（截图取证用）——
 	_readout = UiKit.label("", FS, Color(0.60, 0.88, 1.0))
@@ -397,6 +423,37 @@ func _on_layer_changed(key: String) -> void:
 	if lv != null:
 		lv.text = "%.3f" % float(sl.value)
 	_emit_layers()
+
+
+## 注入 V4 mesh 引用（CharacterSelectScreen 在切角色时调）
+func bind_mesh(m: PortraitBreathMesh) -> void:
+	_mesh_ref = m
+
+
+## V4 参数改动 → 直接写进 mesh 的 uniform（V4 不按角色独立存盘，参数全局共享）
+func _on_v4_changed(key: String) -> void:
+	if not _layer_sliders.has(key):
+		return
+	var sl: HSlider = _layer_sliders[key]
+	var lv: Label = _layer_vals.get(key)
+	if lv != null:
+		lv.text = "%.2f" % float(sl.value)
+	if _mesh_ref != null:
+		_mesh_ref.set_v4_param(key, float(sl.value))
+	_refresh_readout()
+
+
+## 横向总开关
+func _on_horiz_toggle() -> void:
+	var on := not _horiz_btn.button_pressed
+	_horiz_btn.set_pressed_no_signal(on)
+	_style_mode_btn(_horiz_btn, on)
+	_horiz_btn.text = "开" if on else "关"
+	if _mesh_ref != null:
+		_mesh_ref.set_horiz(on)
+	GameSettings.breath_use_horiz = on
+	GameSettings.save_to_disk()
+	_refresh_readout()
 
 
 ## 切到另一个角色：面板**整组换成该角色存着的值**（主人要求每个角色的调参器都不一样）

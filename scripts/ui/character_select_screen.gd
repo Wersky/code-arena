@@ -498,6 +498,13 @@ func _build_breath_panel() -> void:
 	# 呼吸引擎按配置生效（默认 V4 网格；V3 UV 留作降级对比）
 	if _breath != null:
 		_breath.set_engine(GameSettings.breath_engine == GameSettings.BREATH_ENGINE_MESH)
+	# 面板直接改 V4 的 mesh uniform
+	if _breath_panel != null:
+		_breath_panel.bind_mesh(_breath.get_mesh_layer())
+	# 横向开关按配置（主人要「上下、左右」分开，默认只做上下）
+	var ml := _breath.get_mesh_layer()
+	if ml != null:
+		ml.set_horiz(GameSettings.breath_use_horiz)
 
 
 ## 面板参数变化 → 呼吸层即时生效（周期变了 Tween 会重建，但相位连续，见呼吸层注释）
