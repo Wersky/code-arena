@@ -1948,6 +1948,45 @@ func _test_mosaic_and_select() -> void:
 			"圆点行在底部（y=%.0f > 700）" % dot_row.position.y)
 	_check(sel._left_btn != null and sel._right_btn != null, "左右切换箭头仍在")
 
+	# ── 呼吸 V4：网格顶点形变（2026-11-10 主人要求「商业级，UV shader 太差」）──
+	# V1~V3 是 UV 平移（刚体位移），做不出胸廓横向扩张；V4 改顶点级形变。
+	var bm := PortraitBreathMesh.new()
+	_host.add_child(bm)
+	await process_frame
+	var ptex: Texture2D = load("res://assets/art/select/qwen.png")
+	var fmask: Texture2D = load("res://assets/art/select/layer-qwen-face.png")
+	var bmask: Texture2D = load("res://assets/art/select/layer-qwen-body.png")
+	var hmask: Texture2D = load("res://assets/art/select/layer-qwen-hair.png")
+	bm.setup(ptex, fmask, bmask, hmask)
+	await process_frame
+	_check(bm.is_built(), "呼吸网格已构建")
+	_check(bm.mesh != null and bm.mesh.get_surface_count() == 1, "网格只有一个 surface")
+	# 顶点数 = (COLS+1)*(ROWS+1)，三角面数 = COLS*ROWS*2
+	var arr := bm.mesh.surface_get_arrays(0)
+	var nverts: int = (arr[Mesh.ARRAY_VERTEX] as PackedVector3Array).size()
+	var nidx: int = (arr[Mesh.ARRAY_INDEX] as PackedInt32Array).size()
+	_eq(nverts, (PortraitBreathMesh.COLS + 1) * (PortraitBreathMesh.ROWS + 1),
+			"顶点数 = (COLS+1)*(ROWS+1)")
+	_eq(nidx, PortraitBreathMesh.COLS * PortraitBreathMesh.ROWS * 6, "三角面索引数正确")
+	# 权重场：四个通道都要有非零值（胸/腹/头/发）
+	var wst := bm.weight_stats()
+	_check(float(wst["max_chest"]) > 0.1, "胸腔权重非零（%.2f）" % wst["max_chest"])
+	_check(float(wst["max_belly"]) > 0.1, "腹部权重非零（%.2f）" % wst["max_belly"])
+	_check(float(wst["max_head"]) > 0.01, "头颈权重非零（%.2f）" % wst["max_head"])
+	# 顶点色 A 通道（头发）非零
+	var cols: PackedColorArray = arr[Mesh.ARRAY_COLOR]
+	var max_hair := 0.0
+	for c in cols:
+		max_hair = maxf(max_hair, c.a)
+	_check(max_hair > 0.1, "头发权重非零（%.2f），且烘在顶点色 A 通道" % max_hair)
+	# 顶点以中心为原点 → sign(VERTEX.x) 才能做左右对称外扩
+	var v0: Vector3 = (arr[Mesh.ARRAY_VERTEX] as PackedVector3Array)[0]
+	_check(v0.x < 0.0, "顶点使用中心原点局部坐标（左上角 x<0）")
+	bm.set_phase(PI * 0.5)
+	_check(is_equal_approx(bm._phase, PI * 0.5), "相位可推进")
+	bm.queue_free()
+	await process_frame
+
 	# ── 左下角转场调速器（2026-11-09 主人要求：可调 + 落盘 + 以主人填的为准）──
 	_check(sel._tuner_panel != null, "左下角调速器已构建")
 	_check(sel._tuner_panel.position.x < 100.0 and sel._tuner_panel.position.y > 600.0,
@@ -2128,8 +2167,10 @@ func _test_breath() -> void:
 	var dp: Dictionary = panel.get_params()
 	for k in ["amp", "period", "phase", "mode"]:
 		_check(dp.has(k), "面板 get_params() 含键 %s" % k)
-	_check(is_equal_approx(float(dp.get("amp", -1.0)), 0.008),
-			"面板默认幅度 = 0.8%%（得 %s）" % str(dp.get("amp")))
+	# 2026-11-10 主人反馈「红框里的头发没动静」：0.008 在 900 高画面上只有 7px，
+	# 且旧底边锚定把画面下半部压死（发梢只剩 0.18px）。默认改 0.02（约 18px）。
+	_check(is_equal_approx(float(dp.get("amp", -1.0)), 0.02),
+			"面板默认幅度 = 2.0%%（得 %s）" % str(dp.get("amp")))
 	_check(is_equal_approx(float(dp.get("period", -1.0)), 4.0),
 			"面板默认周期 = 4.0s（得 %s）" % str(dp.get("period")))
 	_check(int(dp.get("mode", -1)) == 0, "面板默认方案 = UV 微起伏（mode 0，得 %s）"

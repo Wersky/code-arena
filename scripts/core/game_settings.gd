@@ -43,7 +43,7 @@ const SELECT_SWAP_MAX := 3.00
 ## 反而把主人选过的「铺满屏幕」冲掉）。
 ## 默认值单独立成常量：load 时的 fallback 必须用**常量**，不能用 static var 自己
 ## （否则内存里被改脏过就再也回不到出厂值了，实测踩过）。
-const BREATH_AMP_DEF := 0.008   ## 位移幅度（UV 单位，0.008 = 0.8%）
+const BREATH_AMP_DEF := 0.02    ## 位移幅度（UV 单位）。0.02 在 900 高画面上约 18px，肉眼可见
 const BREATH_PERIOD_DEF := 4.0  ## 周期（秒）
 const BREATH_PHASE_DEF := 0.0   ## 基准相位（0~1，1 = 一个整周期）
 const BREATH_MODE_DEF := 0      ## 0=上下起伏 1=左右起伏 2=整图缩放 3=关闭

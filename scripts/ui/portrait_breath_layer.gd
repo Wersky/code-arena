@@ -71,6 +71,11 @@ var _offset := 0.0
 var _frozen := false
 var _frozen_progress := 0.0
 
+## V4 网格形变（2026-11-10 主人要求「商业级，UV shader 太差」）：
+## 躯干 + 头发改走顶点级形变（能做胸廓横向扩张），旧的 UV 层保留作为兜底/对照。
+## 由 GameSettings 的 breath_engine 开关决定用哪个：0=UV(V3) 1=Mesh(V4)
+var _mesh_layer: PortraitBreathMesh = null
+var use_mesh_engine := true
 var _tex: Texture2D = null
 ## 八层遮罩（2026-11-10 V3）：头发细分成 5 段 + 脸 + 身体 + 翅膀
 var _mask_hair: Texture2D = null      ## 头发母集（保留，用于降级与统计）
@@ -92,6 +97,14 @@ func _init() -> void:
 	_mat.set_shader_parameter("amp", amp)
 	_mat.set_shader_parameter("use_layers", false)
 
+	# V4 网格层：铺满本层，自己持有 ArrayMesh（顶点权重场）
+	_mesh_layer = PortraitBreathMesh.new()
+	_mesh_layer.name = "BreathMesh"
+	# MeshInstance2D 是 Node2D，没有 size 属性：
+	# 网格顶点是「纹理像素、以中心为原点」，所以按 画布尺寸/纹理尺寸 缩放并平移到中心。
+	_mesh_layer.visible = false
+	add_child(_mesh_layer)
+
 	_rect = ColorRect.new()
 	_rect.name = "BreathRect"
 	_rect.set_anchors_preset(Control.PRESET_FULL_RECT)
@@ -112,6 +125,8 @@ func _ready() -> void:
 ## SCALE 模式绕底边中点缩放：立绘像被地面钉住，往上长（不会在左右露底）
 func _on_resized() -> void:
 	pivot_offset = Vector2(size.x * 0.5, size.y)
+	if _mesh_layer != null and _tex != null:
+		_fit_mesh_to_canvas(_tex)
 
 
 # ── 对外：纹理 / 遮罩 ────────────────────────────────────────────────��────
@@ -131,6 +146,16 @@ func set_character(idx: int, tex: Texture2D, hair: Texture2D = null,
 	if _mat == null:
 		return
 	_mat.set_shader_parameter("tex_src", tex)
+	# V4：同一份纹理 + 同一批遮罩，构建/重建网格（躯干+头发走顶点形变）
+	if _mesh_layer != null:
+		if tex != null and use_mesh_engine:
+			_mesh_layer.setup(tex, face, body, hair)
+			_fit_mesh_to_canvas(tex)
+			_mesh_layer.visible = true
+			_rect.visible = false
+		else:
+			_mesh_layer.visible = false
+			_rect.visible = true
 	# ── 头发 5 段（V3 核心：一缕一缕独立飘动）──
 	# 缺哪段就传 null，shader 里该层采样到 0，归一化自动退让，不会报错。
 	for i in 5:
@@ -271,11 +296,35 @@ func _set_cycle(v: float) -> void:
 
 
 # ── 把参数落到材质 / 变换上 ──────────────────────────────────────────────
+## 把网格缩放到铺满本层：网格是按纹理像素建的，画布可能不同尺寸
+func _fit_mesh_to_canvas(tex: Texture2D) -> void:
+	if _mesh_layer == null or tex == null:
+		return
+	var tsz := Vector2(tex.get_size())
+	if tsz.x <= 0.0 or tsz.y <= 0.0:
+		return
+	var target := size if size.x > 0.0 else Vector2(1600, 900)
+	_mesh_layer.scale = Vector2(target.x / tsz.x, target.y / tsz.y)
+	_mesh_layer.position = target * 0.5      # 网格原点在纹理中心 → 放到画布中心
+
+
+## 引擎切换（面板用）：true=V4 网格形变，false=V3 UV 平移
+func set_engine(mesh_engine: bool) -> void:
+	use_mesh_engine = mesh_engine
+	if _mesh_layer != null:
+		_mesh_layer.visible = mesh_engine and _tex != null
+	if _rect != null:
+		_rect.visible = not mesh_engine
+
+
 func _apply() -> void:
 	if _mat == null:
 		return
 	var p := current_progress()
 	_mat.set_shader_parameter("progress", p)
+	# V4 网格引擎：相位直接推给顶点着色器（progress 0..1 → 弧度）
+	if _mesh_layer != null and _mesh_layer.visible:
+		_mesh_layer.set_phase(p * TAU)
 	if mode == MODE_OFF:
 		# 关闭：位移与缩放都归零 → 本层就是底图的精确复制，看不出任何差别
 		_mat.set_shader_parameter("amp", 0.0)

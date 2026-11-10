@@ -64,9 +64,13 @@ uniform float wing_phase : hint_range(-1.0, 1.0) = -0.16; // 翅膀最滞后
 uniform bool use_layers = false;
 
 void fragment() {
-	// ---- 1. 底边锚定权重：底部不动，越往上越大 ----
+	// ---- 1. 底边锚定权重 ----
+	// 2026-11-10 修正：原来 smoothstep(0, 0.92, ...) 会把画面下半部全压死，
+	// 而头发是**披下来**的、长发主体正好在画面下半 —— 实测发梢段位移只剩 0.18px，
+	// 主人反馈「红框里的头发没动静」就是这个原因。
+	// 现在只压最底部 15%（避免画面底边被拉出缝），其余区域接近满权重。
 	float hh = clamp(1.0 - UV.y, 0.0, 1.0);
-	float w_base = smoothstep(0.0, 0.92, hh);
+	float w_base = smoothstep(0.0, 0.15, hh);
 
 	// ---- 2. 采样 8 层遮罩 ----
 	float m1 = texture(tex_h1, UV).r;

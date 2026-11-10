@@ -6,8 +6,11 @@ render_mode unshaded, blend_mix;
 // 为什么单独一个 shader：
 //   黑洞不是「呼吸」——它要的是**持续旋转扭曲**，而呼吸是往复的纵向位移。
 //   两者语义不同、周期不同、不该混在一个 shader 里互相牵制。
-//   本 shader 只作用于黑洞那一小块区域（由 tex_region 限定），
-//   呼吸层继续管头发/脸/身体/翅膀，互不干扰。
+//
+// ⚠ 2026-11-10 修正（V4 呼吸引入后发现）：本层**绝不能重绘整个画面**。
+//   早期版本在遮罩外直接 `COLOR = base`（基图原样），等于把整张不动的立绘
+//   重新画了一遍盖在呼吸层上 —— GPT 的呼吸因此完全消失（实测位移像素仅 133）。
+//   现在：遮罩外**输出透明**，只有黑洞区域可见，其余交给下面的呼吸层。
 //
 // 视觉构成（分三层叠加）：
 //   ① 旋涡扭曲：极坐标下把 UV 沿 θ 方向按半径衰减地扭转 → 内圈转得飞快、外圈几乎不动
@@ -32,7 +35,8 @@ void fragment() {
 	vec4 base = texture(tex_src, UV);
 	float m = texture(tex_region, UV).r;
 	if (m < 0.01) {
-		COLOR = base;          // 区域外直接放行，一点不改
+		// 区域外**必须透明**：让下面的呼吸层透出来，而不是把静止的基图重绘一遍
+		COLOR = vec4(0.0);
 	} else {
 		// ---- 1. 转到以黑洞中心为原点的、aspect 校正过的极坐标 ----
 		vec2 p = UV - center;
@@ -60,7 +64,9 @@ void fragment() {
 		float hole = smoothstep(core, core * 0.72, r);
 		col = mix(col, vec3(0.015, 0.0, 0.005), hole);
 
-		// ---- 6. 按遮罩强度混回原图（边缘软过渡，不会出现硬边）----
-		COLOR = vec4(mix(base.rgb, col, clamp(m, 0.0, 1.0)), base.a);
+		// ---- 6. 按遮罩强度决定可见度（边缘软过渡，不会出现硬边）----
+		// alpha = m：区域内显示扭曲结果，区域外透明（交还给呼吸层）
+		vec3 c2 = mix(base.rgb, col, clamp(m, 0.0, 1.0));
+		COLOR = vec4(c2, clamp(m, 0.0, 1.0) * base.a);
 	}
 }

@@ -571,7 +571,8 @@ func _maybe_capture() -> void:
 	if screen in ["menu", "arena", "battle", "intro", "reward", "result",
 			"menuhover", "rig", "rigwalk", "loadrun", "card", "cardtext", "cardcost", "terminal", "termgif",
 			"termdump", "hero", "stairs", "launch", "launch2", "arenalayout", "sendtest", "ricetest",
-			"patchdemo", "wishpanel", "ripple", "morph", "select", "mosaic", "flow", "exitmorph", "fandbg"]:
+			"patchdemo", "wishpanel", "ripple", "morph", "select", "mosaic", "flow", "exitmorph", "fandbg",
+			"breath"]:
 		run.reset_run()
 		if screen == "launch" or screen == "launch2":
 			var sc := _current as LaunchScreen
@@ -838,6 +839,37 @@ func _maybe_capture() -> void:
 				get_viewport().get_texture().get_image().save_png(
 						"%s-f%02d.png" % [out_path, i])
 			print("[shot=mosaic] 已存 %d 档 → %s-fNN.png" % [steps.size(), out_path])
+		elif screen == "breath":
+			# 呼吸验收（2026-11-10）：对每个角色取「谷值 p=0.75」与「峰值 p=0.25」两帧，
+			# 差值就是该角色这一层的最大位移，用来证明头发真的在动。
+			var sel_b := CharacterSelectScreen.new()
+			sel_b.setup(AiPool.all_ais())
+			_swap(sel_b)
+			await get_tree().process_frame
+			# 验收用 UV 引擎（V3）定格：网格引擎(V4)不支持 debug_set_breath 定格
+			if sel_b._breath != null:
+				sel_b._breath.set_engine(false)
+			await get_tree().process_frame
+			await get_tree().process_frame
+			# --engine=mesh|uv 切换呼吸引擎（V4 网格 / V3 UV），对比用
+			var eng := "mesh"
+			for a in OS.get_cmdline_user_args():
+				if a.begins_with("--engine="):
+					eng = a.substr(9)
+			if sel_b._breath != null:
+				sel_b._breath.set_engine(eng == "mesh")
+			for ci in sel_b._ais.size():
+				sel_b.select_by_index(ci)
+				# 等转场收尾（各角色转场时长不同，统一等最长 + 余量）
+				await get_tree().create_timer(3.2).timeout
+				for pp in [0.75, 0.25]:
+					sel_b.debug_set_breath(float(pp))
+					await get_tree().process_frame
+					await get_tree().process_frame
+					get_viewport().get_texture().get_image().save_png(
+							"%s-%s-c%d-p%02d.png" % [out_path, eng, ci, int(pp * 100)])
+			print("[shot=breath] engine=%s 已存 %d 帧 → %s-<eng>-cN-pNN.png" % [
+				eng, sel_b._ais.size() * 2, out_path])
 		elif screen == "select":
 			# 选角界面验收（2026-11-09 四轮）：
 			#   f00 初始布局 / f01..f08 四种转场各取「中段 + 结束」两帧
