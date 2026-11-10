@@ -20,3 +20,4 @@ desktop.ini
 
 # 导出的游戏本体（105 MB，别进仓库）
 dist/
+tools/__pycache__/
