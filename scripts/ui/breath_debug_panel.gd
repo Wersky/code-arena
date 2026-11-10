@@ -1,6 +1,6 @@
 class_name BreathDebugPanel
 extends Control
-## 立绘「呼吸」调试面板（F2 显隐，右上角浮层）。
+## 立绘「呼吸」调试面板（**常驻显示**在选角右上角，不绑热键）。
 ##
 ## 用途：选角界面实测呼吸效果时，实时调 幅度 / 周期 / 相位 / 方案，拖动即生效并落盘，
 ## 关掉游戏再开还是主人调好的值。纯 UI + 信号，不自己改任何立绘——接线由
@@ -11,7 +11,7 @@ extends Control
 ##       任何参数变化都会发一次（滑杆拖动、方案按钮、set_params()）。
 ##
 ##   func set_visible_state(v: bool) -> void
-##       程序化显隐。F2 走的也是这个函数，两个入口行为完全一致。
+##       程序化显隐（无热键入口）。
 ##
 ##   func get_params() -> Dictionary
 ##       键 "amp" / "period" / "phase" / "mode"，值都是当前生效值（已 clamp）。
@@ -28,33 +28,27 @@ extends Control
 ##   period 1.0 ~ 8.0 秒  默认 4.0
 ##   phase  0.0 ~ 1.0     默认 0.0（1.0 等于一个整周期，与 0 等价）
 ##
-## ── 为什么是 F2（主人裁决，别改）──────────────────────────────────────────
-##   主人 2026-11-09 裁决：呼吸面板用 F2，把 F1 留给 UiTuner（UI 调参器），
-##   两边互不干扰。
-##
-##   背景（实测记录）：main.gd 在 _ready 里挂 UiTuner，它无条件吞 F1；而 Godot 4.7
-##   的 _input 广播顺序是「后入树者先收到」+ accept_event 有效，本面板由
-##   CharacterSelectScreen 挂载（更晚入树），若也用 F1 就会在选角界面上把 UiTuner
-##   的 F1 抢走。改 F2 后两个调试工具可以同时在同一个界面上开着用，谁也压不住谁。
-##   除非主人另行裁决，**不要**改回 F1，也不要顺手去动 UiTuner。
-##
-## ── 字号为什么是 12 而不是 spec 写的 13~15 ──────────────────────────────
-##   项目用 Ark Pixel 12px 像素字体（PixelTheme 设了 fixed_size=12 +
-##   INTEGER_ONLY 缩放），UiKit 明确约定「字号只能是 12 的整数倍，否则塌成同一档」，
-##   选角界面全部文字都是 12。实测 13/14/15 只会把行高撑到 19/20/21，字形并未真正
-##   变大（还带非整数缩放的字距抖动）。所以取 12 与选角界面严格一致。
-
-## 参数变化（滑杆 / 方案按钮 / set_params 都会发）
+## ── 为什么现在不绑热键（主人 2026-11-10 裁决）─────────────────────────
+##   最初用 F1，被 UiTuner 无条件吞掉；改 F2 后发现面板本就默认可见，按一下
+##   反而是「关掉」，主人以为调不出来；再改 F3 仍有同样的语义反转问题。
+##   最终方案：**常驻显示在选角右上角，不响应任何热键**。
+##   · F1 完整让给 UiTuner，本面板不参与任何按键竞争，两者可同屏共存；
+##   · 需要临时隐掉时走程序化接口 set_visible_state(false) / toggle_breath_panel()；
+##   · 除非主人另行要求，不要再给它绑热键。
 signal params_changed(amp: float, period: float, phase: float, mode: int)
 
 ## 呼吸方案。值直接进 params_changed 的 mode，不要另立编号。
 enum Mode {
-	UV = 0,      ## UV 微起伏（shader，默认）
-	SCALE = 1,   ## 仅整图缩放
-	OFF = 2,     ## 关闭
+	UV = 0,        ## 上下起伏（纯纵向 UV 位移，默认）
+	UV_HORZ = 1,   ## 左右起伏（纯横向 UV 位移）
+	SCALE = 2,     ## 整图缩放（绕底边，最像真呼吸）
+	OFF = 3,       ## 关闭
 }
 
-const MODE_NAMES := ["UV微起伏", "仅整图缩放", "关闭"]
+## 2026-11-10 主人要求提供「上下 / 左右」两种运动方向：
+##   旧版 shader 里横向与纵向错相 1.2rad 合成椭圆轨迹，观感像画面在转 —— 已删除。
+##   现在把方向做成显式二选一，各自都只有单一轴向，不会出现旋转感。
+const MODE_NAMES := ["上下起伏", "左右起伏", "整图缩放", "关闭"]
 
 # ── 布局常量（像素风刻度：宽度/间距按 4 的倍数，字号走 UiKit 的 12 档）──
 const PANEL_W := 336.0       ## 面板宽（右上角浮层，不挡画面主体）
@@ -65,6 +59,8 @@ const KEY_COL_W := 40.0      ## 滑杆行左侧标签列宽
 const VAL_COL_W := 52.0      ## 滑杆行右侧数值列宽
 const ROW_SEP := 5           ## 行距
 const FS := 12               ## 字号（见文件头，与选角界面一致）
+## 主人 2026-11-10 要求默认打开面板（方便直接拖滑杆调呼吸）
+const PANEL_OPEN_BY_DEFAULT := true
 
 # ── 当前生效值（唯一真相；滑杆 / 信号 / get_params 都读它）──
 var _amp := 0.008
@@ -89,7 +85,8 @@ func _init() -> void:
 	set_anchors_preset(Control.PRESET_FULL_RECT)
 	# 根铺满全屏但**不吃鼠标**：只让面板本体接点击，后面的圆点/箭头/开始键照常可用
 	mouse_filter = Control.MOUSE_FILTER_IGNORE
-	visible = false
+	# 主人 2026-11-10 要求默认打开：进选角界面就能直接拖滑杆试呼吸
+	visible = true
 
 
 func _ready() -> void:
@@ -99,7 +96,7 @@ func _ready() -> void:
 	_build()
 	_sync_widgets()
 	_refresh_readout()
-	set_visible_state(false)
+	set_visible_state(PANEL_OPEN_BY_DEFAULT)
 
 
 # ── 持久化 ───────────────────────────────────────────
@@ -151,17 +148,14 @@ func set_params(new_amp: float, new_period: float, new_phase: float, new_mode: i
 		_refresh_readout()
 
 
-# ── 输入：只吃 F2（F1 留给 UiTuner）──────────────────
-func _input(event: InputEvent) -> void:
-	if not (event is InputEventKey):
-		return
-	var k := event as InputEventKey
-	if not k.pressed or k.echo:
-		return
-	# keycode 与 physical_keycode 都查：非 US 布局下 keycode 可能是别的字符
-	if k.keycode == KEY_F2 or k.physical_keycode == KEY_F2:
-		set_visible_state(not visible)
-		accept_event()      # 只有命中 F2 才吞；其它输入（含 F1）一律放行
+# ── 输入：不再绑定热键（主人 2026-11-10 裁决）────────────
+# 原方案 F2/F3 切换有两处实测问题：
+#   ① 面板本就默认可见，按一下反而是「关掉」，主人以为调不出来；
+#   ② 面板挂载时机与 UiTuner 的 F1 广播顺序耦合，容易互相压。
+# 现改为**常驻显示在选角右上角**，不再响应任何热键：
+#   · 想临时隐藏用代码/测试调 set_visible_state(false) 或 toggle_breath_panel()
+#   · F1 完整让给 UiTuner，本面板不参与任何按键竞争
+# 保留空实现的 _input 只为了对齐父类签名，不做任何事。
 
 
 # ── 构建 ─────────────────────────────────────────────
@@ -195,7 +189,7 @@ func _build() -> void:
 	var ttl := UiKit.label("呼吸调试", FS, UiKit.ACCENT)
 	ttl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	head.add_child(ttl)
-	head.add_child(UiKit.dim("F2 开关 · 松手即存", FS, UiKit.TEXT_DIM))
+	head.add_child(UiKit.dim("松手即存 · 常驻显示", FS, UiKit.TEXT_DIM))
 
 	v.add_child(UiKit.rule())
 

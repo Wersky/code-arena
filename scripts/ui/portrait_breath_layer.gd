@@ -24,9 +24,12 @@ extends Control
 ## shader 里只有 max（maxf 会白屏，本项目踩过），本文件是 GDScript，用 maxf 没问题。
 
 ## 与 BreathDebugPanel.Mode 对齐（不引用那个类，避免循环依赖；数值由面板传进来）
+## 与 BreathDebugPanel.Mode 对齐（2026-11-10 四态）：
+##   0=上下起伏 1=左右起伏 2=整图缩放 3=关闭
 const MODE_UV := 0
-const MODE_SCALE := 1
-const MODE_OFF := 2
+const MODE_UV_HORZ := 1
+const MODE_SCALE := 2
+const MODE_OFF := 3
 
 ## 四人错相步长：第 i 个角色初相 = i * 0.25
 const CHAR_PHASE_STEP := 0.25
@@ -57,7 +60,10 @@ var _frozen := false
 var _frozen_progress := 0.0
 
 var _tex: Texture2D = null
-var _mask: Texture2D = null
+## 三层遮罩（2026-11-10 主人要求拆层）：脸单独一层，避免眼睛被头发拖动
+var _mask_hair: Texture2D = null
+var _mask_face: Texture2D = null
+var _mask_body: Texture2D = null
 
 
 func _init() -> void:
@@ -70,7 +76,7 @@ func _init() -> void:
 	_mat.shader = SHADER
 	_mat.set_shader_parameter("progress", 0.0)
 	_mat.set_shader_parameter("amp", amp)
-	_mat.set_shader_parameter("use_region", false)
+	_mat.set_shader_parameter("use_layers", false)
 
 	_rect = ColorRect.new()
 	_rect.name = "BreathRect"
@@ -96,16 +102,22 @@ func _on_resized() -> void:
 
 # ── 对外：纹理 / 遮罩 ────────────────────────────────────────────────��────
 ## 切到某位角色：纹理 + 遮罩 + 错相下标一起换。mask 为 null 时自动降级纯 shader。
-func set_character(idx: int, tex: Texture2D, mask: Texture2D) -> void:
+func set_character(idx: int, tex: Texture2D, hair: Texture2D = null,
+		face: Texture2D = null, body: Texture2D = null) -> void:
 	char_index = idx
 	_tex = tex
-	_mask = mask
+	_mask_hair = hair
+	_mask_face = face
+	_mask_body = body
 	if _mat == null:
 		return
 	_mat.set_shader_parameter("tex_src", tex)
-	# 遮罩不存在时不传纹理、use_region=false：shader 里 mix(...,0) 直接退化成纯底边锚定
-	_mat.set_shader_parameter("tex_region", mask)
-	_mat.set_shader_parameter("use_region", mask != null)
+	# 三层遮罩：任一为 null 时该层不参与（shader 侧 sum 归一化会自动退让）
+	_mat.set_shader_parameter("tex_hair", hair)
+	_mat.set_shader_parameter("tex_face", face)
+	_mat.set_shader_parameter("tex_body", body)
+	# 三层全缺时 use_layers=false，退化为「全身统一底边锚定」
+	_mat.set_shader_parameter("use_layers", hair != null or face != null or body != null)
 	# 没有立绘就没有可画的东西：整层隐藏，交给底下 RippleSwapPortrait 的兜底
 	visible = tex != null
 	_apply()
@@ -138,7 +150,10 @@ func breath_state() -> Dictionary:
 		"mode": mode,
 		"progress": current_progress(),
 		"char_index": char_index,
-		"use_region": _mask != null,
+		"use_layers": _mask_hair != null or _mask_face != null or _mask_body != null,
+		"has_hair": _mask_hair != null,
+		"has_face": _mask_face != null,
+		"has_body": _mask_body != null,
 		"has_tex": _tex != null,
 		"frozen": _frozen,
 		"cycle": _cycle,
@@ -211,6 +226,7 @@ func _apply() -> void:
 	if mode == MODE_OFF:
 		# 关闭：位移与缩放都归零 → 本层就是底图的精确复制，看不出任何差别
 		_mat.set_shader_parameter("amp", 0.0)
+		_mat.set_shader_parameter("axis", 0)
 		scale = Vector2.ONE
 		return
 	if mode == MODE_SCALE:
@@ -221,6 +237,8 @@ func _apply() -> void:
 		var s: float = 1.0 + amp * SCALE_GAIN * k
 		scale = Vector2(s, s)
 		return
-	# UV 微起伏（默认）
+	# UV 起伏：上下（axis=0）/ 左右（axis=1）靠 shader 的 axis uniform 切换，
+	# 两个轴互斥，所以永远不会出现「斜着走」的旋转观感。
 	_mat.set_shader_parameter("amp", amp)
+	_mat.set_shader_parameter("axis", 1 if mode == MODE_UV_HORZ else 0)
 	scale = Vector2.ONE

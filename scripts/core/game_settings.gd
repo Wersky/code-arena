@@ -46,7 +46,7 @@ const SELECT_SWAP_MAX := 3.00
 const BREATH_AMP_DEF := 0.008   ## 位移幅度（UV 单位，0.008 = 0.8%）
 const BREATH_PERIOD_DEF := 4.0  ## 周期（秒）
 const BREATH_PHASE_DEF := 0.0   ## 基准相位（0~1，1 = 一个整周期）
-const BREATH_MODE_DEF := 0      ## 0=UV 微起伏 1=仅整图缩放 2=关闭
+const BREATH_MODE_DEF := 0      ## 0=上下起伏 1=左右起伏 2=整图缩放 3=关闭
 
 static var breath_amp := BREATH_AMP_DEF
 static var breath_period := BREATH_PERIOD_DEF
@@ -55,12 +55,12 @@ static var breath_mode := BREATH_MODE_DEF
 
 ## 面板滑杆的取值范围（唯一真相，BreathDebugPanel 直接引用）
 const BREATH_AMP_MIN := 0.0
-const BREATH_AMP_MAX := 0.03
+const BREATH_AMP_MAX := 0.08   ## 上限抬到 0.08（主人 2026-11-10 反馈 0.008 完全看不到，留足调试余量）
 const BREATH_PERIOD_MIN := 1.0
 const BREATH_PERIOD_MAX := 8.0
 const BREATH_PHASE_MIN := 0.0
 const BREATH_PHASE_MAX := 1.0
-const BREATH_MODE_MAX := 2
+const BREATH_MODE_MAX := 3
 
 
 static func load_from_disk() -> void:

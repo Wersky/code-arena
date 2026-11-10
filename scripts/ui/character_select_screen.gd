@@ -46,16 +46,39 @@ const STYLE_KEYS := ["ripple", "fan", "hex", "slash"]   ## 与 TRANSITION_STYLE 
 ## 注意 id 与美术原型名不是同名映射（AiPool.BIG_PORTRAITS 里 deepdeek→deepseek、
 ## kweno→qwen、chatppt→gpt、grock→grok），遮罩跟着原型名走。
 ## 缺文件时该角色自动降级纯 shader（use_region=false），不报错。
-const BREATH_MASKS := {
-	"deepdeek": "res://assets/art/select/mask-deepseek.png",
-	"kweno": "res://assets/art/select/mask-qwen.png",
-	"chatppt": "res://assets/art/select/mask-gpt.png",
-	"grock": "res://assets/art/select/mask-grok.png",
+## 2026-11-10 主人要求拆成**三层**（hair / face / body）各自独立呼吸：
+##   旧版单遮罩让眼睛跟着头发一起被推、脸被拉扯，三层拆分后脸严格只跟脸层曲线。
+## 每层都是独立灰度图；某层缺文件则该层不参与（shader 侧 sum 归一化自动退让），
+## 三层全缺时 use_layers=false，退化为「全身统一底边锚定」。
+const BREATH_LAYERS := {
+	"deepdeek": {
+		"hair": "res://assets/art/select/layer-deepseek-hair.png",
+		"face": "res://assets/art/select/layer-deepseek-face.png",
+		"body": "res://assets/art/select/layer-deepseek-body.png",
+	},
+	"kweno": {
+		"hair": "res://assets/art/select/layer-qwen-hair.png",
+		"face": "res://assets/art/select/layer-qwen-face.png",
+		"body": "res://assets/art/select/layer-qwen-body.png",
+	},
+	"chatppt": {
+		"hair": "res://assets/art/select/layer-gpt-hair.png",
+		"face": "res://assets/art/select/layer-gpt-face.png",
+		"body": "res://assets/art/select/layer-gpt-body.png",
+	},
+	"grock": {
+		"hair": "res://assets/art/select/layer-grok-hair.png",
+		"face": "res://assets/art/select/layer-grok-face.png",
+		"body": "res://assets/art/select/layer-grok-body.png",
+	},
 }
 
 var _ais: Array[AiData] = []
 var _big_texs: Array[Texture2D] = []         ## 铺满全屏的大立绘
-var _big_masks: Array[Texture2D] = []        ## 与 _big_texs 一一对应的呼吸遮罩（可为 null）
+## 与 _big_texs 一一对应的三层呼吸遮罩（每项都可为 null）
+var _big_hair: Array[Texture2D] = []
+var _big_face: Array[Texture2D] = []
+var _big_body: Array[Texture2D] = []
 var _idx := 0
 
 var _bg_layer: RippleSwapPortrait = null     ## 背景大立绘（带一人一款转场）
@@ -93,15 +116,20 @@ func _ready() -> void:
 func setup(ais: Array[AiData]) -> void:
 	_ais = ais
 	_big_texs.clear()
-	_big_masks.clear()
+	_big_hair.clear()
+	_big_face.clear()
+	_big_body.clear()
 	for a in _ais:
 		# 大立绘优先用 bust_path（全屏大图），没有就退回小立绘
 		var big := _load_tex(a.bust_path)
 		if big == null:
 			big = _load_tex(a.portrait_path)
 		_big_texs.append(big)
-		# 呼吸遮罩按 id 查表；缺文件返回 null，呼吸层自动降级纯 shader
-		_big_masks.append(_load_tex(String(BREATH_MASKS.get(a.id, ""))))
+		# 三层遮罩按 id 查表；缺文件返回 null，该层自动不参与
+		var lay: Dictionary = BREATH_LAYERS.get(a.id, {})
+		_big_hair.append(_load_tex(String(lay.get("hair", ""))))
+		_big_face.append(_load_tex(String(lay.get("face", ""))))
+		_big_body.append(_load_tex(String(lay.get("body", ""))))
 	if is_inside_tree():
 		_build()
 
@@ -354,10 +382,16 @@ func _sync_breath_char() -> void:
 	if _breath == null or _big_texs.is_empty():
 		return
 	var i := clampi(_idx, 0, _big_texs.size() - 1)
-	var mask: Texture2D = null
-	if i < _big_masks.size():
-		mask = _big_masks[i]
-	_breath.set_character(i, _big_texs[i], mask)
+	var hair: Texture2D = null
+	var face: Texture2D = null
+	var body: Texture2D = null
+	if i < _big_hair.size():
+		hair = _big_hair[i]
+	if i < _big_face.size():
+		face = _big_face[i]
+	if i < _big_body.size():
+		body = _big_body[i]
+	_breath.set_character(i, _big_texs[i], hair, face, body)
 
 
 ## 左右切换

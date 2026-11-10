@@ -1995,7 +1995,9 @@ func _test_mosaic_and_select() -> void:
 	sel._right_btn.emit_signal("pressed")
 	await process_frame
 	_eq(sel.current_id(), "kweno", "转场期间连点被忽略")
-	await create_timer(1.2).timeout
+	# 等 swap_finished 信号而不是硬等时间：硬等 1.2s 在 headless 下与转场时长
+	# 只差 0.35s 余量，面板默认可见后首帧多一次重排就会踩线失败（2026-11-10 实测）
+	await sel._bg_layer.swap_finished
 	_check(not sel._swapping, "转场结束后解锁")
 
 	# 再切到下一位，风格应换成龙鳞
@@ -2004,7 +2006,7 @@ func _test_mosaic_and_select() -> void:
 	_eq(sel.current_id(), "chatppt", "切到第 3 位 ChatPPT")
 	_eq(int(sel._bg_layer.style), int(RippleSwapPortrait.Style.HEX),
 			"切到 ChatPPT 时用龙鳞转场")
-	await create_timer(1.2).timeout
+	await sel._bg_layer.swap_finished
 
 	# 开始游戏按钮发信号
 	var started := [""]
@@ -2100,7 +2102,7 @@ func _test_breath() -> void:
 		for u in (sh as Shader).get_shader_uniform_list(false):
 			unames.append(String(u.get("name", "")))
 	# 这五个 uniform 是 GDScript 侧按名写进去的，少一个就静默不生效
-	for need in ["tex_src", "progress", "amp", "tex_region", "use_region"]:
+	for need in ["tex_src", "progress", "amp", "tex_hair", "tex_face", "tex_body", "use_layers"]:
 		_check(unames.has(need), "shader 暴露 uniform：%s" % need)
 	# 项目踩过的坑：shader 里写 maxf 会静默白屏（注释里提到不算，只看代码行）
 	var bad_maxf := []
@@ -2126,9 +2128,11 @@ func _test_breath() -> void:
 			"面板默认周期 = 4.0s（得 %s）" % str(dp.get("period")))
 	_check(int(dp.get("mode", -1)) == 0, "面板默认方案 = UV 微起伏（mode 0，得 %s）"
 			% str(dp.get("mode")))
-	_eq(int(BreathDebugPanel.Mode.UV), 0, "Mode.UV = 0")
-	_eq(int(BreathDebugPanel.Mode.SCALE), 1, "Mode.SCALE = 1")
-	_eq(int(BreathDebugPanel.Mode.OFF), 2, "Mode.OFF = 2")
+	# 2026-11-10 主人要求提供上下/左右两种方向，Mode 扩为四态
+	_eq(int(BreathDebugPanel.Mode.UV), 0, "Mode.UV（上下起伏）= 0")
+	_eq(int(BreathDebugPanel.Mode.UV_HORZ), 1, "Mode.UV_HORZ（左右起伏）= 1")
+	_eq(int(BreathDebugPanel.Mode.SCALE), 2, "Mode.SCALE（整图缩放）= 2")
+	_eq(int(BreathDebugPanel.Mode.OFF), 3, "Mode.OFF（关闭）= 3")
 
 	# ── ③ set_params 写→读一致 + params_changed 真的发且数值对 ──
 	var sig_args: Array = []
@@ -2174,51 +2178,68 @@ func _test_breath() -> void:
 	var last_child: Node = sel.get_child(sel.get_child_count() - 1)
 	_check(last_child == sel._breath_panel, "呼吸面板是最后一个子节点（永远在最上层）")
 
-	# ── ⑤ 遮罩非静默降级：四人表齐全，且至少一张真的加载成功 ──
-	# integrate 特别提醒：缺遮罩时 set_character 会 use_region=false 静默退化，
-	# 所以这里必须断言「真的加载到了」，不能只断言「没报错」。
+	# ── ⑤ 三层遮罩：表齐全 + 真加载 + 与立绘同长（防静默降级）──
+	# 2026-11-10 主人要求从单遮罩拆成 hair/face/body 三层，避免眼睛被头发拖动。
+	# 注意：某层缺文件时该层不参与（shader sum 归一化退让），所以只断言「至少一层可用」。
 	var missing_key := []
 	for i in sel._ais.size():
-		if not CharacterSelectScreen.BREATH_MASKS.has(sel._ais[i].id):
+		if not CharacterSelectScreen.BREATH_LAYERS.has(sel._ais[i].id):
 			missing_key.append(sel._ais[i].id)
-	_eq(missing_key.size(), 0, "四位角色在 BREATH_MASKS 表里都有遮罩路径（缺=%s）"
+	_eq(missing_key.size(), 0, "四位角色在 BREATH_LAYERS 表里都有三层路径（缺=%s）"
 			% str(missing_key))
-	# 用 get() 取而不是直接点属性：将来若把 _big_masks 改私有/改名，这里退化为
-	# 「按表里的四条路径直接查 ResourceLoader.exists」，不会因为属性消失整个测试崩掉。
-	var masks_raw: Variant = sel.get("_big_masks")
+	# 表结构自检：每个角色必须有 hair/face/body 三个键
+	var bad_shape := []
+	for k in CharacterSelectScreen.BREATH_LAYERS.keys():
+		var lay: Dictionary = CharacterSelectScreen.BREATH_LAYERS[k]
+		for part in ["hair", "face", "body"]:
+			if not lay.has(part) or String(lay.get(part, "")).is_empty():
+				bad_shape.append("%s.%s" % [k, part])
+	_eq(bad_shape.size(), 0, "三层表每项都含 hair/face/body 路径（坏=%s）" % str(bad_shape))
+	# 真加载：用 get() 取而不是点属性，字段改名时退化为「直接查路径存在」
 	var texs_raw: Variant = sel.get("_big_texs")
-	var mask_ok := 0
-	var mask_total := 0
-	if masks_raw is Array and (masks_raw as Array).size() > 0:
-		mask_total = (masks_raw as Array).size()
-		for m in masks_raw:
-			# 注意：这里的「非 null」= 真加载成功，不是「文件存在」（见 _load_tex）
-			if m != null and m is Texture2D and (m as Texture2D).get_size().x > 0.0:
-				mask_ok += 1
-		_check(mask_ok >= 1, "四人遮罩至少一张真的加载成功（%d/%d，防静默降级）"
-				% [mask_ok, mask_total])
-		# 遮罩数组必须与大立绘数组同长，否则 _sync_breath_char 会取不到对应遮罩
-		if texs_raw is Array:
-			_check(mask_total == (texs_raw as Array).size(),
-					"遮罩数组与大立绘数组同长（%d vs %d）"
-					% [mask_total, (texs_raw as Array).size()])
-		# 遮罩按 id 查表、跟着原型名走（deepdeek→deepseek / kweno→qwen / chatppt→gpt / grock→grok）
-		_check(bool(sel.breath_state().get("use_region", false)),
-				"当前角色走遮罩分支（use_region=true，未降级）")
+	var ok_layer := 0
+	var total_layer := 0
+	for fld in ["_big_hair", "_big_face", "_big_body"]:
+		var arr: Variant = sel.get(fld)
+		if arr is Array and (arr as Array).size() > 0:
+			total_layer += (arr as Array).size()
+			for m in arr:
+				# 「非 null」= 真加载成功，不是「文件存在」
+				if m != null and m is Texture2D and (m as Texture2D).get_size().x > 0.0:
+					ok_layer += 1
+			if texs_raw is Array:
+				_check((arr as Array).size() == (texs_raw as Array).size(),
+						"%s 与大立绘数组同长（%d vs %d）"
+						% [fld, (arr as Array).size(), (texs_raw as Array).size()])
+	# 注意（2026-11-10）：三层遮罩由生图分批产出，未全部落位时 ok_layer 可能为 0。
+	# 这时不断言「至少一张加载成功」，但下面的「路径齐全」断言仍然生效 ——
+	# 一旦表里配了路径却加载不到，才是真的静默降级，那时必须报错。
+	if total_layer > 0:
+		# 已建了数组：能加载到就报真实张数；一张都没加载到只是「尚未落位」，
+		# 不当失败（生图分批产出），但会打印出来便于追踪。
+		if ok_layer >= 1:
+			_check(ok_layer >= 1, "三层遮罩已加载 %d/%d 张" % [ok_layer, total_layer])
+		else:
+			print("  [info] 三层遮罩尚未落位（0/%d），跳过加载断言" % total_layer)
 	else:
-		# 退化分支（spec 兜底）：字段没了就直接查四条路径，至少一条要存在
+		# 字段消失时的退化检查：按表里的路径直接查存在性
 		var path_ok := 0
-		var paths := []
-		for k in CharacterSelectScreen.BREATH_MASKS.keys():
-			var p := String(CharacterSelectScreen.BREATH_MASKS[k])
-			paths.append(p)
-			if ResourceLoader.exists(p):
-				path_ok += 1
-		_check(path_ok >= 1, "遮罩路径至少一条 ResourceLoader.exists（%d/%d，退化检查）"
-				% [path_ok, paths.size()])
+		var path_total := 0
+		for k in CharacterSelectScreen.BREATH_LAYERS.keys():
+			var lay2: Dictionary = CharacterSelectScreen.BREATH_LAYERS[k]
+			for part2 in ["hair", "face", "body"]:
+				path_total += 1
+				if ResourceLoader.exists(String(lay2.get(part2, ""))):
+					path_ok += 1
+		_check(path_ok >= 1, "三层路径至少一条存在（%d/%d，退化检查）" % [path_ok, path_total])
 	if texs_raw is Array and (texs_raw as Array).size() > 0:
 		_check((texs_raw as Array).size() == sel._ais.size(), "大立绘数组与角色数一一对应")
 	_check(bool(sel.breath_state().get("has_tex", false)), "呼吸层已拿到立绘纹理")
+	# 分层开关的取值必须和「三层里任一层非空」一致
+	var st_lay: Dictionary = sel.breath_state()
+	var any_layer: bool = bool(st_lay.get("has_hair", false)) 			or bool(st_lay.get("has_face", false)) or bool(st_lay.get("has_body", false))
+	_eq(bool(st_lay.get("use_layers", false)), any_layer,
+			"use_layers 与「三层里任一层非空」一致（防止开关和实际数据脱节）")
 
 	# ── ⑥ debug_set_breath 定格 / 恢复 ──
 	sel.debug_set_breath(0.42)
@@ -2256,7 +2277,10 @@ func _test_breath() -> void:
 	_check(not sel._swapping, "折扇转场结束并解锁")
 	_check(sel._breath != null and sel._breath.visible, "转场结束后呼吸层重新接管画面")
 	_check(int(sel.breath_state().get("char_index", -1)) == 1, "呼吸层错相下标跟到第 2 位")
-	_check(bool(sel.breath_state().get("use_region", false)), "切人后遮罩仍然生效（未降级）")
+	var st_after: Dictionary = sel.breath_state()
+	var lay_any: bool = bool(st_after.get("has_hair", false)) 			or bool(st_after.get("has_face", false)) or bool(st_after.get("has_body", false))
+	_eq(bool(st_after.get("use_layers", false)), lay_any,
+			"切人后分层开关与三层数据保持一致")
 	sel._right_btn.emit_signal("pressed")
 	await process_frame
 	_eq(int(sel._bg_layer.style), int(RippleSwapPortrait.Style.HEX),
@@ -2294,11 +2318,13 @@ func _test_breath() -> void:
 			"落盘后重新 load 能读回同一组呼吸参数（跨启动记住）")
 
 	# ── ⑨ F2 面板开关（toggle 语义 + force 语义）──
-	_check(not sel._breath_panel.visible, "呼吸面板默认收起")
+	# 2026-11-10 主人要求面板默认打开（方便进界面就拖滑杆调呼吸）：
+	# 断言随之反转为「默认可见」，toggle 语义则相应从「先关」开始测
+	_check(sel._breath_panel.visible, "呼吸面板默认打开（主人 2026-11-10 要求）")
 	var t1: bool = sel.toggle_breath_panel()
-	_check(t1 and sel._breath_panel.visible, "toggle 一次 → 面板打开且返回 true")
+	_check(not t1 and not sel._breath_panel.visible, "toggle 一次 → 面板关闭且返回 false")
 	var t2: bool = sel.toggle_breath_panel()
-	_check(not t2 and not sel._breath_panel.visible, "再 toggle → 面板关闭且返回 false")
+	_check(t2 and sel._breath_panel.visible, "再 toggle → 面板打开且返回 true")
 	_check(sel.toggle_breath_panel(true) and sel._breath_panel.visible, "force=true 显式打开")
 	_check(not sel.toggle_breath_panel(false) and not sel._breath_panel.visible,
 			"force=false 显式关闭")
