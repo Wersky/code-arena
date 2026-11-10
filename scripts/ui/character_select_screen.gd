@@ -482,6 +482,7 @@ func _build_breath_panel() -> void:
 	_breath_panel.params_changed.connect(_on_breath_params_changed)
 	# 三层参数变化（每层 gain/phase）：面板改哪条就即时下发哪条
 	_breath_panel.layers_changed.connect(_on_breath_layers_changed)
+	_breath_panel.engine_changed.connect(_on_breath_engine_changed)
 	# 启动回填：用存档值显式 set_params(..., emit_changed=false) —— 只同步面板 UI，
 	# **不发信号**，所以开局不会因为回填把呼吸重播/重置相位。回填完再手动推一次
 	# 给呼吸层（这条路径不发信号，必须显式调）。
@@ -494,6 +495,9 @@ func _build_breath_panel() -> void:
 	_on_breath_params_changed(sp_amp, sp_per, sp_ph, sp_md)
 	# 面板按当前角色刷新三层滑杆（静默，避免开局重播）
 	_breath_panel.set_character(current_id())
+	# 呼吸引擎按配置生效（默认 V4 网格；V3 UV 留作降级对比）
+	if _breath != null:
+		_breath.set_engine(GameSettings.breath_engine == GameSettings.BREATH_ENGINE_MESH)
 
 
 ## 面板参数变化 → 呼吸层即时生效（周期变了 Tween 会重建，但相位连续，见呼吸层注释）
@@ -501,6 +505,12 @@ func _on_breath_params_changed(a: float, per: float, ph: float, m: int) -> void:
 	if _breath == null:
 		return
 	_breath.set_params(a, per, ph, m)
+
+
+## 引擎切换 → 立即换实现（V4 网格 / V3 UV）
+func _on_breath_engine_changed(engine: int) -> void:
+	if _breath != null:
+		_breath.set_engine(engine == GameSettings.BREATH_ENGINE_MESH)
 
 
 ## 八层参数变化 → 即时下发到呼吸层（面板已把值写进 GameSettings 对应角色分节）

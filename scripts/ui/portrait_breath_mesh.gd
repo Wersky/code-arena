@@ -54,6 +54,22 @@ func setup(portrait: Texture2D, face_mask: Texture2D, body_mask: Texture2D,
 		_mat = ShaderMaterial.new()
 		_mat.shader = SHADER
 		material = _mat
+	# 显式写入全部 uniform：不写的话 get_shader_parameter 返回 null，
+	# 且后续面板改参数时没有基线可对照（实测踩到）
+	# 幅度按「画面高的百分比」定：商业 Live2D 常见 0.8~1.5%，
+	# 原先 4.5px 只有 0.5%，主人反馈看不出动静，统一提到约 1.2%（900 高 -> 11px）。
+	_mat.set_shader_parameter("amp", 1.0)
+	_mat.set_shader_parameter("chest_x", 10.5)
+	_mat.set_shader_parameter("chest_y", 8.5)
+	_mat.set_shader_parameter("belly_x", 6.0)
+	_mat.set_shader_parameter("belly_y", 3.2)
+	_mat.set_shader_parameter("head_y", 4.5)
+	_mat.set_shader_parameter("hair_x", 11.0)
+	_mat.set_shader_parameter("hair_y", 4.0)
+	_mat.set_shader_parameter("belly_lag_deg", 55.0)
+	_mat.set_shader_parameter("head_lag_deg", 100.0)
+	_mat.set_shader_parameter("hair_lag_per_height", 240.0)
+	_mat.set_shader_parameter("lock_bottom", 0.12)
 	texture = portrait
 	mesh = _build_mesh(portrait, face_mask, body_mask, hair_mask)
 	_built = true

@@ -53,6 +53,14 @@ static var breath_period := BREATH_PERIOD_DEF
 static var breath_phase := BREATH_PHASE_DEF
 static var breath_mode := BREATH_MODE_DEF
 
+## 呼吸引擎（2026-11-10 V4 引入）：0=UV(V3)  1=Mesh(V4 网格顶点形变)
+## 默认 V4 —— 它才能做胸腔横向外扩与头发随高度连续滞后，
+## V3 的 UV 平移在数学上是刚体位移，做不出左右反向扩张。
+const BREATH_ENGINE_UV := 0
+const BREATH_ENGINE_MESH := 1
+const BREATH_ENGINE_DEF := BREATH_ENGINE_MESH
+static var breath_engine := BREATH_ENGINE_DEF
+
 ## 面板滑杆的取值范围（唯一真相，BreathDebugPanel 直接引用）
 const BREATH_AMP_MIN := 0.0
 const BREATH_AMP_MAX := 0.08   ## 上限抬到 0.08（主人 2026-11-10 反馈 0.008 完全看不到，留足调试余量）
@@ -146,6 +154,8 @@ static func load_from_disk() -> void:
 			BREATH_PHASE_MIN, BREATH_PHASE_MAX)
 	breath_mode = clampi(int(cfg.get_value("breath", "mode", BREATH_MODE_DEF)),
 			0, BREATH_MODE_MAX)
+	breath_engine = clampi(int(cfg.get_value("breath", "engine", BREATH_ENGINE_DEF)),
+			BREATH_ENGINE_UV, BREATH_ENGINE_MESH)
 	# 四角色各自的分层参数：新键优先，缺项回落出厂预设（旧存档无这些键 → 全走出厂值）
 	breath_layers = {}
 	for cid in BREATH_CHARS:
@@ -175,6 +185,7 @@ static func save_to_disk() -> void:
 	cfg.set_value("breath", "period", breath_period)
 	cfg.set_value("breath", "phase", breath_phase)
 	cfg.set_value("breath", "mode", breath_mode)
+	cfg.set_value("breath", "engine", breath_engine)
 	# 四角色分节（每角色一个 [breath_<id>] 段，六个键）
 	for cid in BREATH_CHARS:
 		if not breath_layers.has(cid):

@@ -38,6 +38,8 @@ extends Control
 signal params_changed(amp: float, period: float, phase: float, mode: int)
 ## 三层参数变化（2026-11-10）：每角色独立，CharacterSelectScreen 收到后转给呼吸层
 signal layers_changed(layers: Dictionary)
+## 呼吸引擎切换（2026-11-10）：0=UV(V3)  1=Mesh(V4 网格顶点形变)
+signal engine_changed(engine: int)
 
 ## 呼吸方案。值直接进 params_changed 的 mode，不要另立编号。
 enum Mode {
@@ -80,6 +82,8 @@ var _period_val: Label = null
 var _phase_val: Label = null
 var _readout: Label = null
 var _mode_btns: Array[Button] = []
+var _engine_btns: Array[Button] = []
+var _engine := GameSettings.BREATH_ENGINE_DEF
 
 ## ── 2026-11-10 主人要求：每个角色的每一层都能单独调 ──────────────────
 ## 面板只显示**当前角色**的参数，切角色时整体换成该角色的值（面板不会太大）。
@@ -244,6 +248,30 @@ func _build() -> void:
 	_char_lbl = UiKit.dim("角色：deepdeek", FS, Color(0.95, 0.85, 0.55))
 	_char_lbl.name = "CharLabel"
 	v.add_child(_char_lbl)
+
+	# —— 呼吸引擎切换（V4 网格 / V3 UV）——
+	# V4 能做胸腔横向外扩与头发随高度连续滞后；V3 只做整幅 UV 平移，留作对比降级。
+	var eng_row := HBoxContainer.new()
+	eng_row.name = "EngineRow"
+	eng_row.add_theme_constant_override("separation", UiKit.SP_2)
+	v.add_child(eng_row)
+	var eng_lbl := UiKit.dim("引擎", FS, Color(0.85, 0.92, 1.0))
+	eng_lbl.custom_minimum_size = Vector2(KEY_COL_W, 0)
+	eng_row.add_child(eng_lbl)
+	_engine_btns.clear()
+	for i in ["V4 网格", "V3 UV"]:
+		var eb := Button.new()
+		eb.text = String(i)
+		eb.toggle_mode = true
+		eb.focus_mode = Control.FOCUS_NONE
+		eb.add_theme_font_size_override("font_size", FS)
+		eb.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		eb.custom_minimum_size = Vector2(0, 22)
+		var idx2 := _engine_btns.size()
+		eb.pressed.connect(func() -> void: _on_engine_button(idx2))
+		eng_row.add_child(eb)
+		_engine_btns.append(eb)
+	_sync_engine_buttons()
 
 	# —— 8 层各自的 gain / phase（每角色独立，共 16 条）——
 	# V3：头发细分成 5 段（呆毛顶/左鬓/右鬓/长垂发/发梢）+ 脸 + 身体 + 翅膀。
@@ -411,6 +439,26 @@ func _emit_layers() -> void:
 ## 松手才存盘：拖动中每帧都写会打爆磁盘
 func _on_drag_ended(_value_changed: bool) -> void:
 	GameSettings.save_to_disk()
+
+
+## 引擎切换：1=V4 网格, 0=V3 UV（按钮顺序是 V4 在前，所以取反）
+func _on_engine_button(btn_idx: int) -> void:
+	_engine = GameSettings.BREATH_ENGINE_MESH if btn_idx == 0 else GameSettings.BREATH_ENGINE_UV
+	GameSettings.breath_engine = _engine
+	_sync_engine_buttons()
+	engine_changed.emit(_engine)
+	GameSettings.save_to_disk()
+
+
+func _sync_engine_buttons() -> void:
+	for i in _engine_btns.size():
+		var on := (i == 0 and _engine == GameSettings.BREATH_ENGINE_MESH) 				or (i == 1 and _engine == GameSettings.BREATH_ENGINE_UV)
+		(_engine_btns[i] as Button).set_pressed_no_signal(on)
+		_style_mode_btn(_engine_btns[i] as Button, on)
+
+
+func current_engine() -> int:
+	return _engine
 
 
 func _on_mode_button(idx: int) -> void:
