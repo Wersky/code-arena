@@ -2102,7 +2102,13 @@ func _test_breath() -> void:
 		for u in (sh as Shader).get_shader_uniform_list(false):
 			unames.append(String(u.get("name", "")))
 	# 这五个 uniform 是 GDScript 侧按名写进去的，少一个就静默不生效
-	for need in ["tex_src", "progress", "amp", "tex_hair", "tex_face", "tex_body", "use_layers"]:
+	for need in ["tex_src", "progress", "amp", "axis",
+			"tex_h1", "tex_h2", "tex_h3", "tex_h4", "tex_h5",
+			"tex_face", "tex_body", "tex_wing", "use_layers",
+			"g1", "g2", "g3", "g4", "g5",
+			"p1", "p2", "p3", "p4", "p5",
+			"face_gain", "body_gain", "wing_gain",
+			"face_phase", "body_phase", "wing_phase"]:
 		_check(unames.has(need), "shader 暴露 uniform：%s" % need)
 	# 项目踩过的坑：shader 里写 maxf 会静默白屏（注释里提到不算，只看代码行）
 	var bad_maxf := []

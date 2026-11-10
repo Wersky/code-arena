@@ -1,90 +1,109 @@
 shader_type canvas_item;
 render_mode unshaded;
 
-// 立绘呼吸起伏 V2（2026-11-10 主人反馈重做）：
+// 立绘呼吸起伏 V3（2026-11-10 主人要求：头发细分成 5 段各自飘动）。
 //
-// ── 相对 V1 的三处根本改动 ────────────────────────────────────────────
-// 1) **去掉横向摆动**。V1 里 dx = amp*0.3*w*sin(phase+1.2)，横向与纵向错相 1.2rad
-//    后合成椭圆轨迹，观感就是「画面在转」。V2 只有纵向，纯上下。
-// 2) **三层分区，各层独立位移**。V1 只有一张遮罩、全身共用一条曲线，导致眼睛
-//    和头发被一起推、脸跟头发撕扯。V2 拆成 头发 / 脸 / 身体 三张遮罩，
-//    每层有自己的相位偏移与幅度系数，互不牵扯。
-// 3) **底边锚定保留**，但改为按层分配权重：越靠下的层位移越小，
-//    整体仍是「被地面钉住、上身起伏」，不会出现下半身跟着漂。
+// ── 相对 V2 的改动 ────────────────────────────────────────────────────
+// V2 只有 hair / face / body 三层，整片头发共用一条曲线 → 头发是一整块平移，
+// 看不出「一缕一缕往上飘」的层次。主人要求按部位细分。
+// V3 把头发拆成 5 段，外加 face / body / wing，共 8 个受控层。
 //
-// ── 三层遮罩语义（灰度，白=该层在此处）──────────────────────────────
-//   tex_hair  : 头发（含呆毛、刘海、鬓发）—— 幅度最大、相位领先
-//   tex_face  : 脸部（眼睛/鼻/嘴/下巴，不含头发遮挡部分）—— 幅度中等、相位居中
-//   tex_body  : 身体（肩、胸、手臂、衣物）—— 幅度最小、相位滞后
-// 三层在 shader 内归一化后加权混合，不会叠加爆幅。
+// ── 五段头发的相位设计（默认值，面板可按角色改）─────────────────────
+//   seg1 呆毛头顶   phase +0.10  gain 1.15   最轻最灵，抢先动
+//   seg2 左鬓       phase +0.05  gain 1.00
+//   seg3 右鬓       phase +0.05  gain 1.00
+//   seg4 长垂发     phase -0.03  gain 0.80   主体，稍慢
+//   seg5 末端发梢   phase -0.12  gain 0.60   最慢，形成「一波往下传」
+// 从上到下依次滞后，视觉上是头发被气流带着飘，不是整片平移。
 //
-// ── 为什么脸要单独一层 ────────────────────────────────────────────────
-// 头发在画面里覆盖了脸的边缘，V1 单遮罩必然把「脸的一部分」算进头发区域，
-// 位移不同就产生拉扯。拆层后脸区域严格只跟随脸层曲线，头发只跟随头发层曲线，
-// 交叠处用二次平滑过渡，眼睛和眉毛因此不再被头发拖动。
+// ── 分层权重与归一化 ─────────────────────────────────────────────────
+// 8 张遮罩天然会重叠（发梢压在长垂发上、翅膀压在身体上）。
+// 用 sum 归一化：每个像素的权重 = 该层强度 × gain，再除以总和。
+// 总权重恒为 1，叠加不会爆幅，重叠区是平滑混合而非双推。
+//
+// ── 单轴约束（V1 的教训）────────────────────────────────────────────
+// 只允许 axis=0（纯上下）或 1（纯左右）。横竖同时有分量会合成椭圆轨迹，
+// 观感就是「画面在转」，主人明确否掉过。
 //
 // 注意：本文件严禁出现 maxf —— Godot shader 只有 max，maxf 会静默白屏。
 
 uniform sampler2D tex_src : source_color, filter_linear;
 
-// 进度与总控
 uniform float progress : hint_range(0.0, 1.0) = 0.0;
-uniform float amp : hint_range(0.0, 0.2) = 0.012;   // 基础位移幅度（UV 单位）
-// 运动方向（2026-11-10 主人要求显式可选）：0=纯上下  1=纯左右
-// 只允许单一轴向 —— 旧版横竖错相合成椭圆轨迹，观感像画面在转，已废弃。
+uniform float amp : hint_range(0.0, 0.2) = 0.012;
 uniform int axis : hint_range(0, 1) = 0;
 
-// 三层遮罩
-uniform sampler2D tex_hair : hint_default_black, filter_linear;
+// ── 头发 5 段（遮罩 + 各自 gain/phase）──
+uniform sampler2D tex_h1 : hint_default_black, filter_linear;
+uniform sampler2D tex_h2 : hint_default_black, filter_linear;
+uniform sampler2D tex_h3 : hint_default_black, filter_linear;
+uniform sampler2D tex_h4 : hint_default_black, filter_linear;
+uniform sampler2D tex_h5 : hint_default_black, filter_linear;
+uniform float g1 : hint_range(0.0, 2.0) = 1.15;
+uniform float g2 : hint_range(0.0, 2.0) = 1.00;
+uniform float g3 : hint_range(0.0, 2.0) = 1.00;
+uniform float g4 : hint_range(0.0, 2.0) = 0.80;
+uniform float g5 : hint_range(0.0, 2.0) = 0.60;
+uniform float p1 : hint_range(-1.0, 1.0) = 0.10;
+uniform float p2 : hint_range(-1.0, 1.0) = 0.05;
+uniform float p3 : hint_range(-1.0, 1.0) = 0.05;
+uniform float p4 : hint_range(-1.0, 1.0) = -0.03;
+uniform float p5 : hint_range(-1.0, 1.0) = -0.12;
+
+// ── 其余三层 ──
 uniform sampler2D tex_face : hint_default_black, filter_linear;
 uniform sampler2D tex_body : hint_default_black, filter_linear;
-uniform bool use_layers = false;   // 关掉时退化为「全身统一底边锚定」
-
-// 三层各自的幅度系数与相位偏移（可调，默认值经实测手感）
-uniform float hair_gain : hint_range(0.0, 2.0) = 1.00;
+uniform sampler2D tex_wing : hint_default_black, filter_linear;
 uniform float face_gain : hint_range(0.0, 2.0) = 0.62;
 uniform float body_gain : hint_range(0.0, 2.0) = 0.34;
+uniform float wing_gain : hint_range(0.0, 2.0) = 0.22;  // 翅膀幅度最小，只轻张合
+uniform float face_phase : hint_range(-1.0, 1.0) = 0.00;
+uniform float body_phase : hint_range(-1.0, 1.0) = -0.06;
+uniform float wing_phase : hint_range(-1.0, 1.0) = -0.16; // 翅膀最滞后
 
-uniform float hair_phase : hint_range(-1.0, 1.0) = 0.05;  // 领先一点点
-uniform float face_phase : hint_range(-1.0, 1.0) = 0.00;  // 基准
-uniform float body_phase : hint_range(-1.0, 1.0) = -0.06; // 滞后一点点
+uniform bool use_layers = false;
 
 void fragment() {
-	// ---- 1. 底边锚定的基础权重 ----
-	// UV.y: 0=顶, 1=底。让底部权重趋 0，越往上越大。
-	// 用 pow 让权重在上半身更饱满（线性会让头顶过冲、腰腹几乎不动）。
-	float h = clamp(1.0 - UV.y, 0.0, 1.0);
-	float w_base = smoothstep(0.0, 0.92, h);
+	// ---- 1. 底边锚定权重：底部不动，越往上越大 ----
+	float hh = clamp(1.0 - UV.y, 0.0, 1.0);
+	float w_base = smoothstep(0.0, 0.92, hh);
 
-	// ---- 2. 三层权重采样 ----
-	float m_hair = texture(tex_hair, UV).r;
-	float m_face = texture(tex_face, UV).r;
-	float m_body = texture(tex_body, UV).r;
+	// ---- 2. 采样 8 层遮罩 ----
+	float m1 = texture(tex_h1, UV).r;
+	float m2 = texture(tex_h2, UV).r;
+	float m3 = texture(tex_h3, UV).r;
+	float m4 = texture(tex_h4, UV).r;
+	float m5 = texture(tex_h5, UV).r;
+	float mf = texture(tex_face, UV).r;
+	float mb = texture(tex_body, UV).r;
+	float mw = texture(tex_wing, UV).r;
 
-	// 归一化：三张遮罩可能有重叠（脸被头发压住、身体与头发交叠），
-	// 用和归一化保证总权重不超过 1，不会把幅度叠加放大。
-	float sum = m_hair * hair_gain + m_face * face_gain + m_body * body_gain;
+	// ---- 3. 权重和（归一化用，保证总权重不超 1）----
+	float sum = m1 * g1 + m2 * g2 + m3 * g3 + m4 * g4 + m5 * g5
+			+ mf * face_gain + mb * body_gain + mw * wing_gain;
 	float norm = max(sum, 1e-4);
 
-	// ---- 3. 各自的纵向位移 ----
-	// 只保留 sin 纵向分量。三层用不同相位，看起来是「头发先动、身体跟上」的
-	// 自然传导感，而不是整块一起平移。
+	// ---- 4. 各层位移：每层用自己的 gain 与 phase ----
+	// 五段头发从上到下相位依次滞后，形成「一波往下传」的飘动层次。
 	float ph = progress * TAU;
-	float d_hair = hair_gain * sin(ph + hair_phase * TAU);
-	float d_face = face_gain * sin(ph + face_phase * TAU);
-	float d_body = body_gain * sin(ph + body_phase * TAU);
+	float d1 = g1 * sin(ph + p1 * TAU);
+	float d2 = g2 * sin(ph + p2 * TAU);
+	float d3 = g3 * sin(ph + p3 * TAU);
+	float d4 = g4 * sin(ph + p4 * TAU);
+	float d5 = g5 * sin(ph + p5 * TAU);
+	float df = face_gain * sin(ph + face_phase * TAU);
+	float db = body_gain * sin(ph + body_phase * TAU);
+	float dw = wing_gain * sin(ph + wing_phase * TAU);
 
-	// 加权合成：分子是各层位移，分母是权重和 → 交叠处平滑过渡不突变
-	float dy_mix = (m_hair * d_hair + m_face * d_face + m_body * d_body) / norm;
+	// ---- 5. 加权合成 ----
+	float dy_mix = (m1 * d1 + m2 * d2 + m3 * d3 + m4 * d4 + m5 * d5
+			+ mf * df + mb * db + mw * dw) / norm;
 
-	// ---- 4. 关掉分层时的退化路径 ----
-	// use_layers=false：全体共用一个 sin，等价于「整张图底边锚定上下」。
+	// 关掉分层时退化为全身统一呼吸
 	float dy_flat = sin(ph);
 	float dy = use_layers ? dy_mix : dy_flat;
 
-	// ---- 5. 单一轴向位移（V2 核心：消除旋转感）----
-	// axis=0：纯上下，横向恒为 0；axis=1：纯左右，纵向恒为 0。
-	// 两个轴永远不会同时有非零分量，因此不可能出现椭圆/旋转轨迹。
+	// ---- 6. 单轴位移（横竖互斥，杜绝旋转感）----
 	vec2 shifted = UV;
 	float d = amp * w_base * dy;
 	if (axis == 0) {
@@ -93,9 +112,7 @@ void fragment() {
 		shifted.x -= d;
 	}
 
-	// ---- 6. 无条件 clamp ----
-	// 偏移后越界的 UV 必须夹回 [0,1]：否则采样会拉出黑边/透明边。
+	// ---- 7. 无条件 clamp，防边缘拉黑/透明 ----
 	shifted = clamp(shifted, vec2(0.0), vec2(1.0));
-
 	COLOR = texture(tex_src, shifted);
 }

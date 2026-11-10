@@ -38,14 +38,17 @@ const SCALE_GAIN := 2.0
 
 const SHADER := preload("res://assets/shaders/portrait_breath.gdshader")
 
-## 三层各自的 gain / phase 偏移（2026-11-10 主人要求每层可调、且按角色独立）
-## 由 CharacterSelectScreen 在切角色时从 GameSettings 拉该角色的值填进来。
-var hair_gain := 1.00
-var face_gain := 0.60
-var body_gain := 0.32
-var hair_phase := 0.06
-var face_phase := 0.00
-var body_phase := -0.07
+## 八层各自的 gain / phase（2026-11-10 V3：主人要求头发细分并逐层可调、按角色独立）
+## 由 CharacterSelectScreen 切角色时从 GameSettings 拉该角色的值填进来。
+## 头发 5 段从呆毛到发梢相位依次滞后，形成一波往下传的飘动层次。
+var layer_gain := {
+	"h1_gain": 1.15, "h2_gain": 1.00, "h3_gain": 1.00, "h4_gain": 0.80, "h5_gain": 0.60,
+	"face_gain": 0.60, "body_gain": 0.32, "wing_gain": 0.0,
+}
+var layer_phase := {
+	"h1_phase": 0.10, "h2_phase": 0.05, "h3_phase": 0.05, "h4_phase": -0.03, "h5_phase": -0.12,
+	"face_phase": 0.00, "body_phase": -0.07, "wing_phase": -0.16,
+}
 
 ## 当前生效参数（唯一真相；面板改了就走 set_params）
 var amp := 0.008
@@ -69,10 +72,12 @@ var _frozen := false
 var _frozen_progress := 0.0
 
 var _tex: Texture2D = null
-## 三层遮罩（2026-11-10 主人要求拆层）：脸单独一层，避免眼睛被头发拖动
-var _mask_hair: Texture2D = null
+## 八层遮罩（2026-11-10 V3）：头发细分成 5 段 + 脸 + 身体 + 翅膀
+var _mask_hair: Texture2D = null      ## 头发母集（保留，用于降级与统计）
 var _mask_face: Texture2D = null
 var _mask_body: Texture2D = null
+var _mask_wing: Texture2D = null      ## 翅膀（目前只有 GPT 有；其余角色为 null）
+var _mask_h5: Array[Texture2D] = []   ## 头发 5 段（呆毛顶/左鬓/右鬓/长垂发/发梢）
 
 
 func _init() -> void:
@@ -112,21 +117,37 @@ func _on_resized() -> void:
 # ── 对外：纹理 / 遮罩 ────────────────────────────────────────────────��────
 ## 切到某位角色：纹理 + 遮罩 + 错相下标一起换。mask 为 null 时自动降级纯 shader。
 func set_character(idx: int, tex: Texture2D, hair: Texture2D = null,
-		face: Texture2D = null, body: Texture2D = null) -> void:
+		face: Texture2D = null, body: Texture2D = null,
+		hair5: Array = [], wing: Texture2D = null) -> void:
 	char_index = idx
 	_tex = tex
 	_mask_hair = hair
 	_mask_face = face
 	_mask_body = body
+	_mask_wing = wing
+	_mask_h5.clear()
+	for m in hair5:
+		_mask_h5.append(m)
 	if _mat == null:
 		return
 	_mat.set_shader_parameter("tex_src", tex)
-	# 三层遮罩：任一为 null 时该层不参与（shader 侧 sum 归一化会自动退让）
-	_mat.set_shader_parameter("tex_hair", hair)
+	# ── 头发 5 段（V3 核心：一缕一缕独立飘动）──
+	# 缺哪段就传 null，shader 里该层采样到 0，归一化自动退让，不会报错。
+	for i in 5:
+		var tex_i: Texture2D = null
+		if i < _mask_h5.size():
+			tex_i = _mask_h5[i]
+		_mat.set_shader_parameter("tex_h%d" % (i + 1), tex_i)
+	# ── 其余三层 ──
 	_mat.set_shader_parameter("tex_face", face)
 	_mat.set_shader_parameter("tex_body", body)
-	# 三层全缺时 use_layers=false，退化为「全身统一底边锚定」
-	_mat.set_shader_parameter("use_layers", hair != null or face != null or body != null)
+	_mat.set_shader_parameter("tex_wing", wing)
+	# 全部缺失时退化为「全身统一底边锚定」
+	var any_layer := hair != null or face != null or body != null or wing != null
+	for m2 in _mask_h5:
+		if m2 != null:
+			any_layer = true
+	_mat.set_shader_parameter("use_layers", any_layer)
 	# 没有立绘就没有可画的东西：整层隐藏，交给底下 RippleSwapPortrait 的兜底
 	visible = tex != null
 	_apply()
@@ -145,16 +166,26 @@ func set_params(new_amp: float, new_period: float, new_phase: float, new_mode: i
 	_apply()
 
 
-## 设置三层参数（CharacterSelectScreen 切角色时调用；面板改动也走这里）
-func set_layer_params(hg: float, fg: float, bg: float,
-		hp: float, fp: float, bp: float) -> void:
-	hair_gain = maxf(hg, 0.0)
-	face_gain = maxf(fg, 0.0)
-	body_gain = maxf(bg, 0.0)
-	hair_phase = hp
-	face_phase = fp
-	body_phase = bp
+## 设置八层参数（CharacterSelectScreen 切角色时调用；面板改动也走这里）
+## 传的是 GameSettings 的 16 键字典，缺项保持原值不变。
+func set_layer_params(layers: Dictionary) -> void:
+	for k in layers.keys():
+		var key := String(k)
+		if key.ends_with("_gain") and layer_gain.has(key):
+			layer_gain[key] = maxf(float(layers[key]), 0.0)
+		elif key.ends_with("_phase") and layer_phase.has(key):
+			layer_phase[key] = float(layers[key])
 	_apply()
+
+
+## 读回当前八层参数（测试/验收用）
+func get_layer_params() -> Dictionary:
+	var out := {}
+	for k in layer_gain.keys():
+		out[k] = layer_gain[k]
+	for k2 in layer_phase.keys():
+		out[k2] = layer_phase[k2]
+	return out
 
 
 ## 有没有可画的立绘（没有时本层自动隐藏，让底下转场层兜底）
@@ -175,8 +206,7 @@ func breath_state() -> Dictionary:
 		"has_hair": _mask_hair != null,
 		"has_face": _mask_face != null,
 		"has_body": _mask_body != null,
-		"hair_gain": hair_gain, "face_gain": face_gain, "body_gain": body_gain,
-		"hair_phase": hair_phase, "face_phase": face_phase, "body_phase": body_phase,
+		"layers": get_layer_params(),
 		"has_tex": _tex != null,
 		"frozen": _frozen,
 		"cycle": _cycle,
@@ -264,11 +294,20 @@ func _apply() -> void:
 	# 两个轴互斥，所以永远不会出现「斜着走」的旋转观感。
 	_mat.set_shader_parameter("amp", amp)
 	_mat.set_shader_parameter("axis", 1 if mode == MODE_UV_HORZ else 0)
-	# 三层各自的 gain / phase：这是「头发先动、身体跟上」的实现处
-	_mat.set_shader_parameter("hair_gain", hair_gain)
-	_mat.set_shader_parameter("face_gain", face_gain)
-	_mat.set_shader_parameter("body_gain", body_gain)
-	_mat.set_shader_parameter("hair_phase", hair_phase)
-	_mat.set_shader_parameter("face_phase", face_phase)
-	_mat.set_shader_parameter("body_phase", body_phase)
+	# 八层各自的 gain / phase：这是「头发一缕一缕飘、从上到下依次滞后」的实现处。
+	# 配置键名与 shader uniform 名的对应：
+	#   h1_gain..h5_gain -> g1..g5     h1_phase..h5_phase -> p1..p5
+	#   face_gain/body_gain/wing_gain 与 *_phase 同名直传
+	var gmap := {"h1_gain": "g1", "h2_gain": "g2", "h3_gain": "g3",
+			"h4_gain": "g4", "h5_gain": "g5",
+			"face_gain": "face_gain", "body_gain": "body_gain", "wing_gain": "wing_gain"}
+	for k in gmap.keys():
+		if layer_gain.has(k):
+			_mat.set_shader_parameter(String(gmap[k]), float(layer_gain[k]))
+	var pmap := {"h1_phase": "p1", "h2_phase": "p2", "h3_phase": "p3",
+			"h4_phase": "p4", "h5_phase": "p5",
+			"face_phase": "face_phase", "body_phase": "body_phase", "wing_phase": "wing_phase"}
+	for k2 in pmap.keys():
+		if layer_phase.has(k2):
+			_mat.set_shader_parameter(String(pmap[k2]), float(layer_phase[k2]))
 	scale = Vector2.ONE

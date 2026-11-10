@@ -53,7 +53,7 @@ enum Mode {
 const MODE_NAMES := ["上下起伏", "左右起伏", "整图缩放", "关闭"]
 
 # ── 布局常量（像素风刻度：宽度/间距按 4 的倍数，字号走 UiKit 的 12 档）──
-const PANEL_W := 336.0       ## 面板宽（右上角浮层，不挡画面主体）
+const PANEL_W := 470.0       ## 面板宽（V3 扩到 8 层，两列布局）
 const MARGIN := 18.0         ## 距屏幕上/右边缘
 const PAD := 10              ## 面板内边距
 const CORNER_R := 4          ## 圆角
@@ -245,26 +245,50 @@ func _build() -> void:
 	_char_lbl.name = "CharLabel"
 	v.add_child(_char_lbl)
 
-	# —— 三层各自的 gain / phase（每角色独立，共 6 条）——
-	# 顺序按语义排：头发→脸→身体，每条先幅度后相位。
+	# —— 8 层各自的 gain / phase（每角色独立，共 16 条）——
+	# V3：头发细分成 5 段（呆毛顶/左鬓/右鬓/长垂发/发梢）+ 脸 + 身体 + 翅膀。
+	# 16 条竖排会太长，改成**左列调幅度、右列调相位**的双列网格。
 	_layer_sliders.clear()
 	_layer_vals.clear()
-	for spec in [
-			["hair_gain", "发·幅", GameSettings.BREATH_GAIN_MIN, GameSettings.BREATH_GAIN_MAX, 0.01],
-			["hair_phase", "发·相", GameSettings.BREATH_LAYER_PHASE_MIN, GameSettings.BREATH_LAYER_PHASE_MAX, 0.005],
-			["face_gain", "脸·幅", GameSettings.BREATH_GAIN_MIN, GameSettings.BREATH_GAIN_MAX, 0.01],
-			["face_phase", "脸·相", GameSettings.BREATH_LAYER_PHASE_MIN, GameSettings.BREATH_LAYER_PHASE_MAX, 0.005],
-			["body_gain", "身·幅", GameSettings.BREATH_GAIN_MIN, GameSettings.BREATH_GAIN_MAX, 0.01],
-			["body_phase", "身·相", GameSettings.BREATH_LAYER_PHASE_MIN, GameSettings.BREATH_LAYER_PHASE_MAX, 0.005]]:
-		var key := String(spec[0])
-		var row2 := _add_slider_row(v, String(spec[1]),
-				float(spec[2]), float(spec[3]), float(spec[4]),
-				GameSettings.breath_layer(_cur_char, key))
-		_layer_sliders[key] = row2["slider"]
-		_layer_vals[key] = row2["value"]
-		# 分层滑杆复用同一个回调，靠 key 区分是哪一个
-		(row2["slider"] as HSlider).value_changed.connect(
-				func(_v: float) -> void: _on_layer_changed(key))
+	var grid := HBoxContainer.new()
+	grid.name = "LayerGrid"
+	grid.add_theme_constant_override("separation", UiKit.SP_3)
+	v.add_child(grid)
+
+	# 左列：8 条幅度
+	var col_g := VBoxContainer.new()
+	col_g.add_theme_constant_override("separation", 2)
+	col_g.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	grid.add_child(col_g)
+	# 右列：8 条相位
+	var col_p := VBoxContainer.new()
+	col_p.add_theme_constant_override("separation", 2)
+	col_p.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	grid.add_child(col_p)
+
+	var gain_keys := ["h1_gain", "h2_gain", "h3_gain", "h4_gain", "h5_gain",
+			"face_gain", "body_gain", "wing_gain"]
+	var phase_keys := ["h1_phase", "h2_phase", "h3_phase", "h4_phase", "h5_phase",
+			"face_phase", "body_phase", "wing_phase"]
+	for i in gain_keys.size():
+		var gk := String(gain_keys[i])
+		var pk := String(phase_keys[i])
+		# 幅度：0~1.5
+		var rg := _add_slider_row(col_g, gk.substr(0, gk.length() - 5),
+				GameSettings.BREATH_GAIN_MIN, GameSettings.BREATH_GAIN_MAX, 0.01,
+				GameSettings.breath_layer(_cur_char, gk))
+		_layer_sliders[gk] = rg["slider"]
+		_layer_vals[gk] = rg["value"]
+		(rg["slider"] as HSlider).value_changed.connect(
+				func(_v: float) -> void: _on_layer_changed(gk))
+		# 相位：-0.35~0.35
+		var rp := _add_slider_row(col_p, gk.substr(0, gk.length() - 5) + "相",
+				GameSettings.BREATH_LAYER_PHASE_MIN, GameSettings.BREATH_LAYER_PHASE_MAX, 0.005,
+				GameSettings.breath_layer(_cur_char, pk))
+		_layer_sliders[pk] = rp["slider"]
+		_layer_vals[pk] = rp["value"]
+		(rp["slider"] as HSlider).value_changed.connect(
+				func(_v: float) -> void: _on_layer_changed(pk))
 
 	# —— 一行只读汇总（截图取证用）——
 	_readout = UiKit.label("", FS, Color(0.60, 0.88, 1.0))
@@ -434,11 +458,12 @@ func _refresh_readout() -> void:
 		_readout.text = "amp %.4f  周期 %.2fs  %s" % [
 			_amp, _period, String(MODE_NAMES[clampi(_mode, 0, MODE_NAMES.size() - 1)])]
 		_readout.text += "
-%s 发 %.2f/%.2f  脸 %.2f/%.2f  身 %.2f/%.2f" % [
+%s 顶%.2f 左%.2f 右%.2f 长%.2f 梢%.2f 脸%.2f 身%.2f 翅%.2f" % [
 			_cur_char,
-			float(_slider_val("hair_gain")), float(_slider_val("hair_phase")),
-			float(_slider_val("face_gain")), float(_slider_val("face_phase")),
-			float(_slider_val("body_gain")), float(_slider_val("body_phase"))]
+			float(_slider_val("h1_gain")), float(_slider_val("h2_gain")),
+			float(_slider_val("h3_gain")), float(_slider_val("h4_gain")),
+			float(_slider_val("h5_gain")), float(_slider_val("face_gain")),
+			float(_slider_val("body_gain")), float(_slider_val("wing_gain"))]
 
 
 ## 读某条分层滑杆的当前值（滑杆还没建时返回 0）

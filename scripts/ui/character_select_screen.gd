@@ -55,34 +55,64 @@ const BREATH_LAYERS := {
 		"hair": "res://assets/art/select/layer-deepseek-hair.png",
 		"face": "res://assets/art/select/layer-deepseek-face.png",
 		"body": "res://assets/art/select/layer-deepseek-body.png",
+		"wing": "",
+		"h5": ["res://assets/art/select/hair5c-deepseek-seg1.png",
+				"res://assets/art/select/hair5c-deepseek-seg2.png",
+				"res://assets/art/select/hair5c-deepseek-seg3.png",
+				"res://assets/art/select/hair5c-deepseek-seg4.png",
+				"res://assets/art/select/hair5c-deepseek-seg5.png"],
 	},
 	"kweno": {
 		"hair": "res://assets/art/select/layer-qwen-hair.png",
 		"face": "res://assets/art/select/layer-qwen-face.png",
 		"body": "res://assets/art/select/layer-qwen-body.png",
+		"wing": "",
+		"h5": ["res://assets/art/select/hair5c-qwen-seg1.png",
+				"res://assets/art/select/hair5c-qwen-seg2.png",
+				"res://assets/art/select/hair5c-qwen-seg3.png",
+				"res://assets/art/select/hair5c-qwen-seg4.png",
+				"res://assets/art/select/hair5c-qwen-seg5.png"],
 	},
 	"chatppt": {
 		"hair": "res://assets/art/select/layer-gpt-hair.png",
 		"face": "res://assets/art/select/layer-gpt-face.png",
-		"body": "res://assets/art/select/layer-gpt-body.png",
+		"body": "res://assets/art/select/layer-gpt-body2.png",
+		"wing": "res://assets/art/select/layer-gpt-wing.png",
+		"h5": ["res://assets/art/select/hair5c-gpt-seg1.png",
+				"res://assets/art/select/hair5c-gpt-seg2.png",
+				"res://assets/art/select/hair5c-gpt-seg3.png",
+				"res://assets/art/select/hair5c-gpt-seg4.png",
+				"res://assets/art/select/hair5c-gpt-seg5.png"],
 	},
 	"grock": {
 		"hair": "res://assets/art/select/layer-grok-hair.png",
 		"face": "res://assets/art/select/layer-grok-face.png",
 		"body": "res://assets/art/select/layer-grok-body.png",
+		"wing": "",
+		"h5": ["res://assets/art/select/hair5c-grok-seg1.png",
+				"res://assets/art/select/hair5c-grok-seg2.png",
+				"res://assets/art/select/hair5c-grok-seg3.png",
+				"res://assets/art/select/hair5c-grok-seg4.png",
+				"res://assets/art/select/hair5c-grok-seg5.png"],
 	},
 }
 
 var _ais: Array[AiData] = []
 var _big_texs: Array[Texture2D] = []         ## 铺满全屏的大立绘
-## 与 _big_texs 一一对应的三层呼吸遮罩（每项都可为 null）
+## 与 _big_texs 一一对应的呼吸遮罩（每项都可为 null）
 var _big_hair: Array[Texture2D] = []
 var _big_face: Array[Texture2D] = []
 var _big_body: Array[Texture2D] = []
+var _big_wing: Array[Texture2D] = []
+## 五段头发：每角色一个长度 5 的数组
+var _big_h5: Array = []
+## GPT 黑洞区域遮罩（由 Python 定位红线核得出，只有这一张）
+var _bh_region: Texture2D = null
 var _idx := 0
 
 var _bg_layer: RippleSwapPortrait = null     ## 背景大立绘（带一人一款转场）
 var _breath: PortraitBreathLayer = null      ## 呼吸层（_bg_layer 的子节点，画在它上面）
+var _blackhole: BlackHoleSpinner = null      ## 黑洞旋转层（仅 GPT 有，画在呼吸层之上）
 var _breath_panel: BreathDebugPanel = null   ## F2 呼吸调试面板
 var _swapping := false
 
@@ -119,6 +149,9 @@ func setup(ais: Array[AiData]) -> void:
 	_big_hair.clear()
 	_big_face.clear()
 	_big_body.clear()
+	_big_wing.clear()
+	_bh_region = _load_tex("res://assets/art/select/region-gpt-blackhole.png")
+	_big_h5.clear()
 	for a in _ais:
 		# 大立绘优先用 bust_path（全屏大图），没有就退回小立绘
 		var big := _load_tex(a.bust_path)
@@ -130,6 +163,12 @@ func setup(ais: Array[AiData]) -> void:
 		_big_hair.append(_load_tex(String(lay.get("hair", ""))))
 		_big_face.append(_load_tex(String(lay.get("face", ""))))
 		_big_body.append(_load_tex(String(lay.get("body", ""))))
+		_big_wing.append(_load_tex(String(lay.get("wing", ""))))
+		var seg_paths: Array = lay.get("h5", [])
+		var seg_texs: Array = []
+		for sp in seg_paths:
+			seg_texs.append(_load_tex(String(sp)))
+		_big_h5.append(seg_texs)
 	if is_inside_tree():
 		_build()
 
@@ -191,6 +230,9 @@ func _build_breath() -> void:
 	_breath.name = "PortraitBreath"
 	_breath.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_bg_layer.add_child(_breath)
+	# 黑洞旋转层：挂在呼吸层之后（后入树=画在上面），只对 GPT 生效
+	_blackhole = BlackHoleSpinner.new()
+	_bg_layer.add_child(_blackhole)
 	_sync_breath_char()
 
 
@@ -391,7 +433,19 @@ func _sync_breath_char() -> void:
 		face = _big_face[i]
 	if i < _big_body.size():
 		body = _big_body[i]
-	_breath.set_character(i, _big_texs[i], hair, face, body)
+	var wing: Texture2D = null
+	if i < _big_wing.size():
+		wing = _big_wing[i]
+	var h5: Array = []
+	if i < _big_h5.size():
+		h5 = _big_h5[i]
+	_breath.set_character(i, _big_texs[i], hair, face, body, h5, wing)
+	# 黑洞只有 GPT（chatppt）有，其余角色传 null 让该层隐藏
+	if _blackhole != null:
+		if current_id() == "chatppt":
+			_blackhole.set_region(_big_texs[i], _bh_region)
+		else:
+			_blackhole.set_region(null, null)
 	# 2026-11-10 主人要求：每个角色的呼吸参数都不一样 → 切角色时把该角色那套下发
 	var cid := current_id()
 	_apply_layers(cid)
@@ -399,17 +453,11 @@ func _sync_breath_char() -> void:
 		_breath_panel.set_character(cid)      # 面板整组换成该角色的值（静默，不回流）
 
 
-## 把某角色的三层参数从 GameSettings 读出来、推给呼吸层
+## 把某角色的 8 层参数从 GameSettings 读出来、推给呼吸层
 func _apply_layers(cid: String) -> void:
 	if _breath == null:
 		return
-	_breath.set_layer_params(
-			GameSettings.breath_layer(cid, "hair_gain"),
-			GameSettings.breath_layer(cid, "face_gain"),
-			GameSettings.breath_layer(cid, "body_gain"),
-			GameSettings.breath_layer(cid, "hair_phase"),
-			GameSettings.breath_layer(cid, "face_phase"),
-			GameSettings.breath_layer(cid, "body_phase"))
+	_breath.set_layer_params(GameSettings.breath_layers_of(cid))
 
 
 ## 左右切换
@@ -455,14 +503,11 @@ func _on_breath_params_changed(a: float, per: float, ph: float, m: int) -> void:
 	_breath.set_params(a, per, ph, m)
 
 
-## 三层参数变化 → 即时下发到呼吸层（面板已把值写进 GameSettings 对应角色分节）
+## 八层参数变化 → 即时下发到呼吸层（面板已把值写进 GameSettings 对应角色分节）
 func _on_breath_layers_changed(layers: Dictionary) -> void:
 	if _breath == null:
 		return
-	_breath.set_layer_params(
-			float(layers.get("hair_gain", 0.0)), float(layers.get("face_gain", 0.0)),
-			float(layers.get("body_gain", 0.0)), float(layers.get("hair_phase", 0.0)),
-			float(layers.get("face_phase", 0.0)), float(layers.get("body_phase", 0.0)))
+	_breath.set_layer_params(layers)
 
 
 ## 供测试/调试：开关呼吸面板（等同按一下 F2）

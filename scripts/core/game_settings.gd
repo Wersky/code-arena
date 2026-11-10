@@ -71,23 +71,55 @@ const BREATH_MODE_MAX := 3
 ##   DeepSeek 长卷发居中
 const BREATH_CHARS := ["deepdeek", "kweno", "chatppt", "grock"]
 ## 每角色的出厂预设：{layer_gain, layer_phase} × 3 层
+## 2026-11-10 V3：头发拆成 5 段各自飘动（主人口述「不同层的头发应当不同分」）。
+## 每角色 8 层 × (gain, phase) = 16 个参数。
+## 预设的相位设计是「从上到下依次滞后」，形成一波往下传的飘动层次：
+##   h1 呆毛头顶  领先最多（最轻最灵）
+##   h2/h3 左右鬓 稍领先
+##   h4 长垂发    略滞后（主体，惯性大）
+##   h5 末端发梢  滞后最多（被带着走）
+##   face 基准 / body 滞后 / wing 最滞后
 const BREATH_PRESETS := {
-	"deepdeek": {"hair_gain": 1.00, "face_gain": 0.60, "body_gain": 0.32,
-			"hair_phase": 0.06, "face_phase": 0.00, "body_phase": -0.07},
-	"kweno": {"hair_gain": 1.00, "face_gain": 0.58, "body_gain": 0.28,
-			"hair_phase": 0.07, "face_phase": 0.00, "body_phase": -0.08},
-	"chatppt": {"hair_gain": 0.85, "face_gain": 0.70, "body_gain": 0.42,
-			"hair_phase": 0.04, "face_phase": 0.00, "body_phase": -0.05},
-	"grock": {"hair_gain": 1.05, "face_gain": 0.62, "body_gain": 0.35,
-			"hair_phase": 0.06, "face_phase": 0.00, "body_phase": -0.07},
+	"deepdeek": {
+		"h1_gain": 1.15, "h2_gain": 1.00, "h3_gain": 1.00, "h4_gain": 0.80, "h5_gain": 0.60,
+		"h1_phase": 0.10, "h2_phase": 0.05, "h3_phase": 0.05, "h4_phase": -0.03, "h5_phase": -0.12,
+		"face_gain": 0.60, "body_gain": 0.32, "wing_gain": 0.0,
+		"face_phase": 0.00, "body_phase": -0.07, "wing_phase": -0.16},
+	"kweno": {
+		"h1_gain": 1.15, "h2_gain": 1.05, "h3_gain": 1.05, "h4_gain": 0.85, "h5_gain": 0.65,
+		"h1_phase": 0.11, "h2_phase": 0.06, "h3_phase": 0.06, "h4_phase": -0.02, "h5_phase": -0.13,
+		"face_gain": 0.58, "body_gain": 0.28, "wing_gain": 0.0,
+		"face_phase": 0.00, "body_phase": -0.08, "wing_phase": -0.16},
+	"chatppt": {
+		"h1_gain": 1.10, "h2_gain": 0.95, "h3_gain": 0.95, "h4_gain": 0.75, "h5_gain": 0.55,
+		"h1_phase": 0.09, "h2_phase": 0.05, "h3_phase": 0.05, "h4_phase": -0.03, "h5_phase": -0.11,
+		"face_gain": 0.70, "body_gain": 0.42, "wing_gain": 0.22,
+		"face_phase": 0.00, "body_phase": -0.05, "wing_phase": -0.16},
+	"grock": {
+		"h1_gain": 1.20, "h2_gain": 1.05, "h3_gain": 1.05, "h4_gain": 0.82, "h5_gain": 0.62,
+		"h1_phase": 0.12, "h2_phase": 0.06, "h3_phase": 0.06, "h4_phase": -0.02, "h5_phase": -0.12,
+		"face_gain": 0.62, "body_gain": 0.35, "wing_gain": 0.0,
+		"face_phase": 0.00, "body_phase": -0.07, "wing_phase": -0.16},
 }
 ## 分层滑杆范围（gain 与 phase 共用一套，面板直接引用）
 const BREATH_GAIN_MIN := 0.0
 const BREATH_GAIN_MAX := 1.5
 const BREATH_LAYER_PHASE_MIN := -0.35
 const BREATH_LAYER_PHASE_MAX := 0.35
-const BREATH_LAYER_KEYS := ["hair_gain", "face_gain", "body_gain",
-		"hair_phase", "face_phase", "body_phase"]
+## 16 个键：5 段头发 + 脸 + 身体 + 翅膀，各带 gain 与 phase
+const BREATH_LAYER_KEYS := [
+	"h1_gain", "h2_gain", "h3_gain", "h4_gain", "h5_gain",
+	"face_gain", "body_gain", "wing_gain",
+	"h1_phase", "h2_phase", "h3_phase", "h4_phase", "h5_phase",
+	"face_phase", "body_phase", "wing_phase",
+]
+## 面板显示用的中文短标签（顺序与 BREATH_LAYER_KEYS 一致）
+const BREATH_LAYER_LABELS := [
+	"呆毛顶", "左鬓", "右鬓", "长垂发", "发梢",
+	"脸", "身体", "翅膀",
+	"呆毛相", "左鬓相", "右鬓相", "长垂相", "发梢相",
+	"脸相", "身相", "翅相",
+]
 
 ## 四个角色各自的分层参数（运行时唯一真相），初始 = 出厂预设
 static var breath_layers := {}
