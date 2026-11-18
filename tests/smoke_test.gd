@@ -149,7 +149,13 @@ func _test_level_pool() -> void:
 
 
 # ── 封号技能（2026-11-11 主人要求）──
+## ⚠ 2026-11-18：封号机制随「千问改造」一起被回滚，StsCombat 里已无 ban_* 字段。
+## 保留本测试但当机制不存在时整段跳过 —— 不然每次 smoke 都在这里喷
+## "Invalid assignment of property 'ban_active'"，把真正的失败淹掉。
 func _test_ban_skill() -> void:
+	if not ("ban_active" in StsCombat.new()):
+		print("[封号技能] （机制已回滚，跳过）")
+		return
 	print("[封号技能]")
 	var deck := StsCardPool.starter_deck()
 	var cb := StsCombat.new()
@@ -686,12 +692,16 @@ func _test_screen_router() -> void:
 	for ch in tut.get_children():
 		if ch is ColorRect: dim_cnt += 1
 	_check(dim_cnt == 4, "TutorialOverlay 有 4 块遮罩（围绕洞）")
+	## 只给一步：start 之后立刻 next_step 会走完最后一步并自行 queue_free，
+	## 所以先读 visible，再判「已释放或已隐藏」（2026-11-18 修：原来直接读
+	## tut.visible 会撞 "previously freed"，整段后续断言被静默跳过）。
 	tut.start([{"rect": Rect2(100, 100, 150, 226), "text": "测试提示"}])
 	await process_frame
 	_check(tut.visible, "start() 后可见")
 	tut.next_step()
 	await process_frame
-	_check(not tut.visible, "走完一步后 finish 并隐藏")
+	_check(not is_instance_valid(tut) or not tut.visible,
+			"走完一步后 finish 并隐藏")
 	if is_instance_valid(tut): tut.queue_free()
 	await process_frame
 
@@ -720,6 +730,12 @@ func _test_screen_router() -> void:
 		_check(lp.size.x > 800 and lp.size.y > 400,
 				"面板有实际尺寸（实得 %s，为 0 就等于看不见）" % str(lp.size))
 		_check(lp.visible, "面板 visible = true")
+		## 字体回归（2026-11-18）：Main 是纯 Node，theme 不会自动传给它下面的 Control。
+		## 漏装 → Label 用引擎内置字体（无 CJK）→ 中文全变方框。
+		_check(lp.theme != null, "AI 面板装上了 theme（否则中文全是方框）")
+		var _f: Font = lp.get_theme_font("font")
+		_check(_f != null and _f.has_char(0x4E2D),
+				"AI 面板字体含中文字形（否则中文全是方框）")
 		var adv_btn: Node = null
 		var walk_adv := func(n: Node) -> void: pass
 		# 手写一层递归找高级选项按钮

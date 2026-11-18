@@ -78,6 +78,30 @@ func _swap(screen: Control) -> void:
 	_current = screen
 	screen.set_anchors_preset(Control.PRESET_FULL_RECT)
 	add_child(screen)
+	_themify(screen)
+
+
+## ⚠ 给 Control 装主题（2026-11-18 修中文方框，必须每处都过它）
+##
+## 根因（真实窗口探针实测）：
+##   Main 是纯 Node，界面/弹窗都 add_child 到它下面。而 Godot 的 theme
+##   只在 **Control 树**里继承 —— Window.theme 和 Node 父级都**不传播**。
+##   于是这些界面里的 Label 调 get_theme_font("font") 拿到的是
+##   **引擎内置主题**里那个没有 CJK 的字体 → 中文全渲染成方框
+##   （拉丁字母有系统 fallback，看着还行，所以容易被误判成"编码错误"）。
+##
+##   实测证据：
+##     theme.get_font("font","Label") = FontFile#...615430   ← 我们设的中文字体（对）
+##     leaf.theme = <Object#null>                            ← 没继承
+##     leaf.get_theme_font("font") = FontFile#...5201702     ← 内置字体（错）
+##     has_char("中") = false   has_char("A") = true
+##
+##   对照：LaunchScreen 每个 Label 都显式 add_theme_font_override → 中文一直正常。
+##
+## 所以：凡是要 add_child 到 Main 下的 Control，都调这个函数。
+func _themify(c: Control) -> void:
+	if c != null and c.theme == null:
+		c.theme = PixelTheme.build()
 
 
 # ── 界面 ─────────────────────────────────────────────
@@ -187,6 +211,7 @@ func _goto_character_select(default_ai_id: String) -> void:
 	var mosaic := ScreenMosaic.new()
 	mosaic.name = "ScreenMosaic"
 	add_child(mosaic)
+	_themify(mosaic)
 	mosaic.move_to_front()
 	# ① 面板退出动画（约 1.24s）：两框收缩 → 蓄力 → 顶飞。
 	#    此时遮罩**不可见**（grab 只备图不显示），动画全程可见。
@@ -484,6 +509,7 @@ func _show_llm_panel() -> void:
 	panel.closed.connect(func() -> void: _llm_panel = null)
 	_llm_panel = panel
 	add_child(panel)
+	_themify(panel)
 	## 关键修复（2026-11-18）：Main 是纯 Node（没有 rect），往它下面挂 Control 时
 	## 光靠 set_anchors_preset(FULL_RECT) 算不出尺寸 —— 实测面板 size=(0,0)，
 	## 于是"看不见、点了也像没反应"。必须显式把尺寸同步到视口大小。
@@ -854,6 +880,7 @@ func _maybe_capture() -> void:
 			await get_tree().create_timer(1.0).timeout
 			var mz := ScreenMosaic.new()
 			add_child(mz)
+			_themify(mz)
 			mz.move_to_front()
 			await mz.grab()
 			var steps := [400, 200, 120, 72, 48]
