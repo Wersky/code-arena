@@ -1,0 +1,39 @@
+name = "code-arena-gate"
+main = "src/index.js"
+compatibility_date = "2026-11-18"
+
+# ── 静态资源绑定（不需要 R2，不用绑支付方式）─────────────────
+# Workers 静态资源**单文件**上限 25 MiB，但**总量无上限**。
+# game.pck 44 MB / game.wasm 37.7 MB 都超限 →
+# 用 tools/split_pck.py 切成 game-part1/p2（各 ≤24 MiB），
+# Worker 的 serveChunked() 按 Range 拼成一条流返回，浏览器完全无感。
+#
+# 上传前先跑：
+#   python ..\tools\split_pck.py ..\build\web --target game.pck
+#   python ..\tools\split_pck.py ..\build\web --target game.wasm
+# 原始 game.pck / game.wasm 不要放进这个目录（会触发 25 MiB 报错）。
+[assets]
+# 注意：不是 ../build/web，而是整理过的 public/ —— 原始 game.pck/game.wasm
+# 是 44/37 MB，直接放进去会触发 25 MiB 报错整个 deploy 失败。
+# 用 tools/stage_web.py 生成这个目录（只放分片 + html/js/图标）。
+directory = "./public"
+
+# ⚠ 必须声明 binding 才能让 Worker 用 env.ASSETS.fetch() 回源取文件
+#   （2026-11-18 实测：只写 run_worker_first 不写 binding 会告警
+#   "run_worker_first=true set without an assets binding"，
+#   env.ASSETS 是 undefined，所有资源全 503）
+binding = "ASSETS"
+
+# ⚠ 安全关键：必须 true。
+#   默认 false 时，凡是能匹配到静态资源的请求（如 /game-part1.pck、
+#   /game.js、/game.html）会**绕过 Worker 直接由 CDN 返回** ——
+#   等于分片和游戏本体全部公开可下，门禁形同虚设。
+run_worker_first = true
+
+not_found_handling = "none"
+
+# ⚠ 这里故意不写 [vars]：所有配置（ACCESS_CODE / SESSION_SECRET /
+#   LLM_BASE / LLM_KEY / IMG_BASE / IMG_KEY）都走 wrangler secret put。
+#   如果在这里写 [vars] LLM_BASE = ""，deploy 时会覆盖掉同名 secret，
+#   代理随即 503「后端未配置」（2026-11-18 实测警告信息：
+#   "This deployment will replace the remote secret with your environment variable."）
