@@ -1,55 +1,76 @@
 # 代码擂台 Code Arena
 
-> Godot 4.7.2 · 2D 肉鸽卡牌 · 纯鼠标操作
-> 玩家选一位 AI 娘，每回合排 4 张卡的**执行序列**；靠连段、首尾槽位、白米饭成长，闯 10 关。
+> **Godot 4.7.2 · 2D 肉鸽卡牌 · 纯鼠标操作**
 
-**私密仓库，由 ZCode（小萤）与 wb 共同维护。**
+选一位 AI 娘当搭档，用「提示词组件」卡牌在命令行里拼出程序，跑赢十个关卡的 Benchmark。
+每回合排 4 张卡的执行序列，点发送后按顺序执行——连段、首尾槽位、白米饭成长，四位角色打法各不相同。
 
 ---
 
-## 接手前必读（按顺序）
+## 玩法
 
-| # | 文档 | 作用 |
-|---|---|---|
-| 1 | [`AGENTS.md`](AGENTS.md) | 常驻硬规则：不弹窗、无头验证、打包前查进程 |
-| 2 | [`docs/CodeArts-接手文档.md`](docs/CodeArts-接手文档.md) | **当前状态唯一真值**：玩法、架构、命令、缺口、MCP/Skills |
-| 3 | [`docs/CodeArts-技能索引.md`](docs/CodeArts-技能索引.md) | 154 个 Godot 技能，按任务挑着读 |
-| 4 | [`docs/mcp-setup.md`](docs/mcp-setup.md) | Tavily / B站 MCP 配置（多 agent 共用） |
-| 5 | [`docs/踩坑手册.md`](docs/踩坑手册.md) | 真实踩坑，动手前扫一眼 |
-| 6 | [`docs/05-交接与协作.md`](docs/05-交接与协作.md) | 协作/分支/交接纪律（数字部分已旧） |
+- **选角**：DeepDeek / Kweno / ChatPPT / Grock，四位 AI 娘各有专属卡池与被动
+- **战斗**：每回合从手牌排 4 张成执行序列 → 发送 → 顺序结算 → 敌方回合
+- **构筑**：连段（同类型连击加伤）、首尾槽位加成、白米饭成长、道具、事件、商店
+- **关卡**：10 关线性推进，每 3 关一次商店，Boss 战锁规则版
+- **AI 接入**（可选）：配自己的 LLM，让 AI 当对手、生成事件文本、AI 娘说台词
 
-> `docs/00~04` 是德州扑克时代的设计存档，已作废，不要照着实现。
+### 许愿卡
+
+战斗中可以用「愿」画板手绘一张卡：AI 看懂你画的形状，生成卡牌属性 + 插画。
+
+支持两条路线（按配置自动选）：
+
+- **生图路线**：默认模型做视觉分析 → 产出卡牌属性 + 生图提示词 → 交给专门生图模型出图
+- **SVG 路线**：模型自己分析并绘制 SVG，游戏内 ThorVG 渲染
 
 ---
 
 ## 快速开始
 
-```bash
-GODOT="D:/zcode-work/godot/engine/Godot_v4.7.2-stable_win64_console.exe"
+需要 **Godot 4.7.2**。
 
-"$GODOT" --headless --path . --import                              # 改过 class_name 后必跑
-"$GODOT" --headless --path . --script res://tests/smoke_test.gd     # 224 项当前主流程
-"$GODOT" --headless --path . --script res://tests/_meme_selftest.gd # 219 项旧机制存档
-"$GODOT" --headless --path . --script res://tests/verify_c4.gd      # 旧机制算例 4 项
-"$GODOT" --headless --path . --script res://tools/sts_sim.gd        # 纯战斗平衡模拟
-tools/export_win.bat                                               # 导出（先查 code-arena 进程）
+```bash
+# 启动游戏
+godot --path .
+
+# 跑回归测试
+godot --headless --path . --script res://tests/smoke_test.gd
 ```
 
-**不要直接 `--path .` 启动游戏窗口** —— 主人可能在玩；所有验证走 `--headless`。
+**AI 接入**：启动后点左侧栏「⚙ 模型接入」，填 Base URL / API Key / 模型名。
+不配也能玩——AI 相关功能会走本地规则。
 
 ---
 
-## 一句话状态
+## 技术要点
 
-**已是一条可玩的纵向切片：10 关、9 张卡（含 ChatPPT 专属攻防 2 张）、4 件道具、5 则事件、4 类门、三段成长、燃尽画面、F1 体验沙盒。**
-主要缺口：L2–L10 敌人立绘、跨局 meta 进度、平衡模拟未覆盖道具/事件。
-LLM 接入方案已定稿（AI 对手 + AI 事件引擎 + AI 娘小鲸），见 `圆桌纪要/LLM接入代码擂台.md`。
-详见 [`docs/CodeArts-接手文档.md`](docs/CodeArts-接手文档.md) §8。
+| 项 | 做法 |
+|---|---|
+| 战斗逻辑 | `scripts/core/sts_combat.gd` —— 纯状态机，无 UI 无 SceneTree，可独立测试 |
+| 立绘呼吸 | 顶点级网格形变（32×18 网格 + 顶点色权重场），不是 UV 平移 |
+| 选角转场 | 一人一款 shader（水波 / 花瓣遮幕 / 龙鳞 / 乱斩） |
+| 终端进场 | PowerShell 驱动真实终端窗口渲染 ASCII 字符画 |
+| 卡面 | 生图模型出本体，卡框由代码叠加 |
 
 ---
 
-## 多 agent 协作
+## 目录结构
 
-- 技能库 `.zcode/skills` 随仓库分发；CodeArts 通过 `.github/skills` 链接自动发现（换机器跑 `tools/link_skills.bat`）。
-- MCP（Tavily 检索 / B站热梗采集）按机器本地配置，见 [`docs/mcp-setup.md`](docs/mcp-setup.md)，**key 不入库**。
-- 任何 agent 先读 `AGENTS.md` + `docs/CodeArts-接手文档.md`；多 agent 按文件认领，提交前 `git pull --rebase`。
+```
+scripts/core/    战斗状态机、跨关状态
+scripts/data/    卡池、AI 娘、关卡、道具、事件
+scripts/llm/     LLM 接入四模块（配置 / 网络 / 协议 / 解析）
+scripts/ui/      各屏幕与演出
+tests/           回归测试
+tools/           平衡模拟器、导出脚本
+docs/            设计文档、踩坑手册、进度交接
+```
+
+---
+
+## 文档
+
+- [`docs/踩坑手册.md`](docs/踩坑手册.md) —— 真实踩过的坑，动手前扫一眼
+- [`docs/进度交接.md`](docs/进度交接.md) —— 项目状态与下一步
+- [`AGENTS.md`](AGENTS.md) —— 协作规则与必跑命令

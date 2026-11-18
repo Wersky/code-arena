@@ -5,6 +5,8 @@ extends Control
 ##   - FAN    折扇开屏（Kweno 千金·青花折扇）：扇面从左往右逐扇骨展开
 ##   - SLASH  X 双斩（Grock 毒舌小恶魔·扛 X 巨斧）：两道剑光交叉劈开，四片滑开坠落
 ##   - HEX    龙鳞剥落（ChatPPT 白龙千金）：六边形鳞片底部先剥、沿线翘金边
+##   - PETAL  白花瓣遮幕（Kweno 千问·2026-11-11 主人指定）：花瓣自左下涌向右上，
+##            密到遮满全屏后散开。遮幕期间换图，所以终态绝对干净。
 ##
 ## 用法：
 ##   set_portrait(tex_a)          → 初始立绘
@@ -14,14 +16,21 @@ extends Control
 
 signal swap_finished
 
-enum Style { RIPPLE, FAN, SLASH, HEX }
+enum Style { RIPPLE, FAN, SLASH, HEX, PETAL }
 
 const SHADERS := {
 	Style.RIPPLE: preload("res://assets/shaders/ripple_reveal.gdshader"),
 	Style.FAN: preload("res://assets/shaders/fan_sprite_reveal.gdshader"),
 	Style.SLASH: preload("res://assets/shaders/x_slash.gdshader"),
 	Style.HEX: preload("res://assets/shaders/hex_scale.gdshader"),
+	Style.PETAL: preload("res://assets/shaders/petal_veil_reveal.gdshader"),
 }
+## 白花瓣图集（4×4，透明底；2026-11-11 程序化生成，生图通道 503 时的替代）
+const PETAL_TEX_SHEET := preload("res://assets/art/fx/petals-sheet.png")
+## 花瓣风格换图的进度点：白幕在这个位置最厚，前一张图已被完全遮住。
+## 为什么不是 0.5：白幕从 0.30 渐入、0.58 起渐出，0.56 处仍在峰值内侧，
+## 留一点缓冲吸收 tween 的帧量化误差（4.7 的 tween 一帧可能跳 2~3%）。
+const PETAL_SWAP_AT := 0.56
 ## 实物扇子素材（2026-11-08 主人定稿：像素风扇布——合拢竖在左缘，展开扫满全画框，无支架）
 const FAN_TEX_CLOTH_PX := preload("res://assets/art/fx/fan-cloth-pixel.png")
 ## 画面侧扇轴（左下角内收一点）
@@ -36,6 +45,9 @@ var _current: Texture2D = null
 ## FAN 风格专用状态
 var _fan_swapped := false   ## 盖满后，背后已换成新立绘
 var _fan_next: Texture2D = null
+## PETAL 风格专用状态
+var _petal_swapped := false
+var _petal_next: Texture2D = null
 
 
 func _ready() -> void:
@@ -61,6 +73,9 @@ func _update_geo() -> void:
 	_mat.set_shader_parameter("aspect", asp)
 	# max_dist：水波用（中心到最远角，aspect 校正 + 少量余量）；其余风格忽略它
 	_mat.set_shader_parameter("max_dist", Vector2(0.5 * asp, 0.5).length() + 0.02)
+	# PETAL 用 aspect 做极坐标圆化（它有自己的 _update_petal_geo）
+	if style == Style.PETAL:
+		_update_petal_geo()
 
 
 func set_portrait(tex: Texture2D) -> void:
@@ -100,6 +115,25 @@ func swap_to(tex: Texture2D) -> void:
 	_update_geo()
 	if style == Style.SLASH:
 		_apply_slash_params(true)
+	elif style == Style.PETAL:
+		# 遮幕式：白幕最厚处（PETAL_SWAP_AT）把背后换成新图，
+		# 之后的散开段露出的就已经是新立绘了。
+		_mat.set_shader_parameter("tex_petal", PETAL_TEX_SHEET)
+		_petal_swapped = false
+		_petal_next = tex
+		_update_petal_geo()
+	if style == Style.PETAL:
+		var tp := create_tween()
+		tp.tween_method(func(v: float) -> void:
+			_set_progress_petal(v), 0.0, 1.0, maxf(0.05, swap_time)) \
+			.set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN_OUT)
+		tp.tween_callback(func() -> void:
+			_mat.set_shader_parameter("tex_prev", tex)
+			_mat.set_shader_parameter("progress", 0.0)
+			_current = tex
+			_swapping = false
+			swap_finished.emit())
+		return
 	var tw := create_tween()
 	tw.tween_method(func(v: float) -> void:
 		_mat.set_shader_parameter("progress", v), 0.0, 1.0, maxf(0.05, swap_time)) \
@@ -216,6 +250,24 @@ func is_swapping() -> bool:
 	return _swapping
 
 
+## 花瓣风格的几何：只需 aspect（花瓣按画面比例圆化，避免横向拉扁）
+func _update_petal_geo() -> void:
+	if _mat == null or size.y <= 0.0:
+		return
+	var asp := size.x / size.y
+	_mat.set_shader_parameter("aspect", asp)
+	_mat.set_shader_parameter("tex_petal", PETAL_TEX_SHEET)
+
+
+## 花瓣风格的进度推进：到遮幕最厚处换图（幂等，重复调用无副作用）
+func _set_progress_petal(p: float) -> void:
+	_mat.set_shader_parameter("progress", p)
+	if p >= PETAL_SWAP_AT and not _petal_swapped and _petal_next != null:
+		_mat.set_shader_parameter("tex_prev", _petal_next)
+		_current = _petal_next
+		_petal_swapped = true
+
+
 ## 逐帧验收：把两张图摆好、直接停在某个进度（不播动画）
 func debug_prepare(prev: Texture2D, next: Texture2D) -> void:
 	_swapping = false
@@ -232,10 +284,16 @@ func debug_prepare(prev: Texture2D, next: Texture2D) -> void:
 		_update_fan_geo()
 	elif style == Style.SLASH:
 		_apply_slash_params(false)
+	elif style == Style.PETAL:
+		_petal_swapped = false
+		_petal_next = next
+		_update_petal_geo()
 
 
 func debug_set_progress(p: float) -> void:
 	if style == Style.FAN:
 		_apply_fan(clampf(p, 0.0, 1.0))
+	elif style == Style.PETAL:
+		_set_progress_petal(clampf(p, 0.0, 1.0))
 	elif _mat != null:
 		_mat.set_shader_parameter("progress", clampf(p, 0.0, 1.0))

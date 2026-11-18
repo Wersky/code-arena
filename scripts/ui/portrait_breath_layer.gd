@@ -149,7 +149,9 @@ func set_character(idx: int, tex: Texture2D, hair: Texture2D = null,
 	# V4：同一份纹理 + 同一批遮罩，构建/重建网格（躯干+头发走顶点形变）
 	if _mesh_layer != null:
 		if tex != null and use_mesh_engine:
-			_mesh_layer.setup(tex, face, body, hair)
+			# wing 是第 5 通道（2026-11-11）：只有 chatppt 有，其余传 null → 权重全 0。
+			# 走 CUSTOM0 顶点属性，不进顶点色（RGBA 已被胸/腹/头/发占满）。
+			_mesh_layer.setup(tex, face, body, hair, wing)
 			_fit_mesh_to_canvas(tex)
 			_mesh_layer.visible = true
 			_rect.visible = false

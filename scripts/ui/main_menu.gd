@@ -377,6 +377,23 @@ class LLMSettingsPanel extends Control:
 	var _enabled_btn: CheckButton
 	var _test_btn: Button
 	var _feedback: Label
+	## ── 高级选项：SVG 生图 AI（2026-11-18 主人要求）──
+	## 许愿卡的 SVG 默认由「对应模型」画；这里可指定另一个更快的模型专画 SVG，
+	## 默认模型完全不参与绘图。全部留空 = 走默认模型（老行为）。
+	var _adv_toggle: Button
+	var _adv_box: VBoxContainer
+	var _svg_enabled_btn: CheckButton
+	var _svg_model_edit: LineEdit
+	var _svg_base_edit: LineEdit
+	var _svg_key_edit: LineEdit
+	## 好感度调节器（2026-11-18 主人要求：可 0 → 上限自由设）
+	var _aff_slider: HSlider
+	var _aff_value_lbl: Label
+	## 终端代码打字速度滑杆（2026-11-18 主人要求）
+	var _term_speed_slider: HSlider
+	var _term_speed_lbl: Label
+	## 恒定新手模式开关（2026-11-18 主人要求，测试引导用）
+	var _tut_always_btn: CheckButton
 	var _models: Array[String] = []
 	var _closed := false
 	var _loading := false
@@ -404,10 +421,22 @@ class LLMSettingsPanel extends Control:
 		veil.mouse_filter = Control.MOUSE_FILTER_STOP
 		add_child(veil)
 
+		## 用 ScrollContainer 直接撑满全屏（2026-11-18 修）：
+		## 面板内容已经 879px，画布只有 900，再加「高级选项」展开必然溢出把底部切掉。
+		## 之前用 CenterContainer 会把内容撑到自然高度、无法滚动，
+		## 所以改成「全屏滚动容器 + 里面居中一份面板」，上下留 24px 安全边距。
+		var outer := ScrollContainer.new()
+		outer.name = "SettingsScroll"
+		outer.set_anchors_preset(Control.PRESET_FULL_RECT)
+		outer.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_AUTO
+		outer.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+		add_child(outer)
+
 		var center := CenterContainer.new()
-		center.set_anchors_preset(Control.PRESET_FULL_RECT)
+		center.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		center.size_flags_vertical = Control.SIZE_EXPAND_FILL
 		center.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		add_child(center)
+		outer.add_child(center)
 
 		var box := PanelContainer.new()
 		box.custom_minimum_size = Vector2(880, 0)
@@ -530,6 +559,100 @@ class LLMSettingsPanel extends Control:
 		_img_key_edit.focus_exited.connect(_save)
 		_row(grid, "作画 Key", _img_key_edit)
 
+		## ── 高级选项（折叠）：SVG 生图 AI ──────────────
+		## 默认收起，点开才看到；这样普通玩家不会被技术项吓到。
+		_adv_toggle = UiKit.button("▸ 高级选项", UiKit.FS_XS)
+		_adv_toggle.custom_minimum_size = Vector2(148, 40)
+		_adv_toggle.toggle_mode = true
+		_adv_toggle.toggled.connect(_on_adv_toggled)
+		v.add_child(_adv_toggle)
+
+		_adv_box = VBoxContainer.new()
+		_adv_box.add_theme_constant_override("separation", UiKit.SP_2)
+		_adv_box.visible = false
+		v.add_child(_adv_box)
+
+		_adv_box.add_child(UiKit.label("SVG 生图 AI", UiKit.FS_S, Color(0.55, 0.85, 1.0)))
+		_adv_box.add_child(UiKit.dim(
+				"许愿卡的 SVG 默认由上面选的模型绘制。这里可以指定另一个模型专画 SVG（更快出图），上面那个模型就不参与绘图。",
+				UiKit.FS_XS))
+		_svg_enabled_btn = CheckButton.new()
+		_svg_enabled_btn.text = "启用独立通道（留空则按默认模型进行 SVG 绘制）"
+		_svg_enabled_btn.toggled.connect(func(_on: bool) -> void: _save())
+		_adv_box.add_child(_svg_enabled_btn)
+
+		var svg_grid := GridContainer.new()
+		svg_grid.columns = 2
+		svg_grid.add_theme_constant_override("h_separation", UiKit.SP_3)
+		svg_grid.add_theme_constant_override("v_separation", UiKit.SP_2)
+		_adv_box.add_child(svg_grid)
+		_svg_model_edit = _line_edit("SVG 模型（例：deepseek/deepseek-v4.1-flash-fast）")
+		_svg_model_edit.focus_exited.connect(_save)
+		_row(svg_grid, "SVG 模型", _svg_model_edit)
+		_svg_base_edit = _line_edit("留空 = 用上面的 Base URL")
+		_svg_base_edit.focus_exited.connect(_save)
+		_row(svg_grid, "SVG 端点", _svg_base_edit)
+		_svg_key_edit = _line_edit("留空 = 用上面的 API Key")
+		_svg_key_edit.secret = true
+		_svg_key_edit.focus_exited.connect(_save)
+		_row(svg_grid, "SVG Key", _svg_key_edit)
+
+		## ── 新手引导（2026-11-18 主人要求）──────────────
+		_adv_box.add_child(UiKit.label("新手引导", UiKit.FS_S, Color(0.85, 0.95, 0.6)))
+		_tut_always_btn = CheckButton.new()
+		_tut_always_btn.text = "恒定新手模式（每次进战斗都播引导，测试用）"
+		_tut_always_btn.toggled.connect(func(on: bool) -> void:
+			GameSettings.set_tutorial_always(on))
+		_adv_box.add_child(_tut_always_btn)
+		var tut_reset := UiKit.button("重置引导（下次进战斗重新播）", UiKit.FS_XS)
+		tut_reset.custom_minimum_size = Vector2(0, 38)
+		tut_reset.pressed.connect(func() -> void:
+			GameSettings.tutorial_done = false
+			GameSettings.save_to_disk())
+		_adv_box.add_child(tut_reset)
+
+
+		## ── 终端代码打字速度（2026-11-18 主人要求）──────────
+		## 直接调「多快敲完那段角色代码」：右快左慢。同时也影响真终端窗口那版。
+		_adv_box.add_child(UiKit.label("终端代码速度", UiKit.FS_S, Color(0.6, 0.88, 1.0)))
+		var ts_row := HBoxContainer.new()
+		ts_row.add_theme_constant_override("separation", UiKit.SP_3)
+		_adv_box.add_child(ts_row)
+		_term_speed_slider = HSlider.new()
+		_term_speed_slider.min_value = GameSettings.TERM_SPEED_MULT_MIN
+		_term_speed_slider.max_value = GameSettings.TERM_SPEED_MULT_MAX
+		_term_speed_slider.step = 0.05
+		_term_speed_slider.custom_minimum_size = Vector2(520, 28)
+		_term_speed_slider.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		_term_speed_slider.value = GameSettings.term_speed_mult
+		_term_speed_slider.value_changed.connect(_on_term_speed_changed)
+		ts_row.add_child(_term_speed_slider)
+		_term_speed_lbl = UiKit.label("", UiKit.FS_XS, Color(0.72, 0.9, 1.0))
+		_term_speed_lbl.custom_minimum_size = Vector2(190, 0)
+		ts_row.add_child(_term_speed_lbl)
+		_update_term_speed_label(GameSettings.term_speed_mult)
+
+		## ── 好感度调节器（0 → 上限）────────────────────────
+		## 好感度影响许愿卡画质档（Lv.15 起 32k 预算 + 精修级提示）。
+		## 这里给个直接拖动设置的滑杆，省得靠喂饭慢慢刷。
+		_adv_box.add_child(UiKit.label("好感度", UiKit.FS_S, Color(0.95, 0.65, 0.8)))
+		var aff_row := HBoxContainer.new()
+		aff_row.add_theme_constant_override("separation", UiKit.SP_3)
+		_adv_box.add_child(aff_row)
+		_aff_slider = HSlider.new()
+		_aff_slider.min_value = 0.0
+		_aff_slider.max_value = float(Affection.MAX_POINTS)
+		_aff_slider.step = 1.0
+		_aff_slider.custom_minimum_size = Vector2(520, 28)
+		_aff_slider.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		_aff_slider.value = Affection.points
+		_aff_slider.value_changed.connect(_on_affection_changed)
+		aff_row.add_child(_aff_slider)
+		_aff_value_lbl = UiKit.label("", UiKit.FS_XS, Color(0.95, 0.75, 0.88))
+		_aff_value_lbl.custom_minimum_size = Vector2(190, 0)
+		aff_row.add_child(_aff_value_lbl)
+		_update_aff_label(Affection.points)
+
 		var test_row := HBoxContainer.new()
 		test_row.add_theme_constant_override("separation", UiKit.SP_3)
 		v.add_child(test_row)
@@ -628,6 +751,18 @@ class LLMSettingsPanel extends Control:
 		_img_model_edit.text = cfg.image_model
 		_img_base_edit.text = cfg.image_base
 		_img_key_edit.text = cfg.image_key
+		_svg_enabled_btn.button_pressed = cfg.svg_enabled
+		_svg_model_edit.text = cfg.svg_model
+		_svg_base_edit.text = cfg.svg_base
+		_svg_key_edit.text = cfg.svg_key
+		if _aff_slider != null:
+			_aff_slider.set_value_no_signal(Affection.points)
+			_update_aff_label(Affection.points)
+		if _term_speed_slider != null:
+			_term_speed_slider.set_value_no_signal(GameSettings.term_speed_mult)
+			_update_term_speed_label(GameSettings.term_speed_mult)
+		if _tut_always_btn != null:
+			_tut_always_btn.set_pressed_no_signal(GameSettings.tutorial_always)
 		_loading = false
 
 
@@ -640,6 +775,10 @@ class LLMSettingsPanel extends Control:
 		cfg.image_model = _img_model_edit.text.strip_edges()
 		cfg.image_base = _img_base_edit.text.strip_edges()
 		cfg.image_key = _img_key_edit.text
+		cfg.svg_enabled = _svg_enabled_btn.button_pressed
+		cfg.svg_model = _svg_model_edit.text.strip_edges()
+		cfg.svg_base = _svg_base_edit.text.strip_edges()
+		cfg.svg_key = _svg_key_edit.text
 		var pidx := _protocol_btn.selected
 		if pidx >= 0 and pidx < LLMConfig.PROTOCOLS.size():
 			cfg.protocol = String(LLMConfig.PROTOCOLS[pidx])
@@ -655,6 +794,41 @@ class LLMSettingsPanel extends Control:
 		cfg.save(save_path)
 		_temp_val.text = "%.1f" % float(cfg.temperatures.get("event", 0.5))
 		saved.emit()
+
+
+	## 终端速度滑杆：拖动即存
+	func _on_term_speed_changed(v: float) -> void:
+		GameSettings.set_term_speed_mult(v)
+		_update_term_speed_label(v)
+
+
+	func _update_term_speed_label(v: float) -> void:
+		if _term_speed_lbl == null:
+			return
+		var ms := int(2400.0 / maxf(0.25, v))
+		_term_speed_lbl.text = "%0.2fx ｜ 约 %0.1fs" % [v, ms / 1000.0]
+
+
+	## 好感度滑杆：拖动即写入（Affection.save 会落盘，跨启动保留）
+	func _on_affection_changed(v: float) -> void:
+		Affection.points = maxf(0.0, v)
+		Affection.save()
+		_update_aff_label(Affection.points)
+
+
+	func _update_aff_label(pts: float) -> void:
+		if _aff_value_lbl == null:
+			return
+		var lv := int(floor(Affection.LEVEL_K * log(1.0 + pts / Affection.LEVEL_P)))
+		_aff_value_lbl.text = "%.0f 点 ｜ Lv.%d" % [pts, lv]
+
+
+	## 高级选项折叠/展开
+	func _on_adv_toggled(on: bool) -> void:
+		if _adv_box != null:
+			_adv_box.visible = on
+		if _adv_toggle != null:
+			_adv_toggle.text = ("▾ 高级选项" if on else "▸ 高级选项")
 
 
 	func _on_protocol_selected(idx: int) -> void:

@@ -30,6 +30,7 @@ func _initialize() -> void:
 	_test_sts_cards()
 	_test_level_pool()
 	_test_sts_combat()
+	_test_ban_skill()
 	_test_rice()
 	await _test_ui()
 	await _test_battle_flow(true)
@@ -47,6 +48,7 @@ func _initialize() -> void:
 	await _test_wish_canvas_edit()
 	await _test_card_flip()
 	await _test_ripple_swap()
+	await _test_intro_panel()
 	await _test_panel_morph()
 	await _test_mosaic_and_select()
 	await _test_breath()
@@ -120,9 +122,18 @@ func _test_sts_cards() -> void:
 func _test_level_pool() -> void:
 	print("[关卡]")
 	var ls := LevelPool.all_levels()
-	_eq(ls.size(), 10, "共 10 关")
+	_eq(ls.size(), 11, "共 11 关（10 + 首战特殊怪物封号大王）")
+	# 首战是特殊怪物（2026-11-11 主人要求），单独校验后再从难度曲线里排除
+	var sp := ls[0]
+	_eq(sp.id, "L0", "首战 id = L0")
+	_eq(sp.enemy_name, "封号大王", "首战敌人 = 封号大王")
+	_check(sp.is_special, "首战标记为特殊怪物")
+	_check(sp.enemy_art != "" and ResourceLoader.exists(sp.enemy_art),
+			"特殊怪物用主人给的立绘")
+	_check(sp.enemy_skill == "ban", "特殊怪物带封号技能")
+	# 难度曲线：L1 起仍然单调递增（特殊怪物不参与曲线）
 	var prev_hp := 0
-	for i in ls.size():
+	for i in range(1, ls.size()):
 		var l := ls[i]
 		_check(l.enemy_hp > prev_hp, "%s 敌人 HP 递增（%d）" % [l.id, l.enemy_hp])
 		prev_hp = l.enemy_hp
@@ -130,10 +141,69 @@ func _test_level_pool() -> void:
 				"%s 敌人数据完整" % l.id)
 		var pat := l.enemy_pattern()
 		_eq(pat.size(), 3, "%s 意图序列长 3" % l.id)
-	_eq(ls[9].is_boss, true, "L10 是 BOSS")
+	# 封号大王是 4 拍循环（多一拍技能）
+	var sp_pat := sp.enemy_pattern()
+	_eq(sp_pat.size(), 4, "封号大王意图序列长 4（攻→防→封号→攻）")
+	_eq(String(sp_pat[2].get("skill", "")), "ban", "第三拍是封号技能")
+	_eq(ls[ls.size() - 1].is_boss, true, "末关是 BOSS")
 
 
-# ── ③ 战斗状态机（纯逻辑，确定性种子）────────────────
+# ── 封号技能（2026-11-11 主人要求）──
+func _test_ban_skill() -> void:
+	print("[封号技能]")
+	var deck := StsCardPool.starter_deck()
+	var cb := StsCombat.new()
+	cb.setup(deck, "封号大王", 55, LevelPool.ban_pattern(6, 4), 80, 4242)
+	# ① 伤害归零（连敌人格挡都不消耗）
+	cb.ban_active = false
+	var hp0 := cb.enemy_hp
+	_eq(cb._hit_enemy(20), 20, "未封号时正常掉血")
+	_check(cb.enemy_hp == hp0 - 20, "未封号时敌人 HP 减少")
+	cb.ban_active = true
+	var hp1 := cb.enemy_hp
+	cb.enemy_block = 10
+	_eq(cb._hit_enemy(20), 0, "封号时玩家伤害为 0")
+	_check(cb.enemy_hp == hp1, "封号时敌人 HP 不变")
+	_eq(cb.enemy_block, 10, "封号时连敌人格挡都不消耗")
+	# ② 防御牌格挡只剩 1 点
+	var mk_def := func() -> StsCard:
+		var c := StsCard.new()
+		c.id = "test_guard"
+		c.kind = StsCard.Kind.SKILL
+		c.block = 6
+		c.cost = 1
+		return c
+	var cb2 := StsCombat.new()
+	cb2.setup(deck, "封号大王", 55, LevelPool.ban_pattern(6, 4), 80, 777)
+	var d1: StsCard = mk_def.call()
+	cb2.hand.insert(0, d1)
+	cb2.block = 0
+	cb2.ban_active = false
+	cb2.play_card(d1)
+	_eq(cb2.block, 6, "未封号时防御牌给满额格挡 6")
+	var cb3 := StsCombat.new()
+	cb3.setup(deck, "封号大王", 55, LevelPool.ban_pattern(6, 4), 80, 777)
+	var d2: StsCard = mk_def.call()
+	cb3.hand.insert(0, d2)
+	cb3.block = 0
+	cb3.ban_active = true
+	cb3.play_card(d2)
+	_eq(cb3.block, 1, "封号时防御牌只给 1 点格挡")
+	# ③ 持续 1 回合：技能那一拍之后整回合被封，过完自动解除
+	var cb4 := StsCombat.new()
+	cb4.setup(deck, "封号大王", 55, LevelPool.ban_pattern(6, 4), 80, 1)
+	cb4.end_turn()   # 回合1 attack
+	cb4.end_turn()   # 回合2 defend
+	_eq(String(cb4.intent.get("kind", "")), "skill", "第 3 回合意图是封号")
+	cb4.end_turn()   # 回合3 放技能
+	_check(cb4.ban_active, "技能后进入封号态")
+	_eq(cb4.ban_turns_left, 1, "剩余 1 回合")
+	_eq(cb4._hit_enemy(30), 0, "封号回合内伤害仍为 0")
+	cb4.end_turn()   # 回合4
+	_check(not cb4.ban_active, "过完 1 回合后自动解除")
+	_check(cb4._hit_enemy(30) > 0, "解除后伤害恢复正常")
+
+
 func _test_sts_combat() -> void:
 	print("[战斗状态机]")
 	var cb := StsCombat.new()
@@ -159,6 +229,17 @@ func _test_sts_combat() -> void:
 	_eq(cb.discard_pile.size(), 0, "补牌从弃牌堆抽走")
 	_eq(cb.draw_pile.size() + cb.discard_pile.size() + cb.hand.size(), 10,
 			"牌堆守恒：抽 + 弃 + 手 = 10")
+	# 牌堆 GUI 里右键能翻面（2026-11-18 主人要求）：卡片不能是 MOUSE_FILTER_IGNORE，
+	# 否则右键事件收不到、翻不了牌。直接读源码守住这条（UI 面板需要真场景，头测不便实例化）。
+	var arena_src := FileAccess.get_file_as_string("res://scripts/ui/arena.gd")
+	var pile_block := arena_src.find("_toggle_pile_panel")
+	if pile_block >= 0:
+		var seg := arena_src.substr(pile_block, 1600)
+		_check(seg.contains("MOUSE_FILTER_PASS"), "牌堆卡片可收右键（MOUSE_FILTER_PASS）")
+		_check(not seg.contains("view.mouse_filter = Control.MOUSE_FILTER_IGNORE"),
+				"牌堆卡片不再是 MOUSE_FILTER_IGNORE（那样翻不了牌）")
+	else:
+		_check(false, "找不到 _toggle_pile_panel（改牌子了？）")
 	_check(cb.can_play(cb.hand[0]), "补牌后最左一张可打")
 
 	# 弃牌：弃 1 张立刻从牌堆抽 1 张，手牌数不变
@@ -576,10 +657,76 @@ func _test_screen_router() -> void:
 	main._current.expand()
 	await process_frame
 	demo_entry = main._current.find_child("LlmDemoEntry", true, false)
-	_check(demo_entry != null, "对话框展开后 Demo 图标入口出现")
-	_check(demo_entry is TextureButton and String((demo_entry as TextureButton).tooltip_text) == "demo", "Demo 图标 tooltip = demo")
-	var ai_entry: Node = main._current.find_child("AiSettingsEntry", true, false)
-	_check(ai_entry is TextureButton and String((ai_entry as TextureButton).tooltip_text) == "模型接入", "模型接入图标 tooltip 正确")
+	# 2026-11-18 主人要求：正式版移除 dev/demo 图标，只留「模型接入」
+	_check(demo_entry == null, "正式版已移除 Demo 图标（dev 入口）")
+
+	# ── 新手引导（2026-11-18 主人要求）──
+	## 三步高亮引导 + 恒定新手模式开关。这里守：开关能存读、should_show 逻辑正确、
+	## TutorialOverlay 能构建出四块遮罩 + 提示框。
+	var tut_bak_always = GameSettings.tutorial_always
+	var tut_bak_done = GameSettings.tutorial_done
+	GameSettings.tutorial_always = false
+	GameSettings.tutorial_done = false
+	_check(GameSettings.should_show_tutorial(), "引导未看过 → 应播放")
+	GameSettings.mark_tutorial_done()
+	_check(GameSettings.tutorial_done, "mark_tutorial_done 置标记")
+	_check(not GameSettings.should_show_tutorial(), "已看过 → 不重复播")
+	GameSettings.tutorial_always = true
+	GameSettings.tutorial_done = false   # 先清掉，才能验证「恒定模式不写标记」
+	_check(GameSettings.should_show_tutorial(), "恒定新手模式 → 强制播")
+	GameSettings.mark_tutorial_done()
+	_check(not GameSettings.tutorial_done, "恒定模式下不写 done 标记（方便反复测）")
+	GameSettings.tutorial_always = tut_bak_always
+	GameSettings.tutorial_done = tut_bak_done
+	# 组件构建
+	var tut := TutorialOverlay.new()
+	root.add_child(tut)
+	await process_frame
+	var dim_cnt := 0
+	for ch in tut.get_children():
+		if ch is ColorRect: dim_cnt += 1
+	_check(dim_cnt == 4, "TutorialOverlay 有 4 块遮罩（围绕洞）")
+	tut.start([{"rect": Rect2(100, 100, 150, 226), "text": "测试提示"}])
+	await process_frame
+	_check(tut.visible, "start() 后可见")
+	tut.next_step()
+	await process_frame
+	_check(not tut.visible, "走完一步后 finish 并隐藏")
+	if is_instance_valid(tut): tut.queue_free()
+	await process_frame
+
+	var patch_entry: Node = main._current.find_child("PatchDemoEntry", true, false)
+	_check(patch_entry == null, "正式版已移除「更新演示」图标")
+	# 2026-11-18：入口从「左下角图标」改成「侧栏文字按钮」（图标抢不到鼠标事件）
+	var ai_btn: Node = main._current.find_child("AiAccessButton", true, false)
+	_check(ai_btn is Button and String((ai_btn as Button).text).contains("模型接入"),
+			"侧栏有「⚙ 模型接入」按钮")
+	_check(ai_btn != null and (ai_btn as Button).flat, "模型接入按钮是 flat Button（与技能/MCP 同款）")
+
+	# ── AI 接入面板必须**有尺寸**（2026-11-18 修的真实 bug）──
+	# Main 是纯 Node（无 rect），往它下面挂 Control 时 set_anchors_preset(FULL_RECT)
+	# 算不出尺寸 → 面板 size=(0,0) → 玩家看到的就是"点了没反应"。
+	# 现在 main.gd 显式把 size 同步到视口，这里守住该行为不被改回去。
+	var main2 = load("res://scenes/main.tscn").instantiate()
+	root.add_child(main2)
+	root.size = Vector2i(1600, 900)
+	await process_frame
+	main2._show_llm_panel()
+	await process_frame
+	await process_frame
+	var lp: Control = main2._llm_panel
+	_check(lp != null, "AI 接入面板已创建")
+	if lp != null:
+		_check(lp.size.x > 800 and lp.size.y > 400,
+				"面板有实际尺寸（实得 %s，为 0 就等于看不见）" % str(lp.size))
+		_check(lp.visible, "面板 visible = true")
+		var adv_btn: Node = null
+		var walk_adv := func(n: Node) -> void: pass
+		# 手写一层递归找高级选项按钮
+		adv_btn = _find_text_button(lp, "高级选项")
+		_check(adv_btn != null, "面板里有「高级选项」按钮")
+	main2.queue_free()
+	await process_frame
 	_check(main._current._skill_list.visible == false and main._current._mcp_box.visible == false, "技能/MCP 默认收起")
 	main._current._toggle_skill()
 	await process_frame
@@ -861,6 +1008,84 @@ func _test_llm_config() -> void:
 	_check(absf(back.temp_for("event") - 0.5) < 0.001, "温度分治 event=0.5")
 	_check(absf(back.temp_for("dialog") - 0.8) < 0.001, "温度分治 dialog=0.8")
 	_check(absf(back.temp_for("unknown") - 0.5) < 0.001, "未知 scene_tag 回落 0.5")
+
+	# ── SVG 生图独立通道（2026-11-18 主人要求）──
+	# 场景：许愿卡的 SVG 默认由主模型画；高级选项里可指定另一个更快的模型专画 SVG。
+	var scfg := LLMConfig.new()
+	scfg.enabled = true
+	scfg.base_url = "https://api.example.com/v1"
+	scfg.api_key = secret
+	scfg.protocol = "chat_completions"
+	scfg.model = "main-model"
+	scfg.svg_enabled = false
+	_check(not scfg.svg_ready(), "SVG 通道默认关：svg_ready() = false（走默认模型）")
+	_check(scfg.svg_channel().is_empty() == false, "svg_channel() 始终可读（fallback 主配置）")
+	_check(String(scfg.svg_channel().get("model", "")) == "", "未填 SVG 模型时 channel.model 为空")
+	# 开启 + 填模型后应就绪
+	scfg.svg_enabled = true
+	scfg.svg_model = "fast-model"
+	_check(scfg.svg_ready(), "填了 SVG 模型 → svg_ready() = true")
+	var ch := scfg.svg_channel()
+	_eq(String(ch.get("model", "")), "fast-model", "SVG 通道用独立模型")
+	_eq(String(ch.get("base", "")), "https://api.example.com/v1", "SVG 端点留空 → 复用主 base")
+	_eq(String(ch.get("key", "")), secret, "SVG Key 留空 → 复用主 Key")
+	# 独立 base/key 应优先
+	scfg.svg_base = "https://other.example.com/v2"
+	scfg.svg_key = "sk-svg-only"
+	var ch2 := scfg.svg_channel()
+	_eq(String(ch2.get("base", "")), "https://other.example.com/v2", "SVG 独立端点优先")
+	_eq(String(ch2.get("key", "")), "sk-svg-only", "SVG 独立 Key 优先")
+	# 存读往返
+	var svg_path := "user://llm_config_svg_smoke.cfg"
+	_eq(scfg.save(svg_path), OK, "含 SVG 通道的配置 save 返回 OK")
+	var sback := LLMConfig.load_from_disk(svg_path)
+	_check(sback.svg_enabled and sback.svg_model == "fast-model"
+			and sback.svg_base == "https://other.example.com/v2"
+			and sback.svg_key == "sk-svg-only", "SVG 通道存读往返（含独立 Key 混淆）")
+	DirAccess.remove_absolute(ProjectSettings.globalize_path(svg_path))
+
+	# ── 图生图路线（2026-11-18 主人要求）──
+	# 默认模型先做视觉分析 → 产出 art_prompt + 卡牌属性 → 再交生图模型（edits 图生图）。
+	# 这里守两件事：① prompt 里要有 art_prompt 这个输出字段 ② 生图配置可用性判定正确
+	var vp := WishCardFactory.VISION_PROMPT
+	_check(vp.contains("art_prompt"), "视觉提示词要求模型输出 art_prompt")
+	_check(vp.contains("生图模型"), "视觉提示词说明了 art_prompt 是给生图模型的")
+	_check(vp.contains("no text, no watermark, no frame"), "art_prompt 含禁文字硬约束")
+	# 生图可用性：模型名空 → 不可用；填了 + 有 key → 可用
+	var icfg := LLMConfig.new()
+	icfg.enabled = true
+	icfg.base_url = "https://api.example.com/v1"
+	icfg.api_key = secret
+	icfg.model = "text-model"
+	icfg.image_enabled = true
+	icfg.image_model = ""
+	_check(not icfg.image_ready(), "生图模型留空 → image_ready() = false（跳过图生图）")
+	icfg.image_model = "gpt-image-2.6-sunburst"
+	_check(icfg.image_ready(), "填了生图模型 → image_ready() = true")
+	_eq(icfg.effective_image_base(), "https://api.example.com/v1",
+			"生图端点留空 → 复用主 base")
+	# parse_ai_card 能抠出 art_prompt
+	var parsed := WishCardFactory.parse_ai_card(
+			'{"name":"测试","kind":"attack","damage":5,"block":0,"art_prompt":"a glowing orb"}')
+	_eq(String(parsed.get("art_prompt", "")), "a glowing orb", "parse_ai_card 抠出 art_prompt")
+
+	# ── 好感度跨启动加载（2026-11-18 修的真实 bug）──
+	# 之前全仓没有一处调 Affection.load()，导致每次启动 points=0、界面永远 Lv.0。
+	# 这里守两件事：① main.gd 里必须有 load 调用 ② 存读往返能还原 level
+	var main_src := FileAccess.get_file_as_string("res://scripts/main.gd")
+	_check(main_src.contains("Affection.load()"), "main.gd 启动时加载好感度存档")
+	# 存读往返（用临时路径的等价验证：改内存 → save → 清零 → load）
+	var aff_bak := Affection.points
+	Affection.points = 300.0
+	Affection.save()
+	Affection.points = 0.0
+	Affection.load()
+	_eq(int(Affection.points), 300, "好感度存档往返（300 点）")
+	_eq(Affection.level(), 16, "300 点 → Lv.16")
+	_eq(Affection.quality_tier(), 2, "Lv.16 → 画质档 2（精修级）")
+	_eq(WishCardFactory.max_tokens_for(), 32768, "Lv≥15 → 许愿卡预算 32k")
+	Affection.points = aff_bak
+	Affection.save()
 
 	# ZCode provider 导入（goat 分组）
 	var zp := "user://zcode_provider_smoke.json"
@@ -1770,6 +1995,140 @@ func _test_shop_gifts() -> void:
 	await process_frame
 
 
+## 2026-11-11：角色介绍面板（主人给了 4 张红框图定位置）
+func _test_intro_panel() -> void:
+	print("[角色介绍面板]")
+	# ① 四角色都有预设，且位置与主人红框换算值一致（±2px）
+	_eq(CharacterIntroPanel.PRESETS.size(), 4, "四角色各有一套面板预设")
+	# 红框实测值（1600×900 基准，来自主人 4 张参考图像素检测）
+	# 纵向 y / 宽高照抄红框；横向 x 改为「贴边」——主人 2026-11-11 二次修订：
+	# 「这个展开后的 UI 要紧贴单边，而不是在空中」，原红框内侧留了 100~150px 空档。
+	var want := {
+		"deepdeek": Rect2(1301, 154.4, 298.2, 532.5),   # 右缘 = 1599.2 ≈ 1600
+		"kweno": Rect2(0, 135.6, 297.0, 555.0),         # 左缘 = 0
+		"chatppt": Rect2(1310, 163.8, 290.1, 573.8),    # 右缘 = 1600.1
+		"grock": Rect2(1339, 145.6, 260.7, 542.5),      # 右缘 = 1599.7
+	}
+	for cid in want:
+		_check(CharacterIntroPanel.PRESETS.has(cid), "%s 有面板预设" % cid)
+		var got: Rect2 = CharacterIntroPanel.PRESETS[cid]["rect"]
+		var exp: Rect2 = want[cid]
+		_check(absf(got.position.x - exp.position.x) <= 2.0
+				and absf(got.position.y - exp.position.y) <= 2.0
+				and absf(got.size.x - exp.size.x) <= 2.0
+				and absf(got.size.y - exp.size.y) <= 2.0,
+				"%s 面板位置贴合红框且贴边（实 %.0f,%.0f %.0fx%.0f）"
+				% [cid, got.position.x, got.position.y, got.size.x, got.size.y])
+		# 贴边硬约束：朝屏幕的那条边必须压在 0 或 1600 上（±2px）
+		var edge_side: String = CharacterIntroPanel.PRESETS[cid]["edge"]
+		if edge_side == "right":
+			_check(absf((got.position.x + got.size.x) - 1600.0) <= 2.0,
+					"%s 展开态右缘贴边（%.0f）" % [cid, got.position.x + got.size.x])
+		else:
+			_check(absf(got.position.x) <= 2.0,
+					"%s 展开态左缘贴边（%.0f）" % [cid, got.position.x])
+
+	# ② 四套风格各异（边/展开方向/配色都不同，不是换皮）
+	var edges := {}
+	var expands := {}
+	var accents := {}
+	for cid in CharacterIntroPanel.PRESETS:
+		var p: Dictionary = CharacterIntroPanel.PRESETS[cid]
+		edges[p["edge"]] = true
+		expands[p["expand"]] = true
+		accents[(p["accent"] as Color).to_html()] = true
+	_check(edges.size() >= 2, "四角色滑入边不唯一（左/右各有）")
+	_check(expands.size() >= 2, "四角色展开方向不唯一（横/纵各有）")
+	_eq(accents.size(), 4, "四角色主色各不相同（各自的立绘制色）")
+
+	# ③ 三段式：滑入 → 停稳 → 展开，三段时长都为正且展开在滑入之后
+	_check(CharacterIntroPanel.T_SLIDE > 0.0, "滑入段有时长")
+	_check(CharacterIntroPanel.T_EXPAND > 0.0, "展开段有时长")
+	_check(CharacterIntroPanel.T_SETTLE >= 0.0, "停稳段存在（可为 0）")
+
+	# ④ 起手是「一条边」而不是整块面板 —— 这是主人要求的核心形态
+	# 直接调 _set_slide(0) 取起点，不去依赖 tween 推进（headless 下 tween 不保证在
+	# 下一帧就推进，读 current_rect() 会拿到上一帧的值，测出来是终态尺寸）。
+	var p2 := CharacterIntroPanel.new()
+	_host.add_child(p2)
+	await process_frame
+	p2.present("deepdeek")
+	await process_frame
+	p2._set_slide(0.0)
+	var start_rect: Rect2 = p2.current_rect()
+	var final_rect: Rect2 = CharacterIntroPanel.PRESETS["deepdeek"]["rect"]
+	_check(start_rect.size.y < final_rect.size.y * 0.2,
+			"纵向展开的角色起手是横条（高 %.1f / 终态 %.1f）"
+			% [start_rect.size.y, final_rect.size.y])
+	_check(start_rect.position.x > 1590.0,
+			"右侧角色的起手位置在画外（x=%.0f）" % start_rect.position.x)
+
+	# ⑤ 换角色必须换内容（曾经的真 bug：幂等守卫只判「已展开」，
+	#    切角色后面板继续显示上一位的介绍）
+	p2.debug_finish_present()
+	_check(p2.is_revealed(), "定格后进入已展开状态")
+	p2.present("kweno")
+	await process_frame
+	_check(p2._char_id == "kweno", "换角色后面板内容跟着换")
+	_check(not p2.is_revealed(), "换角色后重新走三段式（不再算已展开）")
+
+	# ⑥ 定格钩子把矩形设在终态
+	p2.debug_finish_present()
+	var fr: Rect2 = CharacterIntroPanel.PRESETS["kweno"]["rect"]
+	_check(p2.current_rect().size.distance_to(fr.size) < 0.5,
+			"debug_finish_present 把面板定格到终态尺寸")
+
+	# ⑥b 折叠：整块滑出画面、屏内只留箭头（主人 2026-11-11 二次修订：
+	#     「红框这些地方也要缩进去，仅留箭头选项」—— 不是留窄条，是彻底出屏）
+	_check(not p2.is_folded(), "默认是展开态（进入角色就弹出来）")
+	p2.set_folded(true)
+	_check(p2.is_folded(), "能收进侧边")
+	var fold_r: Rect2 = p2._fold_rect()
+	# 千问在左侧 → 整块推到左边界之外（右缘 ≤ 0）
+	_check(fold_r.position.x + fold_r.size.x <= 0.0,
+			"左侧角色折叠后整块在屏外（右缘 %.0f ≤ 0）" % (fold_r.position.x + fold_r.size.x))
+	# 右侧角色 → 整块推到右边界之外（左缘 ≥ 1600）
+	var p3 := CharacterIntroPanel.new()
+	_host.add_child(p3)
+	await process_frame
+	p3.debug_finish_present()
+	p3.present("deepdeek")
+	await process_frame
+	p3.debug_finish_present()
+	var fr3: Rect2 = p3._fold_rect()
+	_check(fr3.position.x >= 1600.0,
+			"右侧角色折叠后整块在屏外（左缘 %.0f ≥ 1600）" % fr3.position.x)
+	# 折叠态屏内不能留下任何面板像素：宽度不变但整体平移出界，覆盖面积为 0
+	var vis_w: float = clampf(1600.0 - fr3.position.x, 0.0, fr3.size.x)
+	_check(vis_w <= 0.0, "折叠后屏内面板残留宽度为 0（实 %.1f）" % vis_w)
+	# 折叠/展开可来回切，且切回来回到原位置
+	p3.set_folded(false)
+	# 注意：set_folded 走 tween，headless 下不保证这一帧就推进完，
+	# 所以直接验目标矩形（_preset 里的 rect），不读动画中的 _cur。
+	var back3: Rect2 = CharacterIntroPanel.PRESETS["deepdeek"]["rect"]
+	_check(not p3.is_folded(), "能再展开回来")
+	# ⑥c 展开态必须紧贴侧边（主人：「要紧贴单边，而不是在空中」）
+	_check(absf((back3.position.x + back3.size.x) - 1600.0) < 0.5,
+			"右侧角色展开态右缘贴边 1600（实 %.0f）" % (back3.position.x + back3.size.x))
+	var kw: Rect2 = CharacterIntroPanel.PRESETS["kweno"]["rect"]
+	_eq(int(kw.position.x), 0, "左侧角色展开态左缘贴边 0")
+	p3.queue_free()
+
+	# ⑦ 选角界面接线：切角色后介绍面板显示的是该角色
+	var sel2 := CharacterSelectScreen.new()
+	sel2.setup(AiPool.all_ais())
+	_host.add_child(sel2)
+	await process_frame
+	await process_frame
+	_check(sel2._intro_panel != null, "选角界面持有介绍面板")
+	sel2.debug_show_intro("chatppt")
+	await process_frame
+	_eq(sel2._intro_panel._char_id, "chatppt", "选角界面能按角色定格介绍面板")
+	sel2.queue_free()
+	p2.queue_free()
+	await process_frame
+
+
 ## 2026-11-07：更新演示屏（全部真系统交互）
 func _test_patch_demo() -> void:
 	print("[更新演示屏]")
@@ -1835,6 +2194,35 @@ func _test_ripple_swap() -> void:
 		v.debug_prepare(ta, tb)
 		v.debug_set_progress(0.5)
 		_check(true, "风格 %d 手动推进不炸" % st)
+
+	# ── PETAL 白花瓣遮幕（2026-11-11 主人指定，替换 Kweno 折扇）──
+	# 判据取「换图原子性」而不是像素：遮幕式转场的正确性全靠
+	# **在旧图被完全遮住的时刻换图**，这一步错了就是旧图闪一下。
+	v.style = RippleSwapPortrait.Style.PETAL
+	v.debug_prepare(ta, tb)
+	_check(v._mat.get_shader_parameter("tex_petal") != null, "花瓣风格挂了花瓣图集")
+	_check(v._petal_next != null and not v._petal_swapped, "换图前处于未换状态")
+	# 换图点之前：背后仍是旧图
+	v.debug_set_progress(RippleSwapPortrait.PETAL_SWAP_AT - 0.01)
+	_check(not v._petal_swapped, "遮幕未满时不换图")
+	_eq(v._current, ta, "遮幕未满时画的仍是旧立绘")
+	# 跨过换图点：换成新图，且只换一次
+	v.debug_set_progress(RippleSwapPortrait.PETAL_SWAP_AT)
+	_check(v._petal_swapped, "到达遮幕点后换图")
+	_eq(v._current, tb, "遮幕点之后画的已是新立绘")
+	v.debug_set_progress(1.0)
+	_check(v._petal_swapped, "换图幂等（重复推进不重复换）")
+	# 遮幕点必须落在白幕最厚区间内，否则换图会被看到
+	_check(RippleSwapPortrait.PETAL_SWAP_AT >= 0.42 and RippleSwapPortrait.PETAL_SWAP_AT <= 0.58,
+			"换图点位于遮幕峰值区间（当前 %.2f）" % RippleSwapPortrait.PETAL_SWAP_AT)
+	# 真实 swap 也要走通（不只手动推进）
+	done[0] = false
+	v.debug_prepare(ta, tb)
+	v.swap_to(tb)
+	await create_timer(1.1).timeout
+	_check(done[0], "花瓣风格 swap_to 完成并发信号")
+	_eq(v._current, tb, "花瓣转场结束后当前立绘已是新图")
+
 	v.queue_free()
 	await process_frame
 
@@ -2059,6 +2447,34 @@ func _test_mosaic_and_select() -> void:
 	for c in cols:
 		max_hair = maxf(max_hair, c.a)
 	_check(max_hair > 0.1, "头发权重非零（%.2f），且烘在顶点色 A 通道" % max_hair)
+
+	# ── 眼睛隔离（2026-11-10 主人要求「仅头纵影响双眼，头发不碰眼睛」）──
+	# 判据用**权重**而不是像素：像素指标受截图分辨率、mask 对齐、角色构图影响，
+	# 反复误导过（同一份正确权重被算出 30+ 的假差异）。权重是可重复的硬事实：
+	#   脸 mask 实心区(>0.9)内，头发权重必须为 0；头颈权重必须接近 1。
+	var fimg := Image.load_from_file("res://assets/art/select/layer-qwen-face.png")
+	fimg.convert(Image.FORMAT_L8)
+	var fw := fimg.get_width()
+	var fh := fimg.get_height()
+	var face_verts := 0
+	var face_with_hair := 0
+	var min_head_in_face := 1.0
+	var uvs_q: PackedVector2Array = arr[Mesh.ARRAY_TEX_UV]
+	for i in cols.size():
+		var uv := uvs_q[i]
+		var fv := fimg.get_pixel(clampi(int(uv.x * fw), 0, fw - 1),
+				clampi(int(uv.y * fh), 0, fh - 1)).r
+		if fv > 0.9:
+			face_verts += 1
+			if cols[i].a > 0.02:
+				face_with_hair += 1
+			min_head_in_face = minf(min_head_in_face, cols[i].b)
+	_check(face_verts > 20, "脸 mask 实心区覆盖到 %d 个顶点（网格足够密）" % face_verts)
+	_eq(face_with_hair, 0, "脸内没有任何顶点带头发权重（头发不碰眼睛）")
+	# 阈值 0.8 而不是 1.0：mask 实心区**边界**上的顶点，其采样点可能刚好压在
+	# 羽化带上（实测最小 0.82）。要求的是「脸上以头颈为主」，不是边界像素级精确。
+	_check(min_head_in_face > 0.8,
+			"脸内头颈权重接近满值（最小 %.2f）→ 眼睛只受头纵驱动" % min_head_in_face)
 	# 顶点以中心为原点 → sign(VERTEX.x) 才能做左右对称外扩
 	var v0: Vector3 = (arr[Mesh.ARRAY_VERTEX] as PackedVector3Array)[0]
 	_check(v0.x < 0.0, "顶点使用中心原点局部坐标（左上角 x<0）")
@@ -2094,8 +2510,8 @@ func _test_mosaic_and_select() -> void:
 	_eq(styles.size(), 4, "4 位角色各配一款不同转场")
 	_eq(int(CharacterSelectScreen.TRANSITION_STYLE[0]), RippleSwapPortrait.Style.RIPPLE,
 			"DeepDeek = 水波")
-	_eq(int(CharacterSelectScreen.TRANSITION_STYLE[1]), RippleSwapPortrait.Style.FAN,
-			"Kweno = 折扇")
+	_eq(int(CharacterSelectScreen.TRANSITION_STYLE[1]), RippleSwapPortrait.Style.PETAL,
+			"Kweno = 白花瓣遮幕（2026-11-11 主人指定，原折扇）")
 	_eq(int(CharacterSelectScreen.TRANSITION_STYLE[2]), RippleSwapPortrait.Style.HEX,
 			"ChatPPT = 龙鳞")
 	_eq(int(CharacterSelectScreen.TRANSITION_STYLE[3]), RippleSwapPortrait.Style.SLASH,
@@ -2108,8 +2524,8 @@ func _test_mosaic_and_select() -> void:
 	_check(sel.current_index() != before_idx, "点右箭头切换到下一位")
 	_eq(sel.current_id(), "kweno", "切到第 2 位 Kweno")
 	_check(sel._swapping, "切换中进入转场状态（连点被挡）")
-	_eq(int(sel._bg_layer.style), int(RippleSwapPortrait.Style.FAN),
-			"切到 Kweno 时用折扇转场（取目标角色风格）")
+	_eq(int(sel._bg_layer.style), int(RippleSwapPortrait.Style.PETAL),
+			"切到 Kweno 时用白花瓣转场（取目标角色风格）")
 	# 转场期间连点应无效
 	sel._right_btn.emit_signal("pressed")
 	await process_frame
@@ -2393,8 +2809,8 @@ func _test_breath() -> void:
 	sel._right_btn.emit_signal("pressed")
 	await process_frame
 	_eq(sel.current_id(), "kweno", "切到第 2 位 Kweno")
-	_eq(int(sel._bg_layer.style), int(RippleSwapPortrait.Style.FAN),
-			"呼吸接入后切到 Kweno 仍用折扇转场")
+	_eq(int(sel._bg_layer.style), int(RippleSwapPortrait.Style.PETAL),
+			"呼吸接入后切到 Kweno 仍用白花瓣转场")
 	_check(sel._breath != null and not sel._breath.visible,
 			"转场期间呼吸层让位隐藏（两个动画不抢同一张画面）")
 	var fan_sec := GameSettings.select_time_for("fan")
@@ -2447,11 +2863,12 @@ func _test_breath() -> void:
 	# ── ⑨ F2 面板开关（toggle 语义 + force 语义）──
 	# 2026-11-10 主人要求面板默认打开（方便进界面就拖滑杆调呼吸）：
 	# 断言随之反转为「默认可见」，toggle 语义则相应从「先关」开始测
-	_check(sel._breath_panel.visible, "呼吸面板默认打开（主人 2026-11-10 要求）")
+	# 2026-11-18 主人要求正式版默认隐藏调参面板；F3 仍可打开
+	_check(not sel._breath_panel.visible, "正式版呼吸面板默认隐藏")
 	var t1: bool = sel.toggle_breath_panel()
-	_check(not t1 and not sel._breath_panel.visible, "toggle 一次 → 面板关闭且返回 false")
+	_check(t1 and sel._breath_panel.visible, "toggle 一次 → 面板打开且返回 true")
 	var t2: bool = sel.toggle_breath_panel()
-	_check(t2 and sel._breath_panel.visible, "再 toggle → 面板打开且返回 true")
+	_check(not t2 and not sel._breath_panel.visible, "再 toggle → 面板关闭且返回 false")
 	_check(sel.toggle_breath_panel(true) and sel._breath_panel.visible, "force=true 显式打开")
 	_check(not sel.toggle_breath_panel(false) and not sel._breath_panel.visible,
 			"force=false 显式关闭")
@@ -2460,7 +2877,227 @@ func _test_breath() -> void:
 	_check(pp.has("amp") and pp.has("period") and pp.has("phase") and pp.has("mode"),
 			"breath_panel_params() 四键齐全")
 
-	# ── 收尾：还原主人配置，别留脏值 ──
+	# ── ⑨a F3 总开关：左下转场调参器 + 右上呼吸面板一起显隐（2026-11-11）──
+	# 硬约束：F1 被 UiTuner 占用、F2 是呼吸面板废弃旧号，只能用 F3。
+	_eq(int(CharacterSelectScreen.DEBUG_TOGGLE_KEY), int(KEY_F3),
+			"总开关键位是 F3（F1 归 UiTuner、F2 已废弃）")
+	_check(sel.is_processing_unhandled_input(),
+			"选角界面启用了 _unhandled_input（F3 走 unhandled，不抢 _input）")
+	# 键位不越界：源码里不许出现 F1/F2 当作本界面的调试开关
+	var cs_src := FileAccess.get_file_as_string("res://scripts/ui/character_select_screen.gd")
+	_check(not cs_src.contains("KEY_F1") and not cs_src.contains("KEY_F2"),
+			"本界面不接管 F1/F2（避免与 UiTuner / main.gd 撞键）")
+	# 复位到「都显示」再测，前面 ⑨ 最后一步把呼吸面板关掉过
+	sel.toggle_debug_panels(true)
+	_check(sel._tuner_panel.visible and sel._breath_panel.visible,
+			"force=true 后两块面板都显示")
+	# 第一次 toggle：常驻显示 → 关（返回值 false）
+	var df1: bool = sel.toggle_debug_panels()
+	_check(not df1, "第一次 toggle_debug_panels() 返回 false")
+	_check(not sel._tuner_panel.visible and not sel._breath_panel.visible,
+			"第一次 toggle → 左下调参器与右上呼吸面板**同步**隐藏")
+	_check(not sel._debug_panels_on, "状态记在一个 bool：_debug_panels_on=false")
+	# 第二次 toggle：→ 开（返回值 true）
+	var df2: bool = sel.toggle_debug_panels()
+	_check(df2, "第二次 toggle_debug_panels() 返回 true")
+	_check(sel._tuner_panel.visible and sel._breath_panel.visible,
+			"第二次 toggle → 两块面板**同步**显示")
+	_check(sel._debug_panels_on, "状态 bool 回 true")
+	# force 显式语义
+	_check(not sel.toggle_debug_panels(false)
+			and not sel._tuner_panel.visible and not sel._breath_panel.visible,
+			"force=false → 两块都隐藏且返回 false")
+	_check(sel.toggle_debug_panels(true)
+			and sel._tuner_panel.visible and sel._breath_panel.visible,
+			"force=true → 两块都显示且返回 true")
+	# 有人单独关一块后，F3 必须仍按「当前画面」翻转（不然成了按了没反应的死键）
+	sel._breath_panel.set_visible_state(false)
+	_check(sel.toggle_debug_panels(),
+			"两块不全显示时 toggle → 全开（不会出现死键）")
+	_check(sel.toggle_debug_panels() == false, "全显示时再 toggle → 全关")
+	# 隐藏时不能吃鼠标：visible=false 使子控件整体退出命中测试；
+	# 呼吸面板根节点本身是 IGNORE，从设计上就不挡后面的圆点/箭头。
+	_eq(int(sel._breath_panel.mouse_filter), int(Control.MOUSE_FILTER_IGNORE),
+			"呼吸面板根节点 mouse_filter=IGNORE（不吃鼠标）")
+	_check(not sel._tuner_panel.visible,
+			"调参器隐藏态 visible=false（子滑杆随之不再命中，后面的控件可点）")
+	# 真事件路径：走 viewport 派发，验证 _unhandled_input + accept_event 真的接住 F3
+	sel.toggle_debug_panels(true)
+	var f3_down := InputEventKey.new()
+	f3_down.keycode = KEY_F3
+	f3_down.physical_keycode = KEY_F3
+	f3_down.pressed = true
+	f3_down.echo = false
+	get_root().push_input(f3_down)
+	await process_frame
+	_check(not sel._tuner_panel.visible and not sel._breath_panel.visible,
+			"F3 按键经 viewport 派发 → 两块面板同时隐藏")
+	_check(get_root().is_input_handled(),
+			"F3 处理后已 accept_event（不再向下传播）")
+	var f3_up := InputEventKey.new()
+	f3_up.keycode = KEY_F3
+	f3_up.pressed = false
+	get_root().push_input(f3_up)
+	await process_frame
+	_check(not sel._tuner_panel.visible, "F3 抬起不重复翻转（仍是隐藏）")
+	var f3_echo := InputEventKey.new()
+	f3_echo.keycode = KEY_F3
+	f3_echo.pressed = true
+	f3_echo.echo = true
+	get_root().push_input(f3_echo)
+	await process_frame
+	_check(not sel._tuner_panel.visible, "F3 echo 连发被忽略（长按不会来回抖）")
+	# 重建（setup 触发第二次 _build）后状态必须保持，新面板不许自己冒出来
+	sel.setup(AiPool.all_ais())
+	await process_frame
+	await process_frame
+	_check(not sel._tuner_panel.visible and not sel._breath_panel.visible,
+			"重建界面后仍保持关闭（新建的面板不自己冒出来）")
+	# 重建不许叠出第二块调参器：_tuner_panel 只记最新那块，旧的留在屏上会
+	# 「隐藏了还在吃鼠标」，正好违反本任务两条硬约束（2026-11-11 实测踩到）。
+	var tuner_cnt := 0
+	for c in sel.get_children():
+		if String(c.name).begins_with("SwapTuner"):
+			tuner_cnt += 1
+	_eq(tuner_cnt, 1, "重复 _build 后左下转场调参器仍只有 1 块（不叠加）")
+	sel.toggle_debug_panels(true)
+	_check(sel._tuner_panel.visible and sel._breath_panel.visible,
+			"收尾复位：两块面板都显示")
+
+	# ── ⑨b 四个角色的出厂预设完整性（2026-11-10 主人逐个调好后钦定）──
+	# 每条数值都必须能在 BREATH_V4_PRESETS 里查到，且落在合法区间内。
+	# 这条护栏的由来：新增预设后，磁盘上残留的旧 [breath_v4_*] 段会**静默盖掉**新预设
+	##（实测 chatppt 的 chest_x 一直读成 10.5 而不是主人要的 2.0）。
+	# 所以这里只校验预设表本身自洽；读盘优先是设计行为，主人自己拖过的值理应优先。
+	var expect_presets := {
+		"deepdeek": {"chest_x": 0.0, "chest_y": 6.5, "belly_x": 4.5, "belly_y": 0.0,
+				"head_y": 0.0, "hair_x": 14.0, "hair_y": 13.5, "lock_bottom": 0.04,
+				"head_lag_deg": 47.0, "hair_lag_per_height": 645.0, "x_lag_deg": 77.0},
+		"kweno": {"chest_x": 7.0, "chest_y": 3.5, "belly_x": 5.5, "belly_y": 5.0,
+				"head_y": 6.5, "hair_x": 6.0, "hair_y": 8.0, "lock_bottom": 0.10,
+				"belly_lag_deg": 50.0, "head_lag_deg": 17.0, "y_bias": 0.12},
+		"chatppt": {"chest_x": 2.0, "chest_y": 6.5, "belly_x": 1.0, "belly_y": 1.0,
+				"head_y": 2.5, "hair_x": 4.0, "hair_y": 8.0, "lock_bottom": 0.18,
+				"belly_lag_deg": 17.0, "head_lag_deg": 19.0, "y_bias": 0.22},
+		"grock": {"chest_x": 4.0, "chest_y": 4.0, "belly_x": 3.0, "belly_y": 2.5,
+				"head_y": 6.5, "hair_x": 2.0, "hair_y": 4.5, "lock_bottom": 0.17,
+				"belly_lag_deg": 0.0, "head_lag_deg": 0.0, "hair_lag_per_height": 0.0},
+	}
+	var preset_bad := 0
+	for pcid in expect_presets.keys():
+		var pres: Dictionary = GameSettings.breath_v4_preset(String(pcid))
+		for pk in (expect_presets[pcid] as Dictionary).keys():
+			if not pres.has(pk):
+				preset_bad += 1
+				continue
+			if not is_equal_approx(float(pres[pk]), float(expect_presets[pcid][pk])):
+				preset_bad += 1
+	_eq(preset_bad, 0, "四角色出厂预设与主人钦定数值一致（不一致项应为 0）")
+	_check(GameSettings.BREATH_V4_PRESETS.has("grock"),
+			"grock 也有专属预设（不再回落通用默认）")
+
+	# ── ⑩ V4 网格参数的按角色存取（2026-11-10）──
+	# 这条是回归闸门：曾经 V4 参数只活在 uniform 里、不落盘，切角色又被 setup 重置，
+	# 主人拖好的滑杆值等于一次性用品。
+	var v4_orig := GameSettings.breath_v4_of("deepdeek")
+	GameSettings.set_breath_v4("deepdeek", "chest_x", 22.0)
+	_check(is_equal_approx(GameSettings.breath_v4_get("deepdeek", "chest_x"), 22.0),
+			"set_breath_v4 后内存回读一致")
+	_check(not is_equal_approx(GameSettings.breath_v4_get("kweno", "chest_x"), 22.0),
+			"V4 参数按角色隔离（deepdeek 改动不影响 kweno）")
+	GameSettings.set_breath_v4("deepdeek", "chest_x", 9999.0)
+	_check(is_equal_approx(GameSettings.breath_v4_get("deepdeek", "chest_x"),
+			GameSettings.BREATH_V4_RANGES["chest_x"].y), "V4 越界值被夹到上限")
+	GameSettings.set_breath_v4("deepdeek", "chest_x", 17.5)
+	GameSettings.save_to_disk()
+	GameSettings.set_breath_v4("deepdeek", "chest_x", 1.0)
+	GameSettings.load_from_disk()
+	_check(is_equal_approx(GameSettings.breath_v4_get("deepdeek", "chest_x"), 17.5),
+			"V4 参数落盘后重新 load 能读回（跨启动记住）")
+	for k in GameSettings.BREATH_V4_KEYS:
+		GameSettings.set_breath_v4("deepdeek", String(k), float(v4_orig[k]))
+
+	# ── ⑪ 面板滑杆 ↔ mesh uniform 必须始终一致（2026-11-10 踩过的坑）──
+	# 曾经的故障：面板 set_character() 用 V3 的 breath_layer() 刷 V4 滑杆，
+	# V4 键在 V3 预设里查不到 → 回落 0.0 → 14 条滑杆全归零，但画面照旧大幅动。
+	var mesh_t: PortraitBreathMesh = sel._breath.get_mesh_layer()
+	if mesh_t != null and mesh_t.is_built():
+		var v4_now := mesh_t.get_v4_params()
+		var mism := 0
+		for key2 in sel._breath_panel._layer_sliders.keys():
+			if not v4_now.has(key2):
+				continue
+			var slv: float = float((sel._breath_panel._layer_sliders[key2] as HSlider).value)
+			if absf(slv - float(v4_now[key2])) > 0.001:
+				mism += 1
+		_eq(mism, 0, "面板 V4 滑杆与 mesh uniform 完全一致（不一致项应为 0）")
+		var sl2: HSlider = sel._breath_panel._layer_sliders["chest_x"]
+		var keep: float = float(v4_now.get("chest_x", 10.5))
+		sl2.value = 20.0
+		await process_frame
+		_check(is_equal_approx(float(mesh_t.get_v4_params()["chest_x"]), 20.0),
+				"拖 V4 滑杆会立刻写进 mesh uniform")
+		sl2.value = keep
+		await process_frame
+	else:
+		_check(false, "呼吸网格未构建（V4 面板同步测试无法进行）")
+
+	# ── ⑫ 点击滑杆跳值也必须落盘（2026-11-10 实测踩到）──
+	# 只连 drag_ended 会漏：点滑杆轨道跳值不发拖拽信号，值只进内存不落盘。
+	# 面板因此自带 0.4s 防抖存盘，这里等过防抖窗口再验磁盘。
+	# 注意 1：上一步的 sl2.value 赋值也会启动防抖，先让它落地再测。
+	# 注意 2：前面切过角色，面板当前角色**不是** deepdeek（实测是 chatppt），
+	#         断言必须跟着 current_character() 走，否则查错了 section 会假失败。
+	await create_timer(0.8).timeout
+	var cid_t: String = sel._breath_panel.current_character()
+	var sect_t := "breath_v4_%s" % cid_t
+	var cfg_save := ConfigFile.new()
+	cfg_save.load(GameSettings.PATH)
+	var disk_before = cfg_save.get_value(sect_t, "chest_x", -1.0)
+	(sel._breath_panel._layer_sliders["chest_x"] as HSlider).value = 23.5
+	await create_timer(0.8).timeout        # 超过 SAVE_DEBOUNCE
+	var cfg_after := ConfigFile.new()
+	cfg_after.load(GameSettings.PATH)
+	var disk_after = cfg_after.get_value(sect_t, "chest_x", -2.0)
+	_check(is_equal_approx(float(disk_after), 23.5),
+			"点击滑杆跳值也会落盘（%s 磁盘 %.1f → %.1f）" % [
+				cid_t, float(disk_before), float(disk_after)])
+	# 还原该角色**测试前的原值**再继续（否则下面的字节级核对会报错）。
+	# ⚠ 这里必须回 disk_before，不能写出厂默认：
+	#   曾经写成 BREATH_V4_DEFAULTS → 每次跑回归都会把主人亲手调好的 chest_x
+	#   冲成默认值（实测把主人的 chatppt 0.3 冲成了 10.5）。测试要「原样还原」，
+	#   而不是「恢复出厂」，两者只有前者对主人无害。
+	# disk_before 的缺省哨兵是 -1.0：读不到就说明该 section 本来不存在，
+	# 此时不要写任何值（写默认反而是凭空造数据）。
+	if float(disk_before) >= 0.0:
+		GameSettings.set_breath_v4(cid_t, "chest_x", float(disk_before))
+		GameSettings.save_to_disk()
+
+
+	# ── ⑬ 测试自身的无害性：改完必须「原样还原」，不能恢复出厂 ──
+	# 2026-11-11 实测抓到的真 bug：⑫ 步的还原写的是 BREATH_V4_DEFAULTS，
+	# 于是每次跑回归都把主人亲手拖的值冲成默认（chatppt 0.3 → 10.5）。
+	# 这条用「一个刻意非默认的特征值」走一遍 ⑫ 的完整流程，确认它还活着。
+	var probe_val := 0.37       # 既非出厂默认，也非任何测试用值
+	GameSettings.set_breath_v4(cid_t, "chest_x", probe_val)
+	GameSettings.save_to_disk()
+	var cfg_p := ConfigFile.new()
+	cfg_p.load(GameSettings.PATH)
+	_check(is_equal_approx(float(cfg_p.get_value(sect_t, "chest_x", -9.0)), probe_val),
+			"特征值写盘成功（前置条件）")
+	# 按 ⑫ 的写法模拟一次「改动 → 还原」
+	GameSettings.set_breath_v4(cid_t, "chest_x", 23.5)
+	var keep_p: float = probe_val
+	GameSettings.set_breath_v4(cid_t, "chest_x", keep_p)
+	GameSettings.save_to_disk()
+	var cfg_q := ConfigFile.new()
+	cfg_q.load(GameSettings.PATH)
+	_check(is_equal_approx(float(cfg_q.get_value(sect_t, "chest_x", -9.0)), probe_val),
+			"改动后还原回的是原值（不是出厂默认，守主人配置）")
+	# 把特征值本身也还回去，别把 0.37 留在主人配置里
+	if float(disk_before) >= 0.0:
+		GameSettings.set_breath_v4(cid_t, "chest_x", float(disk_before))
+		GameSettings.save_to_disk()
 	sel.queue_free()
 	await process_frame
 	GameSettings.set_breath(float(orig.get("amp", GameSettings.BREATH_AMP_DEF)),
@@ -2473,14 +3110,24 @@ func _test_breath() -> void:
 			and is_equal_approx(float(back.get("period", -1.0)), float(orig.get("period", -2.0)))
 			and int(back.get("mode", -1)) == int(orig.get("mode", -2)),
 			"测试后主人的呼吸配置已还原")
-	# 字节级核对：配置文件除 [breath] 段外一个字节都没动过。
-	# 比对时把 breath 四行抠掉（它们被写回了同样的值，但 Godot 的序列化可能换格式）。
+	# 字节级核对：配置文件除呼吸相关段外一个字节都没动过。
+	# 比对时把 breath 四行 + 所有 [breath_*] / [breath_v4_*] 分节整段抠掉
+	# （它们被写回了同样的值，但 Godot 的序列化可能换格式；V4 分节是本轮新增的）。
 	if had_cfg and not orig_bytes.is_empty():
 		var now_bytes := FileAccess.get_file_as_bytes(GameSettings.PATH)
 		var strip := func(txt: String) -> String:
 			var out := ""
+			var in_breath_sect := false
 			for ln in txt.split("\n"):
 				var s: String = String(ln).strip_edges()
+				# 分节头：进入/离开呼吸相关段
+				if s.begins_with("["):
+					in_breath_sect = s.begins_with("[breath_") or s.begins_with("[breath_v4_")
+					if in_breath_sect or s.begins_with("[breath]"):
+						in_breath_sect = true
+						continue
+				if in_breath_sect:
+					continue
 				if s.begins_with("amp =") or s.begins_with("period =") \
 						or s.begins_with("phase =") or s.begins_with("mode ="):
 					continue
@@ -2489,4 +3136,15 @@ func _test_breath() -> void:
 		var a_txt: String = strip.call(orig_bytes.get_string_from_utf8())
 		var b_txt: String = strip.call(now_bytes.get_string_from_utf8())
 		_check(a_txt == b_txt,
-				"配置文件除 [breath] 段外逐行未变（其它设置没被顺手改掉）")
+				"配置文件除呼吸相关段外逐行未变（其它设置没被顺手改掉）")
+
+
+## 递归找一个按钮文字包含 key 的 Button（smoke 用）
+func _find_text_button(n: Node, key: String) -> Node:
+	for c in n.get_children():
+		if c is Button and String((c as Button).text).contains(key):
+			return c
+		var r := _find_text_button(c, key)
+		if r != null:
+			return r
+	return null

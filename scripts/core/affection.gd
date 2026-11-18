@@ -18,6 +18,9 @@ const LEVEL_K := 5.0
 const LEVEL_P := 12.0
 ## 每碗白米饭的好感点（战斗里吃下就算喂到）
 const RICE_POINTS := 2.0
+## 调节器上限（2026-11-18 主人要求可 0→上限自由设）。
+## 500 点 ≈ Lv.18，超过代码里所有画质门槛（Lv.15 = 32k 预算 + 精修级）。
+const MAX_POINTS := 500.0
 
 static var points := 0.0
 

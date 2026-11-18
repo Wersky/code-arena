@@ -15,7 +15,10 @@ signal finished
 
 # ── 时间轴（秒）────────────────────────────────
 const T_BOOT := 0.55        ## 开机行
-const T_CPS := 230.0        ## 打字速度（字符/秒）
+## 打字速度（字符/秒）。2026-11-18 起从 GameSettings 的连续倍率换算，
+## 这样「AI 接入 → 高级选项 → 终端速度」滑杆能同时调这个游戏内版本与真终端版本。
+static func _cps() -> float:
+	return 230.0 * maxf(0.25, GameSettings.term_speed_mult)
 const T_CODE_HOLD := 1.0    ## 代码打完停留（主人指定 1 秒）
 const T_ART_HOLD := 1.6     ## 字符画停留
 const T_FADE := 0.26        ## 淡出
@@ -76,7 +79,7 @@ func _process(delta: float) -> void:
 
 
 func _code_done_time() -> float:
-	return T_BOOT + float(_code_chars) / T_CPS
+	return T_BOOT + float(_code_chars) / _cps()
 
 
 func _art_start() -> float:
@@ -143,7 +146,7 @@ func _draw_terminal_text() -> void:
 		draw_string(_font, Vector2(56, y), boot[i], HORIZONTAL_ALIGNMENT_LEFT, -1, 20, C_DIM)
 		y += 29.0
 	y += 14.0
-	var budget := int(floorf((_t - T_BOOT) * T_CPS))
+	var budget := int(floorf((_t - T_BOOT) * _cps()))
 	if budget <= 0:
 		return
 	# 代码行变长后总高会超出屏幕：整体上移，让最新一行贴住可视区底部（终端式滚屏）。

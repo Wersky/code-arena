@@ -1,7 +1,7 @@
 # AGENTS.md · 代码擂台 Code Arena
 
 > CodeArts Agent（以及任何接手代理）的**常驻规则**。完整现状读 `docs/CodeArts-接手文档.md`。
-> 校准：2026-11-03 ｜ 引擎：Godot 4.7.2 ｜ 基线：smoke **380 项 0 失败**
+> 校准：2026-11-18 ｜ 引擎：Godot 4.7.2 ｜ 基线：smoke **813 项 0 失败**
 
 ## 项目一句话
 
@@ -54,7 +54,7 @@ GODOT="D:/zcode-work/godot/engine/Godot_v4.7.2-stable_win64_console.exe"
 cd /d/zcode-work/godot/projects/prompt-arena
 
 "$GODOT" --headless --path . --import
-"$GODOT" --headless --path . --script res://tests/smoke_test.gd   # 380 项 0 失败
+"$GODOT" --headless --path . --script res://tests/smoke_test.gd   # 813 项 0 失败
 "$GODOT" --headless --path . --script res://tools/sts_sim.gd      # 改数值后必跑
 tools/export_win.bat                                              # 导出（先查进程）
 ```
@@ -72,7 +72,7 @@ tools/export_win.bat                                              # 导出（先
 
 ## 验收
 
-- smoke **380 项 0 失败**；数字少了就是假绿，先 `--import`。
+- smoke **813 项 0 失败**；数字少了就是假绿，先 `--import`。
 - 改数值 → `sts_sim.gd` 重跑：排序收益 ≥15%、总胜率 40~65%、L10 ≥25%；AGGRO 矩阵见 `docs/balance-aggro.md`（3/4 PASS，MARK 差 −3.3pp 未达标）。
 - LLM 相关改动 → 至少覆盖 MockBackend 正常/垃圾/挂起三剧本与 401 短路；不接真网络跑测试。
 - 改 UI → 无头截图或请主人目检；不要自己弹窗。

@@ -53,6 +53,9 @@ func _ready() -> void:
 	get_window().title = "代码擂台 Code Arena"
 	PixelTheme.install(self)
 	GameSettings.load_from_disk()
+	## 好感度跨局持久化（2026-11-18 修）：Affection.load() 之前**没有任何地方调用**，
+	## 导致每次启动 points 都是内存初值 0，界面上永远显示 Lv.0（存档里写了也不读）。
+	Affection.load()
 	# LLM 接入：配置与网络客户端常驻（AI 关闭时 request 直接短路，零网络）
 	_llm_cfg = LLMConfig.load_from_disk()
 	_llm_client = LLMClient.new()
@@ -452,9 +455,16 @@ func _build_sandbox() -> void:
 	_sandbox.build(_sandbox_actions())
 
 
+## 正式版权限（2026-11-18 主人要求）：
+##   · F1 体验沙盒**已禁用**（强制下一门/加钱等调试项，正式包不该让玩家按到）
+##   · F2 AI 接入设置保留（玩家要能配自己的模型）
+const SANDBOX_ENABLED := false
+
+
 func _unhandled_key_input(event: InputEvent) -> void:
 	if event is InputEventKey and event.pressed and event.keycode == KEY_F1:
-		_toggle_sandbox()
+		if SANDBOX_ENABLED:
+			_toggle_sandbox()
 	elif event is InputEventKey and event.pressed and event.keycode == KEY_F2:
 		_show_llm_panel()
 
@@ -463,6 +473,7 @@ func _unhandled_key_input(event: InputEvent) -> void:
 func _show_llm_panel() -> void:
 	if _llm_panel != null and is_instance_valid(_llm_panel):
 		_llm_panel.move_to_front()
+		_llm_panel.visible = true
 		return
 	if _llm_cfg == null:
 		_llm_cfg = LLMConfig.load_from_disk()
@@ -473,7 +484,15 @@ func _show_llm_panel() -> void:
 	panel.closed.connect(func() -> void: _llm_panel = null)
 	_llm_panel = panel
 	add_child(panel)
+	## 关键修复（2026-11-18）：Main 是纯 Node（没有 rect），往它下面挂 Control 时
+	## 光靠 set_anchors_preset(FULL_RECT) 算不出尺寸 —— 实测面板 size=(0,0)，
+	## 于是"看不见、点了也像没反应"。必须显式把尺寸同步到视口大小。
 	panel.set_anchors_preset(Control.PRESET_FULL_RECT)
+	panel.size = get_viewport().get_visible_rect().size
+	panel.position = Vector2.ZERO
+	panel.visible = true
+	panel.z_index = 500        ## 压在一切之上
+	print("[LLMPanel] 新建面板 size=", panel.size, " 视口=", get_viewport().get_visible_rect().size)
 
 
 func _on_llm_config_saved() -> void:
@@ -568,7 +587,13 @@ func _maybe_capture() -> void:
 			out_path = a.substr(10)
 	if out_path.is_empty():
 		return
-	if screen in ["menu", "arena", "battle", "intro", "reward", "result",
+	if screen == "tutorshot":
+		await _capture_tutorial(out_path)
+		return
+	if screen == "wishshot":
+		await _capture_wish(out_path)
+		return
+	if screen in ["menu", "arena", "battle", "intro", "introcard", "reward", "result",
 			"menuhover", "rig", "rigwalk", "loadrun", "card", "cardtext", "cardcost", "terminal", "termgif",
 			"termdump", "hero", "stairs", "launch", "launch2", "arenalayout", "sendtest", "ricetest",
 			"patchdemo", "wishpanel", "ripple", "morph", "select", "mosaic", "flow", "exitmorph", "fandbg",
@@ -846,30 +871,158 @@ func _maybe_capture() -> void:
 			sel_b.setup(AiPool.all_ais())
 			_swap(sel_b)
 			await get_tree().process_frame
-			# 验收用 UV 引擎（V3）定格：网格引擎(V4)不支持 debug_set_breath 定格
-			if sel_b._breath != null:
-				sel_b._breath.set_engine(false)
-			await get_tree().process_frame
-			await get_tree().process_frame
-			# --engine=mesh|uv 切换呼吸引擎（V4 网格 / V3 UV），对比用
+			# 引擎按 --engine=mesh|uv 选（V4 网格 / V3 UV）。默认 mesh。
+			# 注：早前这里先无条件 set_engine(false) 再切回，注释误写成「V4 不支持定格」——
+			# 实际 debug_set_breath → _apply() → mesh.set_phase() 链路两个引擎都通，
+			# 那行强制 V3 只会把 V4 的真实验收遮掉（2026-11-10 修正）。
 			var eng := "mesh"
+			var boost := false
+			# --v4only=hair|head：只开单一通道，用来验证「眼睛归属」
+			# （只开头发时眼睛必须一动不动；只开头颈时眼睛必须动）
+			var only := ""
 			for a in OS.get_cmdline_user_args():
 				if a.begins_with("--engine="):
 					eng = a.substr(9)
+				elif a == "--v4boost":
+					boost = true
+				elif a.begins_with("--v4only="):
+					only = a.substr(9)
+			if only != "":
+				boost = true
 			if sel_b._breath != null:
 				sel_b._breath.set_engine(eng == "mesh")
+			await get_tree().process_frame
+			await get_tree().process_frame
 			for ci in sel_b._ais.size():
 				sel_b.select_by_index(ci)
 				# 等转场收尾（各角色转场时长不同，统一等最长 + 余量）
 				await get_tree().create_timer(3.2).timeout
-				for pp in [0.75, 0.25]:
+				# 采样相位：默认 0.75/0.25 是给 V3 的 sin 设计的峰谷。
+				# 采样相位必须跟着**要测的通道**选，两者对不上就会得到「两帧完全相同」：
+				#   · 横向走 cos：cos(2π·0.25)=cos(2π·0.75)=0 → 测横扩要用 0.0 / 0.5
+				#   · 纵向走 sin：sin(2π·0)=sin(2π·0.5)=0     → 测纵向要用 0.25 / 0.75
+				# 2026-11-10 两次都踩过：先拿 0.75/0.25 测横扩（0 差异），
+				# 后拿 0.0/0.5 测头纵（也 0 差异）。
+				var phases: Array = [0.75, 0.25]
+				if only == "hair" or only == "chest":
+					phases = [0.0, 0.5]        # 横向（cos）峰谷
+				elif only == "head":
+					phases = [0.25, 0.75]      # 纵向（sin）峰谷
+				elif boost and only == "":
+					phases = [0.0, 0.5]        # 默认 boost 是胸腔横扩
+				for pp in phases:
+					# --v4boost：只留胸腔横扩、amp 拉满，证明 V4 的左右反向扩张
+					# （V3 的 UV 平移在数学上做不到左右反向，这是两代方案的本质差别）。
+					# **每帧重设**：转场收尾/面板 set_character 会按角色存档把 uniform 覆盖回去，
+					# 只在循环外设一次会被冲掉（实测 chest_x 又变回 10.5）。
+					if boost and sel_b._breath != null:
+						var mesh_b: PortraitBreathMesh = sel_b._breath.get_mesh_layer()
+						if mesh_b != null:
+							# 基础：全关，amp 拉满
+							var p4 := {
+								"amp": 3.0, "chest_x": 0.0, "chest_y": 0.0,
+								"belly_x": 0.0, "belly_y": 0.0, "head_y": 0.0,
+								"hair_x": 0.0, "hair_y": 0.0,
+								"belly_lag_deg": 0.0, "head_lag_deg": 0.0,
+								"hair_lag_per_height": 0.0,
+								# 底锁取该角色自己的值：deepseek 0.04 / kweno 0.10 / gpt 0.18
+								"lock_bottom": GameSettings.breath_v4_get(
+										String(sel_b._ais[ci].id), "lock_bottom"),
+								"x_lag_deg": 0.0, "y_bias": 0.0}
+							# 按 --v4only 只点亮一个通道
+							if only == "hair":
+								p4["hair_x"] = 40.0
+								p4["hair_y"] = 40.0
+							elif only == "head":
+								p4["head_y"] = 30.0
+							else:
+								p4["chest_x"] = 30.0      # 默认 boost = 胸腔横扩
+							mesh_b.apply_v4_params(p4)
+							mesh_b.set_horiz(true)
 					sel_b.debug_set_breath(float(pp))
+					# debug_set_breath 内部会 _apply()，但 boost 是之后才改 uniform，
+					# 再 _apply 一次把 phase 按当前参数重新推一遍
+					if boost and sel_b._breath != null:
+						sel_b._breath.debug_set_breath(float(pp))
 					await get_tree().process_frame
 					await get_tree().process_frame
+					# 取证：截图前把实际生效的 uniform 打进日志。
+					# 曾经反复出现「boost 设了但画面没变」，根因是转场结束回调
+					# _sync_breath_char → 面板 set_character 会按角色存档覆盖 uniform。
+					# 有了这行日志就能一眼分辨「参数没进去」还是「参数进去了但效果不对」。
+					if boost and sel_b._breath != null:
+						var dbg_mesh: PortraitBreathMesh = sel_b._breath.get_mesh_layer()
+						if dbg_mesh != null:
+							var d4 := dbg_mesh.get_v4_params()
+							print("  [shot] c%d p%.2f amp=%.1f chest=(%.1f,%.1f) head=%.1f hair=(%.1f,%.1f) lock=%.2f" % [
+								ci, pp, float(d4.get("amp",0)), float(d4.get("chest_x",0)),
+								float(d4.get("chest_y",0)), float(d4.get("head_y",0)),
+								float(d4.get("hair_x",0)), float(d4.get("hair_y",0)),
+								float(d4.get("lock_bottom",0))])
 					get_viewport().get_texture().get_image().save_png(
 							"%s-%s-c%d-p%02d.png" % [out_path, eng, ci, int(pp * 100)])
-			print("[shot=breath] engine=%s 已存 %d 帧 → %s-<eng>-cN-pNN.png" % [
-				eng, sel_b._ais.size() * 2, out_path])
+			print("[shot=breath] engine=%s boost=%s 已存 %d 帧 → %s-<eng>-cN-pNN.png" % [
+				eng, boost, sel_b._ais.size() * 2, out_path])
+		elif screen == "introcard":
+			# 角色介绍面板验收（2026-11-11 主人给了 4 张红框位置图）：
+			#   --introstage=slide|expand|final 定格在三段式的某一拍
+			#   产物 <out>-c0..c3.png，四位角色各一张
+			# ⚠ 分支名不能叫 "intro"：那个名字已被「终端进场」占用两处。
+			var stage := "final"
+			for a4 in OS.get_cmdline_user_args():
+				if a4.begins_with("--introstage="):
+					stage = a4.substr(13)
+			var seli := CharacterSelectScreen.new()
+			seli.setup(AiPool.all_ais())
+			_swap(seli)
+			await get_tree().process_frame
+			await get_tree().process_frame
+			# 验收介绍面板时必须关掉两块调试面板：它们按 F3 常驻右上，
+			# 正好压在 deepseek/chatppt/grock 的最终位置上盖住介绍内容。
+			seli.toggle_debug_panels(false)
+			var ids := ["deepdeek", "kweno", "chatppt", "grock"]
+			for ci in 4:
+				# 只有真的换了角色才会起转场、才会发 swap_finished。
+				# 首次循环 index 已是 0 时 select_by_index 是空操作，
+				# 直接等信号会永久挂住 → 先判一下。
+				if seli.current_index() != ci:
+					seli.select_by_index(ci)
+					await seli._bg_layer.swap_finished
+				else:
+					seli.select_by_index(ci)
+					await get_tree().process_frame
+				await get_tree().process_frame
+				# 直接定格到终态，不依赖动画时序
+				seli.debug_show_intro(ids[ci])
+				var ip = seli._intro_panel
+				if ip == null:
+					printerr("[shot=introcard] 没有介绍面板")
+					break
+				if stage == "slide":
+					# 滑入段：真实播放时内容还是透明的（present 里 _body.a=0，
+					# 要到展开结束才淡入）。钩子必须一并复刻这个状态，
+					# 否则截出来是「整块面板 + 全部文字」，看不出「一条边」的形态。
+					ip._body.modulate.a = 0.0
+					ip._set_slide(0.62)
+				elif stage == "expand":
+					ip._body.modulate.a = 0.0
+					ip._set_slide(1.0)
+					ip._set_expand(0.45)
+				elif stage == "folded":
+					# 折叠态：收进对应侧，只留一条 + 箭头把手
+					ip.set_folded(true)
+					ip._kill()
+					ip._cur = ip._fold_rect()
+					ip._apply_cur()
+					ip._body.modulate.a = 0.0
+				var rr: Rect2 = ip.current_rect()
+				print("[shot=intro] %s stage=%s rect=(%.0f,%.0f %.0fx%.0f) body_a=%.1f"
+						% [ids[ci], stage, rr.position.x, rr.position.y,
+						rr.size.x, rr.size.y, ip._body.modulate.a])
+				await get_tree().process_frame
+				await get_tree().process_frame
+				get_viewport().get_texture().get_image().save_png("%s-c%d.png" % [out_path, ci])
+				print("[shot=intro] %s (%s) 已存 → %s-c%d.png" % [ids[ci], stage, out_path, ci])
 		elif screen == "select":
 			# 选角界面验收（2026-11-09 四轮）：
 			#   f00 初始布局 / f01..f08 四种转场各取「中段 + 结束」两帧
@@ -941,6 +1094,7 @@ func _maybe_capture() -> void:
 				"fan": RippleSwapPortrait.Style.FAN,
 				"slash": RippleSwapPortrait.Style.SLASH,
 				"hex": RippleSwapPortrait.Style.HEX,
+				"petal": RippleSwapPortrait.Style.PETAL,
 			}.get(style_name, RippleSwapPortrait.Style.RIPPLE)
 			var next_tex: Texture2D = load("res://assets/art/ai-%s.png" % style_name \
 					if style_name in ["kweno", "grock", "chatppt"] else "res://assets/art/ai-kweno.png")
@@ -996,6 +1150,116 @@ const LEG_RECT4 := Rect2i(52, 216, 84, 52)
 
 ## 楼梯选角 demo 截图验收：
 ##   godot --path <项目> -- --shot=stairs --shotout=<绝对路径>.png
+## 截图钩子：真实走一遍许愿流程（画剑 → LLM 分析 → 生图），等卡面挂上后截图。
+## 用途：虚拟桌面/无头环境下验证「生图真的生出了卡面」。
+## 截图钩子：进战斗并播新手引导，截第一步（卡牌高亮）。
+## 截图钩子：进战斗播新手引导，逐步截 3 张（_1/_2/_3 后缀）。
+## 截图钩子：**走真实流程**（含终端转场）播新手引导，逐步截 3 张。
+## 注意：不设 run.intro_played=true —— 必须验证"转场播完才弹引导"。
+func _capture_tutorial(out_path: String) -> void:
+	run.set_ai(AiPool.get_ai("deepdeek"))
+	_show_level(_levels[0], false)
+	## 转场约 4s（终端敲代码），再等手牌入场动画 0.65s，留足余量
+	## 轮询等：① arena 建好 ② 手牌出来 ③ 转场结束（_busy=false）
+	var waited := 0.0
+	var a: ArenaScreen = null
+	while waited < 30.0:
+		a = _current as ArenaScreen
+		if a != null and not a._busy and a._hand_views.size() > 0:
+			break
+		await get_tree().create_timer(0.5).timeout
+		waited += 0.5
+	print("[shot=tutorshot] 就绪，等了 ", waited, "s  hand=",
+		a._hand_views.size() if a != null else -1)
+	if a == null:
+		print("[shot=tutorshot] ✗ 不在 arena")
+		get_tree().quit(); return
+	print("[shot=tutorshot] 当前状态: busy=", a._busy,
+		" hand=", a._hand_views.size(),
+		" tutorial=", (a._tutorial != null and is_instance_valid(a._tutorial)))
+	if a._hand_views.is_empty():
+		print("[shot=tutorshot] ✗ 没有手牌")
+		get_tree().quit(); return
+	## 如果没自动弹（可能已 done），强制播
+	if a._tutorial == null or not is_instance_valid(a._tutorial):
+		GameSettings.tutorial_always = true
+		a._start_tutorial()
+		await get_tree().create_timer(1.2).timeout
+	var base := out_path.get_basename()
+	for step in 3:
+		for i in 12: await get_tree().process_frame
+		await RenderingServer.frame_post_draw
+		var p := "%s_%d.png" % [base, step + 1]
+		get_viewport().get_texture().get_image().save_png(p)
+		## 记录洞的位置，便于核验
+		if a._tutorial != null and is_instance_valid(a._tutorial):
+			print("[shot=tutorshot] step%d 洞=%s → %s" % [step+1, str(a._tutorial._hole), p])
+			a._tutorial.next_step()
+			await get_tree().create_timer(0.4).timeout
+		else:
+			print("[shot=tutorshot] step%d → %s（无 overlay）" % [step+1, p])
+	print("[shot=tutorshot] 完成")
+	get_tree().quit()
+func _capture_wish(out_path: String) -> void:
+	run.set_ai(AiPool.get_ai("deepdeek"))
+	_show_level(_levels[0], false)
+	## 进场有终端转场（约 4s），必须等它走完，否则截到的是黑幕
+	await get_tree().create_timer(5.0).timeout
+	var a := _current as ArenaScreen
+	if a == null:
+		print("[shot=wishshot] ✗ 不在 arena")
+		get_tree().quit(); return
+	## 造"剑"涂鸦
+	a._wish_canvas = WishCanvas.new()
+	a.add_child(a._wish_canvas)
+	await get_tree().process_frame
+	var blade := PackedVector2Array()
+	for i in 22: blade.append(Vector2(160, 70 + i * 12))
+	a._wish_canvas._strokes.append({"pts": blade, "size": 14.0, "style": "round",
+			"color": Color(0.08, 0.08, 0.1)})
+	a._wish_canvas._strokes.append({"pts": PackedVector2Array(
+			[Vector2(105, 195), Vector2(215, 195)]), "size": 13.0, "style": "round",
+			"color": Color(0.08, 0.08, 0.1)})
+	a._wish_canvas._strokes.append({"pts": PackedVector2Array(
+			[Vector2(160, 195), Vector2(160, 255)]), "size": 17.0, "style": "round",
+			"color": Color(0.08, 0.08, 0.1)})
+	await get_tree().process_frame
+	print("[shot=wishshot] 涂鸦就绪，路径 = ", a._wish_path())
+	## 真实走流程
+	a._request_vision_card(a._llm_config(), false)
+	print("[shot=wishshot] 已发请求，等生图…")
+	var got := ""
+	for i in 360:
+		await get_tree().create_timer(0.5).timeout
+		for c in run.deck:
+			if c.art_path != "" and c.art_path.contains("ai_cache"):
+				got = c.art_path
+				break
+		if got != "":
+			break
+		if i % 20 == 0:
+			print("[shot=wishshot]   %d s" % (i / 2))
+	if got.is_empty():
+		print("[shot=wishshot] ✗ 180s 内没生成卡面")
+		get_tree().quit(); return
+	print("[shot=wishshot] ✅ 卡面 = ", got)
+	## 把手牌换成这张有图的卡，便于截图
+	for c in run.deck:
+		if c.art_path == got and a.combat != null:
+			a.combat.hand.append(c)
+			a._rebuild_hand()
+			break
+	## 涂鸦画布只是数据容器，别让它挡画面
+	if a._wish_canvas != null:
+		a._wish_canvas.visible = false
+	for i in 30: await get_tree().process_frame
+	await RenderingServer.frame_post_draw
+	await RenderingServer.frame_post_draw
+	get_viewport().get_texture().get_image().save_png(out_path)
+	print("[shot=wishshot] 已存 → ", out_path)
+	get_tree().quit()
+
+
 func _capture_stairs(out_path: String) -> void:
 	if _current != null:
 		_current.queue_free()

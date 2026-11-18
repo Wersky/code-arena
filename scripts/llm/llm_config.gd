@@ -71,6 +71,19 @@ var image_key := ""           ## 空则复用 api_key（生图与文本常是不
 var image_max_per_run := 2    ## 每局许愿次数上限（可被关卡进度回补，见 wish 逻辑）
 const IMAGE_MAX_CAP := 4
 
+## ── SVG 生图专用接入（2026-11-18 主人要求）──────────────────
+## 背景：许愿卡的 SVG 默认由「对应的模型」画（选千问就千问画）。
+## 但有时想让**另一个更快的模型**画 SVG，而默认模型完全不参与绘图。
+## 这里就是那套独立配置：34 项全空 = 走默认模型（老行为不变）。
+## 面板上标注「留空则按默认模型进行 SVG 绘制」。
+const SVG_SECTION := "svg"
+var svg_enabled := false      ## 打开才启用独立通道；关 = 走默认模型
+var svg_base := ""            ## 空则复用 base_url
+var svg_key := ""             ## 空则复用 api_key
+var svg_model := ""           ## 空则复用 model
+var svg_protocol := ""        ## 空则复用 protocol
+
+
 ## 许愿卡超时按模型分档（2026-11-05）：grok 通道实测 109–123s，统一 90s 会截断。
 ## 默认 90s；命中慢通道关键词给 180s。宁可多等，也不要让玩家白画一张。
 const WISH_TIMEOUT_DEFAULT := 90.0
@@ -132,6 +145,11 @@ func read(path: String = CONFIG_PATH) -> void:
 			int(cf.get_value(IMAGE_SECTION, "max_per_run", 2)), 0, IMAGE_MAX_CAP)
 	vision_override = clampi(int(cf.get_value(IMAGE_SECTION, "vision_override", 1)), -1, 1)
 	ai_opponent = bool(cf.get_value(IMAGE_SECTION, "ai_opponent", false))
+	svg_enabled = bool(cf.get_value(SVG_SECTION, "enabled", false))
+	svg_base = String(cf.get_value(SVG_SECTION, "base_url", ""))
+	svg_key = deobfuscate(String(cf.get_value(SVG_SECTION, "api_key", "")))
+	svg_model = String(cf.get_value(SVG_SECTION, "model", ""))
+	svg_protocol = String(cf.get_value(SVG_SECTION, "protocol", ""))
 
 
 func save(path: String = CONFIG_PATH) -> Error:
@@ -152,6 +170,11 @@ func save(path: String = CONFIG_PATH) -> Error:
 	cf.set_value(IMAGE_SECTION, "max_per_run", clampi(image_max_per_run, 0, IMAGE_MAX_CAP))
 	cf.set_value(IMAGE_SECTION, "vision_override", clampi(vision_override, -1, 1))
 	cf.set_value(IMAGE_SECTION, "ai_opponent", ai_opponent)
+	cf.set_value(SVG_SECTION, "enabled", svg_enabled)
+	cf.set_value(SVG_SECTION, "base_url", svg_base.strip_edges())
+	cf.set_value(SVG_SECTION, "api_key", obfuscate(svg_key))
+	cf.set_value(SVG_SECTION, "model", svg_model.strip_edges())
+	cf.set_value(SVG_SECTION, "protocol", svg_protocol.strip_edges())
 	return cf.save(path)
 
 
@@ -185,6 +208,23 @@ func image_ready() -> bool:
 func effective_image_base() -> String:
 	var b := image_base.strip_edges()
 	return b if not b.is_empty() else base_url.strip_edges()
+
+
+## SVG 专用通道是否生效：显式开启 + 至少填了模型名。
+## 没开或没填模型 → false，调用方走默认模型（老行为，零影响）。
+func svg_ready() -> bool:
+	return svg_enabled and not svg_model.strip_edges().is_empty()
+
+
+## SVG 通道的实际参数：本类字段做 fallback，返回一份可直接喂 LLMProtocol 的快照。
+## 返回 {"base":…, "key":…, "model":…, "protocol":…}
+func svg_channel() -> Dictionary:
+	return {
+		"base": svg_base.strip_edges() if not svg_base.strip_edges().is_empty() else base_url.strip_edges(),
+		"key": svg_key.strip_edges() if not svg_key.strip_edges().is_empty() else api_key.strip_edges(),
+		"model": svg_model.strip_edges(),
+		"protocol": svg_protocol.strip_edges() if not svg_protocol.strip_edges().is_empty() else protocol,
+	}
 
 
 ## scene_tag → 温度；未知 tag 回落 0.5（事件档）
@@ -295,20 +335,40 @@ static func deobfuscate(blob: String) -> String:
 	return out.get_string_from_utf8()
 
 
+## 内置演示凭据（2026-11-18 主人指示「把 key 内置进包」）。
+## ⚠ 安全提示：这些值会随 exe/pck 一起分发，拿到文件的人就能用这个额度。
+## 仅在**本机没有 user://llm_config.cfg** 时生效（_apply_defaults 只在读盘失败时调），
+## 所以主人自己机器上仍然优先用本机存档。
+const BUILTIN_BASE := "https://api.commandcode.ai/provider/v1"
+const BUILTIN_MODEL := "deepseek/deepseek-v4.1-flash"
+const BUILTIN_PROTOCOL := "chat_completions"
+const BUILTIN_KEY_OBF := "b64:BQEKHy83GSA4MCpWZxULD28DUxcDFVo0LH40EAIEE0caHz4YRFtDCgkhMyMcEUACDyBIWVpaeRxkGyUbNwcFHhY4FS8xaAQhAkMdQ0NEKiBFR3cSRREPA2MmLTU="
+const BUILTIN_IMG_MODEL := "gpt-image-2.6-sunburst"
+const BUILTIN_IMG_BASE := "https://kuaipao.pro"
+const BUILTIN_IMG_KEY_OBF := "b64:AxlCFDUuHlI3Ah4pHhs+Ils0ByEHJFQGEllUEygqM0IvPw5VFQUUNCcUOBlVWQgyXBtq"
+const BUILTIN_SVG_MODEL := "deepseek/deepseek-v4.1-flash-fast"
+
+
 func _apply_defaults() -> void:
-	enabled = false
-	base_url = ""
-	api_key = ""
-	protocol = "anthropic"
-	model = ""
+## 无本机存档 → 用内置演示凭据（开箱即用）
+	enabled = true
+	base_url = BUILTIN_BASE
+	api_key = deobfuscate(BUILTIN_KEY_OBF)
+	protocol = BUILTIN_PROTOCOL
+	model = BUILTIN_MODEL
 	temperatures = DEFAULT_TEMPS.duplicate()
-	image_enabled = false
-	image_model = ""
-	image_base = ""
-	image_key = ""
-	image_max_per_run = 2
+	image_enabled = true
+	image_model = BUILTIN_IMG_MODEL
+	image_base = BUILTIN_IMG_BASE
+	image_key = deobfuscate(BUILTIN_IMG_KEY_OBF)
+	image_max_per_run = 4
 	vision_override = 1
 	ai_opponent = false
+	svg_enabled = true
+	svg_base = BUILTIN_BASE
+	svg_key = deobfuscate(BUILTIN_KEY_OBF)
+	svg_model = BUILTIN_SVG_MODEL
+	svg_protocol = BUILTIN_PROTOCOL
 
 
 # ══ ZCode provider 导入（goat 分组等，2026-11-03）══════

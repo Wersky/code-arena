@@ -89,8 +89,15 @@ func request(scene_tag: String, messages: Array, on_done: Callable, opts: Dictio
 	else:
 		_next_rid = maxi(_next_rid, rid + 1)
 
+	## cfg_override：本请求用另一份配置（见 _launch_http 的注释）。
+	## 从 opts 取出来单独存，不留在 opts 里传给 protocol（那会污染参数表）。
+	var cfg_override: LLMConfig = opts.get("cfg_override", null) as LLMConfig
+	if cfg_override != null:
+		opts = opts.duplicate()
+		opts.erase("cfg_override")
 	var job := {
 		"rid": rid,
+		"cfg_override": cfg_override,
 		"scene_tag": String(scene_tag),
 		"messages": _normalize_messages(messages),
 		"opts": opts,
@@ -196,13 +203,29 @@ func _launch(rid: int) -> void:
 	_arm_timeout(rid, int(job["attempt"]), float(job["timeout_s"]))
 
 
+## 本 job 实际用的协议名：cfg_override 优先（SVG 通道可能与主通道协议不同）。
+## 解析响应用它，不能直接用 config.protocol —— 否则 override 请求会用错解析器。
+func _protocol_of(job) -> String:
+	var ov = job.get("cfg_override")
+	var c: LLMConfig = (ov as LLMConfig) if ov != null else config
+	return c.protocol if c != null else "chat_completions"
+
+
 func _launch_http(rid: int) -> void:
 	var job = _jobs.get(rid)
 	if job == null or job["done"]:
 		return
 	var opts: Dictionary = (job["opts"] as Dictionary).duplicate()
 	opts["scene_tag"] = job["scene_tag"]
-	var req := LLMProtocol.build_chat_request(config, job["messages"], -1.0, opts)
+	## 通道覆盖（2026-11-18）：许愿卡的 SVG 可以走独立的「SVG 生图 AI」通道，
+	## 用另一套 base/key/model/protocol，而默认模型完全不参与绘图。
+	## 没传 override 就是 config（老行为，零影响）。
+	## 注意：不能用 job.get("cfg_override", config) —— 该 key **总是存在**（值为 null），
+	## Dictionary.get 的默认值只在 key 缺失时生效，所以会拿到 null 而不是 config。
+	## 2026-11-18 踩到：所有普通请求都被判成 no_config，连"测试连接"都失败。
+	var ov = job.get("cfg_override")
+	var req_cfg: LLMConfig = (ov as LLMConfig) if ov != null else config
+	var req := LLMProtocol.build_chat_request(req_cfg, job["messages"], -1.0, opts)
 	if not bool(req.get("ok", false)):
 		_fail(rid, job, String(req.get("reason", "no_config")), 0)
 		return
@@ -302,9 +325,9 @@ func _on_http(result: int, code: int, _headers: PackedStringArray, body: PackedB
 		return
 
 	if code >= 200 and code < 300:
-		var text := LLMProtocol.extract_text(config.protocol, body_text)
+		var text := LLMProtocol.extract_text(_protocol_of(job), body_text)
 		## 大模型绘图：回复里可能带 SVG 代码或位图（如 data URI），与正文并存
-		var image := LLMProtocol.extract_image(config.protocol, body_text)
+		var image := LLMProtocol.extract_image(_protocol_of(job), body_text)
 		if text.strip_edges().is_empty() and image.is_empty() 				and LLMProtocol.extract_svg_from_text(text).is_empty():
 			_fail(rid, job, "empty", code)
 			return
@@ -323,7 +346,7 @@ func _on_http(result: int, code: int, _headers: PackedStringArray, body: PackedB
 		_fail(rid, job, "http_5xx", code)
 		return
 
-	var detail := LLMProtocol.extract_error(config.protocol, body_text)
+	var detail := LLMProtocol.extract_error(_protocol_of(job), body_text)
 	_fail(rid, job, "http_4xx", code, detail)
 
 
@@ -372,7 +395,7 @@ func _succeed(rid: int, job: Dictionary, text: String, code: int,
 	_remove_active(rid)
 	var r := _res(job, true, text, "", code)
 	var src := raw_text if not raw_text.is_empty() else text
-	r["image"] = LLMProtocol.extract_image(config.protocol, src)
+	r["image"] = LLMProtocol.extract_image(_protocol_of(job), src)
 	r["svg"] = LLMProtocol.extract_svg_from_text(text)
 	_finish(job, r)
 	_pump()
@@ -467,7 +490,7 @@ func _store_late(job: Dictionary, result: int, code: int, body_text: String) -> 
 		return
 	if result != HTTPRequest.RESULT_SUCCESS or code < 200 or code >= 300:
 		return
-	var text := LLMProtocol.extract_text(config.protocol, body_text)
+	var text := LLMProtocol.extract_text(_protocol_of(job), body_text)
 	if text.strip_edges().is_empty():
 		return
 	_put_late(job, text)

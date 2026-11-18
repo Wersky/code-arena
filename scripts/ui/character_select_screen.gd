@@ -32,14 +32,17 @@ const DOT_GAP := 30.0
 const START_BTN_POS := Vector2(1330.0, 800.0)
 const START_BTN_SIZE := Vector2(228.0, 62.0)
 ## 一人一款转场：下标与 AiPool.all_ais() 顺序一致
-##   DeepDeek 水波 / Kweno 折扇 / ChatPPT 龙鳞 / Grock 乱斩
+##   DeepDeek 水波 / Kweno 白花瓣遮幕 / ChatPPT 龙鳞 / Grock 乱斩
+##   （Kweno 原为折扇，2026-11-11 主人指定换成白花瓣：自左下涌向右上、遮满全屏后散开）
 const TRANSITION_STYLE := [
 	RippleSwapPortrait.Style.RIPPLE,
-	RippleSwapPortrait.Style.FAN,
+	RippleSwapPortrait.Style.PETAL,
 	RippleSwapPortrait.Style.HEX,
 	RippleSwapPortrait.Style.SLASH,
 ]
 ## 转场时长从 GameSettings 按风格单独取（左下角调参器可调、跨启动记住）
+## STYLE_KEYS 与 TRANSITION_STYLE 一一对应；键名沿用 "fan" 以免旧存档的时长丢失
+## （kweno 的时长键没变，只是风格实现换成花瓣）。
 const STYLE_KEYS := ["ripple", "fan", "hex", "slash"]   ## 与 TRANSITION_STYLE 一一对应
 
 ## 呼吸遮罩（生图灰度图，白区 = 位移大）：按**角色 id** 索引，与上面的大立绘一一对应。
@@ -113,12 +116,24 @@ var _idx := 0
 var _bg_layer: RippleSwapPortrait = null     ## 背景大立绘（带一人一款转场）
 var _breath: PortraitBreathLayer = null      ## 呼吸层（_bg_layer 的子节点，画在它上面）
 var _blackhole: BlackHoleSpinner = null      ## 黑洞旋转层（仅 GPT 有，画在呼吸层之上）
-var _breath_panel: BreathDebugPanel = null   ## F2 呼吸调试面板
+var _intro_panel: CharacterIntroPanel = null ## 角色介绍面板（2026-11-11）
+var _breath_panel: BreathDebugPanel = null   ## 右上呼吸调试面板
 var _swapping := false
 
 ## 左下角调参器（Notes：只在选角界面出现，调整即时生效并落盘）
 var _tuner_panel: PanelContainer = null
 var _tuner_labels: Dictionary = {}           ## style_key -> Label（显示秒数）
+
+## ── F3：两块调试面板的总开关（2026-11-11 主人要求）──────────────────────
+## 一次按键**同时**开关左下转场调参器（_tuner_panel）与右上呼吸面板（_breath_panel）。
+## 状态只记这一个 bool，不分别记两个：两块面板永远同显/同隐，分开关会打架。
+## 键位为什么是 F3：
+##   · F1 已被 ui_tuner.gd 的 _input 无条件占用（通用 UI 调参器）
+##   · F2 是呼吸面板的旧编号（已废弃，现由 main.gd 拿去开 LLM 面板）
+const DEBUG_TOGGLE_KEY := KEY_F3
+## 正式版默认**隐藏**两块调参面板（2026-11-18 主人要求）；F3 仍可随时打开。
+## 之前是 true（开发期常驻显示），出正式包时改成 false。
+var _debug_panels_on := false
 
 
 ## 某位角色的转场时长（秒）：优先用主人调好的值
@@ -198,7 +213,12 @@ func _build() -> void:
 	_build_dots()
 	_build_start()
 	_build_tuner()
-	_build_breath_panel()   # 最后挂：F2 面板永远在所有控件之上
+	_build_intro_panel()   # 角色介绍面板：放在呼吸面板**之前**建，
+	                       # 这样右上呼吸面板仍压在最上层（它是调试用的常驻面板）
+	_build_breath_panel()   # 最后挂：右上呼吸面板永远在所有控件之上
+	# 重建后把 F3 的开关状态重新落一遍：_build() 可能被跑第二次（_ready 一次、setup() 一次），
+	# 而 _build_tuner() 每次都会 new 一块可见的新面板，不补这一步会让主人关掉的面板自己冒出来。
+	_apply_debug_panels(_debug_panels_on)
 	_refresh()
 
 
@@ -311,6 +331,13 @@ func _refresh_dots() -> void:
 const TUNER_NAMES := ["水波", "折扇", "龙鳞", "乱斩"]
 
 func _build_tuner() -> void:
+	# _build 可能被跑两次（_ready 一次、之后 setup() 再一次）。这里必须与
+	# _build_breath_panel() 一样做「建过就不再建」的防御：
+	# 旧版无条件 new + add_child，重复 build 会叠出两块 SwapTuner —— 而 _tuner_panel
+	# 只记住最新那块，F3 隐藏时旧的那块留在屏幕上继续吃鼠标，正好破坏
+	# 「一次切两块 / 隐藏不吃事件」两条硬约束（2026-11-11 实测踩到）。
+	if _tuner_panel != null and is_instance_valid(_tuner_panel):
+		return
 	_tuner_panel = PanelContainer.new()
 	_tuner_panel.name = "SwapTuner"
 	var sb := StyleBoxFlat.new()
@@ -387,7 +414,6 @@ func _refresh(animate_bg: bool = false) -> void:
 		_sync_breath_char()
 
 
-## 切到第 next 位：用**目标角色**的专属转场播过去
 func _swap_to_character(next: int) -> void:
 	if next < 0 or next >= _ais.size() or next == _idx or _swapping:
 		return
@@ -410,6 +436,9 @@ func _swap_to_character(next: int) -> void:
 func _on_swap_finished() -> void:
 	_swapping = false
 	_sync_breath_char()
+	# 主人 2026-11-11：「转场进入对应角色、角色开始呼吸时」→ 风格面板弹入展开。
+	# 放在呼吸淡入之后，视觉上是「人先站稳、呼吸起来，面板才出来介绍她」。
+	_present_intro()
 	if _breath == null or not _breath.has_portrait():
 		return
 	# 淡入而不是硬切：转场末帧与新图相同，但相位可能正在半周期，直接显会看到一下跳变
@@ -417,6 +446,44 @@ func _on_swap_finished() -> void:
 	_breath.modulate.a = 0.0
 	var tw := create_tween()
 	tw.tween_property(_breath, "modulate:a", 1.0, 0.15)
+
+
+## 角色介绍面板（2026-11-11 主人要求）：一次性建好，切角色时只换内容重播。
+## 为什么只建一块而不是每角色一块：四个最终位置由红框标定、互不重叠，
+## 但同时只该看到一个 —— 一块面板换内容最简单，也不会忘 dispose。
+func _build_intro_panel() -> void:
+	if is_instance_valid(_intro_panel) and _intro_panel.get_parent() == self:
+		return
+	_intro_panel = CharacterIntroPanel.new()
+	_intro_panel.name = "CharacterIntro"
+	add_child(_intro_panel)
+	# 首次进入（不是转场进入）也要介绍：延后到布局稳定再播，
+	# 否则拿到的是 0 尺寸的 rect，动画面板会是空的。
+	_present_intro_deferred()
+
+
+## 播当前角色的介绍（幂等：同一角色不重播）
+func _present_intro() -> void:
+	if _intro_panel == null or not is_instance_valid(_intro_panel):
+		return
+	var cid := current_id()
+	if cid == "":
+		return
+	_intro_panel.present(cid)
+
+
+func _present_intro_deferred() -> void:
+	await get_tree().process_frame
+	await get_tree().process_frame
+	_present_intro()
+
+
+## 供截图/测试直接定格在展开完成的终态
+func debug_show_intro(cid: String) -> void:
+	if _intro_panel == null:
+		return
+	_intro_panel.present(cid)
+	_intro_panel.debug_finish_present()
 
 
 ## 把当前角色的立绘/遮罩/错相下标推给呼吸层
@@ -472,7 +539,7 @@ func select_by_index(i: int) -> void:
 	_swap_to_character(i)
 
 
-# ── F2 呼吸调试面板（2026-11-09）：挂在本界面右上角，与 UiTuner 的 F1 互不冲突 ──
+# ── 右上呼吸调试面板（2026-11-09）：挂在右上角；F3 与左下转场调参器一起开关 ──
 func _build_breath_panel() -> void:
 	if _breath_panel != null:
 		return
@@ -494,28 +561,20 @@ func _build_breath_panel() -> void:
 	_breath_panel.set_params(sp_amp, sp_per, sp_ph, sp_md, false)
 	_on_breath_params_changed(sp_amp, sp_per, sp_ph, sp_md)
 	# 面板按当前角色刷新三层滑杆（静默，避免开局重播）
+	# **顺序要紧**：bind_mesh 必须在 set_character 之前——set_character 要把该角色的
+	# V4 参数灌进 mesh，_mesh_ref 还是 null 的话这一步就静默丢掉了。
+	# bind_mesh 内部会自同步一次滑杆（从 mesh 读出真实 uniform），不必在这里再补一遍。
+	if _breath_panel != null:
+		var mesh_now: PortraitBreathMesh = null
+		if _breath != null:
+			mesh_now = _breath.get_mesh_layer()
+		_breath_panel.bind_mesh(mesh_now)
 	_breath_panel.set_character(current_id())
 	# 呼吸引擎按配置生效（默认 V4 网格；V3 UV 留作降级对比）
 	if _breath != null:
 		_breath.set_engine(GameSettings.breath_engine == GameSettings.BREATH_ENGINE_MESH)
-	# 面板直接改 V4 的 mesh uniform
-	# 注意顺序：面板滑杆是在 _build() 里建的，那时 _mesh_ref 还是 null，
-	# 初始值读不到、回调也写不进去。bind 之后必须**重新同步一次滑杆值**，
-	# 否则主人会遇到「滑杆拖到 0，画面照样大幅动」（2026-11-10 实测踩到）。
-	if _breath_panel != null:
-		var mesh_now := _breath.get_mesh_layer()
-		_breath_panel.bind_mesh(mesh_now)
-		if mesh_now != null:
-			var v4 := mesh_now.get_v4_params()
-			for k in _breath_panel._layer_sliders.keys():
-				if v4.has(k):
-					var sl: HSlider = _breath_panel._layer_sliders[k]
-					sl.set_value_no_signal(float(v4[k]))
-					var lv: Label = _breath_panel._layer_vals.get(k)
-					if lv != null:
-						lv.text = "%.2f" % float(v4[k])
 	# 横向开关按配置（主人要「上下、左右」分开，默认只做上下）
-	var ml := _breath.get_mesh_layer()
+	var ml := _breath.get_mesh_layer() if _breath != null else null
 	if ml != null:
 		ml.set_horiz(GameSettings.breath_use_horiz)
 
@@ -540,13 +599,63 @@ func _on_breath_layers_changed(layers: Dictionary) -> void:
 	_breath.set_layer_params(layers)
 
 
-## 供测试/调试：开关呼吸面板（等同按一下 F2）
+## 供测试/调试：开关呼吸面板（等同只动右上那块）
+## 注：这是**只切呼吸面板**的旧接口（smoke ⑨ 在用）。要一次切两块走 toggle_debug_panels()。
 func toggle_breath_panel(force: Variant = null) -> bool:
 	if _breath_panel == null:
 		return false
 	var v := (not _breath_panel.visible) if force == null else bool(force)
 	_breath_panel.set_visible_state(v)
 	return _breath_panel.visible
+
+
+# ── F3：左下转场调参器 + 右上呼吸面板 一起显隐（2026-11-11 主人要求）──────
+## 一次按键同时切两块：状态只记 _debug_panels_on 一个 bool。
+## 为什么放 _unhandled_input 而不是 _input：
+##   _input 会先于所有 UI 拿到事件，把 F3 抢在按钮/滑杆之前处理掉；这些面板本身
+##   并没有文本框要吃 F3，走 unhandled 更规矩，也不会打断焦点链。
+func _unhandled_input(event: InputEvent) -> void:
+	var k := event as InputEventKey
+	if k == null or not k.pressed or k.echo:
+		return
+	if k.keycode != DEBUG_TOGGLE_KEY:
+		return
+	toggle_debug_panels()
+	# 吃掉这次按键：同一次 F3 不再往下传播给别的 _unhandled_input 处理者
+	accept_event()
+
+
+## 供测试/调试/截图钩子：一次切换两块调试面板。
+## force = null 时按「现在看到的」翻转（两块都显示 → 关，否则 → 全开）；
+## force = true/false 时强制两块都显示/都隐藏。返回切换后的状态。
+func toggle_debug_panels(force: Variant = null) -> bool:
+	if force == null:
+		# 以实际可见性为准再翻转（而不是单纯 !_debug_panels_on）：即使有人单独调过
+		# 某一块（toggle_breath_panel / set_visible_state），下一次按 F3 也一定按
+		# 「当前画面」来切，不会出现按了没反应的死键。翻转后仍只落在同一个 bool 上。
+		_debug_panels_on = not _debug_panels_visible()
+	else:
+		_debug_panels_on = bool(force)
+	_apply_debug_panels(_debug_panels_on)
+	return _debug_panels_on
+
+
+## 两块面板「是否都显示」——任一存在且隐藏即视为关（都不存在时算显示，保证首次 F3 = 关）
+func _debug_panels_visible() -> bool:
+	if _tuner_panel != null and not _tuner_panel.visible:
+		return false
+	if _breath_panel != null and not _breath_panel.visible:
+		return false
+	return true
+
+
+## 把状态落到两块面板上。隐藏用整块 visible=false：子控件随之退出鼠标命中测试，
+## 后面的圆点/箭头/开始键照常可点，不会出现「看不见还挡点击」的鬼影。
+func _apply_debug_panels(v: bool) -> void:
+	if _tuner_panel != null:
+		_tuner_panel.visible = v
+	if _breath_panel != null:
+		_breath_panel.set_visible_state(v)
 
 
 # ── 截图验收接口（verify 任务用）──────────────────────────────────────────

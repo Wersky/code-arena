@@ -13,6 +13,11 @@ signal launched(ai_id: String)
 ## 对话框展开完成（main.gd 用它决定 AI 接入 / Demo 入口何时出现）
 signal dialog_expanded
 ## 左下角图标入口
+## 图标入口用的独立顶层画布（2026-11-18）：图标与侧栏在屏幕空间重叠，
+## 靠同父级 z_index 无法保证拿到鼠标事件（实测 LaunchScreen 根 Control
+## 自己是 STOP 且全屏，会先吃掉点击）。挂到独立 CanvasLayer 后与树序无关。
+var _icon_layer: CanvasLayer = null
+
 signal ai_settings_requested
 signal demo_requested
 signal patch_demo_requested
@@ -35,6 +40,10 @@ var _hint: Label
 var _skill_list: Label
 var _skill_title: Button
 var _mcp_title: Button
+## 侧栏里的「模型接入」文字按钮（2026-11-18 最终方案）
+## 左下角图标在 Godot 里被各种全屏 Control 抢事件，实测屡修不好；
+## 侧栏里的 Button（和「技能」「MCP」同一套写法）是项目里已验证稳定可点的控件。
+var _ai_access_btn: Button
 var _mcp_box: VBoxContainer
 var _model_idx := 0
 var _expanded := false
@@ -241,6 +250,22 @@ func _build_sidebar() -> void:
 		l.add_theme_color_override("font_color", Color(0.72, 0.8, 0.92))
 		_mcp_box.add_child(l)
 
+	# ── 模型接入（侧栏文字按钮，2026-11-18）──
+	## 与「技能」「MCP」同一套写法：flat Button + 左侧对齐 + 同字号。
+	## 这样它能拿到和其它两个一样的命中区域，不会再被全屏 Control 抢事件。
+	_ai_access_btn = Button.new()
+	_ai_access_btn.name = "AiAccessButton"
+	_ai_access_btn.text = "⚙ 模型接入"
+	_ai_access_btn.flat = true
+	_ai_access_btn.alignment = HORIZONTAL_ALIGNMENT_LEFT
+	_ai_access_btn.add_theme_font_override("font", PixelTheme.font())
+	_ai_access_btn.add_theme_font_size_override("font_size", 20)
+	_ai_access_btn.add_theme_color_override("font_color", Color(0.6, 0.85, 1.0))
+	_ai_access_btn.add_theme_color_override("font_hover_color", Color(0.85, 0.95, 1.0))
+	_ai_access_btn.tooltip_text = "AI 接入设置（模型 / Key / 生图 / SVG 生图 AI）"
+	_ai_access_btn.pressed.connect(func() -> void: ai_settings_requested.emit())
+	v.add_child(_ai_access_btn)
+
 
 func _toggle_skill() -> void:
 	if _skill_list == null:
@@ -259,16 +284,30 @@ func _toggle_mcp() -> void:
 ## 左下角图标入口：绑定在 GUI 层（侧栏之后创建、置顶），跟随对话框展开出现。
 ## 位置对齐战斗界面牌堆图标右侧（牌堆 x=36..92, y=750）。
 func _build_icon_entries() -> void:
-	_make_icon_entry("AiSettingsEntry", "res://assets/art/ui-ai-access.png",
-			"模型接入", Vector2(100, 750), ai_settings_requested)
-	_make_icon_entry("LlmDemoEntry", "res://assets/art/ui-demo.png",
-			"demo", Vector2(164, 750), demo_requested)
-	_make_icon_entry("PatchDemoEntry", "res://assets/art/ui-patch-demo.png",
-			"更新演示", Vector2(292, 750), patch_demo_requested)
+	## 正式版只保留「模型接入」（2026-11-18 主人要求）。
+	## 「demo」与「更新演示」是开发期自测入口，正式包已移除。
+	## 2026-11-18：左下角图标入口**已废弃**，改用侧栏里的「⚙ 模型接入」文字按钮
+	## （见 _build_sidebar）。原因：图标无论放哪（侧栏内/侧栏外/独立 CanvasLayer）
+	## 都会被全屏 Control 抢走鼠标事件，而侧栏 Button 用的是项目里已验证稳定的写法。
+	## 这里保留一个同名隐藏节点，兼容可能存在的 find_child("AiSettingsEntry") 调用。
+	if not has_node("AiSettingsEntry"):
+		var ghost := Control.new()
+		ghost.name = "AiSettingsEntry"
+		ghost.visible = false
+		ghost.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		add_child(ghost)
 
 
 func _make_icon_entry(node_name: String, tex_path: String, tip: String,
 		pos: Vector2, sig: Signal) -> void:
+	## 2026-11-18 修「点了没反应」的最终定论（隐藏桌面截图实测）：
+	##   ① 图标原本在 (100,750)，完全落在左侧栏 SidePanel ((24,0)-(256,900)) 的范围内
+	##   ② 改成 (272,750) 后又压在大对话框边缘下 —— 对话框 PanelContainer 会盖住它
+	## 所以：**把图标作为侧栏的子节点**（同父级、最后 add_child = 天然画在最上，
+	## 且侧栏内部没有别的东西盖它）。坐标改成侧栏内部的局部坐标。
+	## 直接挂在 LaunchScreen 根上（不用侧栏，也不用 CanvasLayer）：
+	## 侧栏是 PanelContainer+VBox，子节点位置会被布局强制覆盖（实测图标被挤到中间）。
+	## 挂根上 + z_index 拉高 + 显式 STOP，是「同父级里画得最上、也最先收事件」的组合。
 	var btn := TextureButton.new()
 	btn.name = node_name
 	btn.ignore_texture_size = true
@@ -278,9 +317,23 @@ func _make_icon_entry(node_name: String, tex_path: String, tip: String,
 	btn.position = pos
 	btn.size = Vector2(56, 56)
 	btn.tooltip_text = tip
+	btn.mouse_filter = Control.MOUSE_FILTER_STOP
+	btn.z_index = 200
 	btn.pressed.connect(func() -> void: sig.emit())
 	add_child(btn)
 	btn.move_to_front()
+	btn.position = pos          ## move_to_front 后再确认一次位置
+	## 图标下方加一行小字：既提示用途，也让主人一眼确认「这就是那个按钮」
+	if not has_node(node_name + "_Label"):
+		var lb := Label.new()
+		lb.name = node_name + "_Label"
+		lb.text = tip
+		lb.add_theme_font_size_override("font_size", 11)
+		lb.add_theme_color_override("font_color", Color(0.55, 0.72, 0.92))
+		lb.position = pos + Vector2(-8, 58)
+		lb.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		lb.z_index = 200
+		add_child(lb)
 
 
 ## 侧边栏技能列表（模型选择已移到选角界面，这里只按默认角色填技能示例）

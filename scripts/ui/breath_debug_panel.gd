@@ -300,19 +300,27 @@ func _build() -> void:
 	var specs := [
 		# 总倍率：一条滑杆同时缩放全部 7 个幅度（主人要「整体减弱」时不用逐条拖）
 		["amp", "总倍率", 0.0, 3.0, 0.05, col_l],
-		["chest_x", "胸横", 0.0, 30.0, 0.5, col_l],
-		["chest_y", "胸纵", 0.0, 30.0, 0.5, col_l],
-		["belly_x", "腹横", 0.0, 30.0, 0.5, col_l],
-		["belly_y", "腹纵", 0.0, 30.0, 0.5, col_l],
-		["head_y", "头纵", 0.0, 30.0, 0.5, col_l],
-		["hair_x", "发横", 0.0, 40.0, 0.5, col_l],
-		["hair_y", "发纵", 0.0, 40.0, 0.5, col_l],
-		["lock_bottom", "底锁", 0.0, 0.5, 0.01, col_l],
+		# 幅度步长一律 0.1：出厂默认里有 3.2 这类非 0.5 整倍数（商业基线反推出来的，
+		# 不应为迁就滑杆而改数值）。旧存档存的是 0.5 网格值，全都落在 0.1 网格上，兼容。
+		["chest_x", "胸横", 0.0, 30.0, 0.1, col_l],
+		["chest_y", "胸纵", 0.0, 30.0, 0.1, col_l],
+		["belly_x", "腹横", 0.0, 30.0, 0.1, col_l],
+		["belly_y", "腹纵", 0.0, 30.0, 0.1, col_l],
+		["head_y", "头纵", 0.0, 30.0, 0.1, col_l],
+		["hair_x", "发横", 0.0, 40.0, 0.1, col_l],
+		["hair_y", "发纵", 0.0, 40.0, 0.1, col_l],
+		# 底锁下限给 0.01 而不是 0：0 在旧 shader 里会撞 smoothstep(0,0,x) 未定义行为，
+		# shader 已加显式分支兜底，这里再从 UI 侧挡一道（拖到底也不至于完全没呼吸）。
+		["lock_bottom", "底锁", 0.01, 0.5, 0.01, col_l],
 		["belly_lag_deg", "腹滞°", 0.0, 180.0, 1.0, col_r],
 		["head_lag_deg", "头滞°", 0.0, 180.0, 1.0, col_r],
 		["hair_lag_per_height", "发高滞°", 0.0, 720.0, 5.0, col_r],
 		["x_lag_deg", "横相滞°", 0.0, 180.0, 1.0, col_r],
-		["y_bias", "纵偏移", 0.0, 1.0, 0.02, col_r],
+		# 0.01 而不是 0.02：默认 0.35 在 0.02 网格上会被吸附成 0.36
+		["y_bias", "纵偏移", 0.0, 1.0, 0.01, col_r],
+		# 背景层：人物以外区域的轻微跟随。0 = 背景完全静止（觉得画面整体在晃就拖到 0）。
+		# 它不改 uniform 而是烘进顶点色，改动会重建网格（一次几百毫秒，松手时才会触发）。
+		["env_weight", "背景", 0.0, 0.5, 0.01, col_r],
 	]
 	var v4p := {}
 	if _mesh_ref != null:
@@ -427,12 +435,47 @@ func _on_layer_changed(key: String) -> void:
 	_emit_layers()
 
 
-## 注入 V4 mesh 引用（CharacterSelectScreen 在切角色时调）
+## 注入 V4 mesh 引用（CharacterSelectScreen 在切角色时调）。
+## **bind 完立刻自同步**：面板滑杆可能是在 _mesh_ref 还是 null 时建的，
+## 那时读不到初始值。把「绑定」和「同步」绑成一次原子操作，调用方就不必
+## 记得「bind 之后还要再刷一遍」（2026-11-10 踩过：漏了这步 → 滑杆全 0 画面照动）。
 func bind_mesh(m: PortraitBreathMesh) -> void:
 	_mesh_ref = m
+	sync_from_mesh()
 
 
-## V4 参数改动 → 直接写进 mesh 的 uniform（V4 不按角色独立存盘，参数全局共享）
+## 从 mesh 读真值刷新 V4 滑杆（不发 value_changed，不会反过来改 mesh）
+func sync_from_mesh() -> void:
+	if _mesh_ref == null:
+		return
+	var v4 := _mesh_ref.get_v4_params()
+	for k in _layer_sliders.keys():
+		if not v4.has(k):
+			continue
+		var sl: HSlider = _layer_sliders[k]
+		sl.set_value_no_signal(float(v4[k]))
+		var lv: Label = _layer_vals.get(k)
+		if lv != null:
+			lv.text = "%.2f" % float(v4[k])
+	# 横向开关也跟 mesh 走（它是独立按钮，不在 _layer_sliders 里）
+	if _horiz_btn != null and v4.has("use_horiz"):
+		var on := bool(v4["use_horiz"])
+		_horiz_btn.set_pressed_no_signal(on)
+		_style_mode_btn(_horiz_btn, on)
+		_horiz_btn.text = "开" if on else "关"
+	_refresh_readout()
+
+
+## V4 参数改动 → 写进当前角色的存档 + mesh 的 uniform
+## 每角色一套：切角色时各自恢复，互不干扰。
+## env_weight 例外：它烘在顶点色里，每改一点就重建网格会卡，推迟到松手重建。
+var _env_dirty := false
+## 落盘节流：**点击滑杆跳值不发 drag_ended**（只有真拖动才发），
+## 只靠 drag_ended 存盘会漏掉点击这条路径（实测：点完之后磁盘还是旧值）。
+## 所以这里自己带一个延迟存盘，每来一次改动就重置计时，停手 0.4s 落盘。
+const SAVE_DEBOUNCE := 0.4
+var _save_timer: Timer = null
+
 func _on_v4_changed(key: String) -> void:
 	if not _layer_sliders.has(key):
 		return
@@ -440,9 +483,40 @@ func _on_v4_changed(key: String) -> void:
 	var lv: Label = _layer_vals.get(key)
 	if lv != null:
 		lv.text = "%.2f" % float(sl.value)
+	GameSettings.set_breath_v4(_cur_char, key, float(sl.value))
 	if _mesh_ref != null:
-		_mesh_ref.set_v4_param(key, float(sl.value))
+		if String(key) == "env_weight":
+			_env_dirty = true          # 松手时再重建网格
+		else:
+			_mesh_ref.set_v4_param(key, float(sl.value))
 	_refresh_readout()
+	_queue_save()
+
+
+## 延迟存盘（防抖）：连续拖动的每一下都会重置计时，停手才写盘，
+## 不会把磁盘打爆，也能兜住「点击跳值」这条不发 drag_ended 的路径。
+func _queue_save() -> void:
+	if _save_timer == null:
+		_save_timer = Timer.new()
+		_save_timer.one_shot = true
+		_save_timer.wait_time = SAVE_DEBOUNCE
+		_save_timer.timeout.connect(_flush_save)
+		add_child(_save_timer)
+	_save_timer.start()
+
+
+## 立刻落盘（防抖到点 / 面板被销毁前调用）
+func _flush_save() -> void:
+	if _env_dirty and _mesh_ref != null:
+		_env_dirty = false
+		_mesh_ref.set_env_weight(GameSettings.breath_v4_get(_cur_char, "env_weight"))
+	GameSettings.save_to_disk()
+
+
+## 面板离开场景树时兜底存一次：防止「改完立刻退出/切场景」丢改动
+func _exit_tree() -> void:
+	if _save_timer != null and not _save_timer.is_stopped():
+		_flush_save()
 
 
 ## 横向总开关
@@ -460,18 +534,26 @@ func _on_horiz_toggle() -> void:
 
 ## 切到另一个角色：面板**整组换成该角色存着的值**（主人要求每个角色的调参器都不一样）
 ## silent=true 时不发信号（选角流程里用，避免和 CharacterSelectScreen 自己的下发打架）
+## 2026-11-10 修：这里必须按「滑杆装的是哪套键」分流。V4 的键（chest_x 等）在
+## GameSettings.breath_layer() 里查不到 → 回落 0.0，曾把所有 V4 滑杆刷成 0。
 func set_character(cid: String, silent: bool = true) -> void:
 	if not GameSettings.BREATH_CHARS.has(cid):
 		return
 	_cur_char = cid
 	if _char_lbl != null:
 		_char_lbl.text = "角色：%s" % cid
+	var v4_of := GameSettings.breath_v4_of(_cur_char)
 	for key in _layer_sliders.keys():
-		var v := GameSettings.breath_layer(_cur_char, String(key))
+		var k := String(key)
+		# V4 键走 V4 存档；V3 键走 V3 存档。两套键空间不重叠，这里只是防御性分流。
+		var v := float(v4_of[k]) if v4_of.has(k) else GameSettings.breath_layer(_cur_char, k)
 		(_layer_sliders[key] as HSlider).set_value_no_signal(v)
 		var lv2: Label = _layer_vals.get(key)
 		if lv2 != null:
-			lv2.text = "%.3f" % v
+			lv2.text = ("%.2f" % v) if v4_of.has(k) else ("%.3f" % v)
+	# 该角色的 V4 参数灌进 mesh（切角色后画面立刻是它自己的那套）
+	if _mesh_ref != null:
+		_mesh_ref.apply_v4_params(v4_of)
 	_refresh_readout()
 	if not silent:
 		_emit_layers()
@@ -497,7 +579,10 @@ func _emit_layers() -> void:
 
 ## 松手才存盘：拖动中每帧都写会打爆磁盘
 func _on_drag_ended(_value_changed: bool) -> void:
-	GameSettings.save_to_disk()
+	# 拖动结束立刻落盘（不等防抖），并补一次背景权重网格重建
+	if _save_timer != null:
+		_save_timer.stop()
+	_flush_save()
 
 
 ## 引擎切换：1=V4 网格, 0=V3 UV（按钮顺序是 V4 在前，所以取反）
@@ -564,13 +649,25 @@ func _refresh_readout() -> void:
 	if _readout != null:
 		_readout.text = "amp %.4f  周期 %.2fs  %s" % [
 			_amp, _period, String(MODE_NAMES[clampi(_mode, 0, MODE_NAMES.size() - 1)])]
-		_readout.text += "
+		# 第二行读当前生效的引擎：V4 读像素幅度/滞后角，V3 才读那 8 个 gain
+		if GameSettings.breath_engine == GameSettings.BREATH_ENGINE_MESH:
+			_readout.text += "
+%s 胸%.1f/%.1f 腹%.1f/%.1f 头%.1f 发%.1f/%.1f 滞%d/%d/%d" % [
+				_cur_char,
+				_slider_val("chest_x"), _slider_val("chest_y"),
+				_slider_val("belly_x"), _slider_val("belly_y"),
+				_slider_val("head_y"),
+				_slider_val("hair_x"), _slider_val("hair_y"),
+				int(_slider_val("belly_lag_deg")), int(_slider_val("head_lag_deg")),
+				int(_slider_val("hair_lag_per_height"))]
+		else:
+			_readout.text += "
 %s 顶%.2f 左%.2f 右%.2f 长%.2f 梢%.2f 脸%.2f 身%.2f 翅%.2f" % [
-			_cur_char,
-			float(_slider_val("h1_gain")), float(_slider_val("h2_gain")),
-			float(_slider_val("h3_gain")), float(_slider_val("h4_gain")),
-			float(_slider_val("h5_gain")), float(_slider_val("face_gain")),
-			float(_slider_val("body_gain")), float(_slider_val("wing_gain"))]
+				_cur_char,
+				float(_slider_val("h1_gain")), float(_slider_val("h2_gain")),
+				float(_slider_val("h3_gain")), float(_slider_val("h4_gain")),
+				float(_slider_val("h5_gain")), float(_slider_val("face_gain")),
+				float(_slider_val("body_gain")), float(_slider_val("wing_gain"))]
 
 
 ## 读某条分层滑杆的当前值（滑杆还没建时返回 0）

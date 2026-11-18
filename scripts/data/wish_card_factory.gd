@@ -103,6 +103,15 @@ const VISION_PROMPT := """你在卡牌游戏《代码擂台》里，把玩家的
 - 风格、配色、背景全部由你根据画的内容自己决定（只要看起来像一张卡牌立绘、方形画布）。
 - 如果涂鸦确实难以辨认，就把它原本的线条收拾干净、美化上色，保持原样。
 
+【第四步·写生图提示词（给生图模型看的）】
+另外给出一段 `art_prompt`——这是**交给专门的生图模型**的英文提示词。它要能独立描述出一张卡牌立绘：
+- 主体是什么（用你识别出的具体物件，不要写"涂鸦""手绘"这类词）
+- 姿态/朝向/构图（例如 centered, three-quarter view, full body）
+- 风格与配色（例如 clean illustration, soft ink outlines, warm palette）
+- 背景（例如 simple radial background, no text）
+- **结尾固定加**：`no text, no watermark, no frame, square composition`
+- 长度 40-90 个英文单词，只写画面，不要写玩法/数值/卡名。
+
 【第三步·命名与机制】
 卡名必须来自你识别出的**具体物件**（你看到什么就叫什么，不要起空泛的名字，也不要借用别的题材）。
 机制：像攻击生物/武器 → kind=attack 给 damage；像护盾/建筑/防御/容器 → kind=skill 给 block；
@@ -137,8 +146,45 @@ const VISION_PROMPT := """你在卡牌游戏《代码擂台》里，把玩家的
 【输出顺序】
 先输出 SVG 代码：<svg viewBox="0 0 512 512">…</svg>
 再空一行，输出一行 JSON：
-{"name":"≤8字卡名","kind":"attack或skill","damage":0-20,"block":0-20,"draw":0-2,"desc":"≤30字效果描述","program":[],"seen":"你看到的具体形状特征（先说清你认出了什么）"}
+{"name":"≤8字卡名","kind":"attack或skill","damage":0-20,"block":0-20,"draw":0-2,"desc":"≤30字效果描述","program":[],"art_prompt":"英文生图提示词（40-90词，只描述画面）","seen":"你看到的具体形状特征（先说清你认出了什么）"}
 不要 Markdown 围栏，不要解释。"""
+
+## 生图路线提示词（2026-11-18 主人三条路径的 A 路径）：
+## 有生图模型时，默认模型**不画 SVG**，只做两件事：
+##   ① 看懂涂鸦（视觉分析）
+##   ② 产出「生图提示词 + 卡牌属性」
+## 生图提示词必须带尺寸与构图约束，交给专门的生图模型出图。
+const PALETTE_PROMPT := """你在卡牌游戏《代码擂台》里，把玩家的**手绘草图**变成一张卡。
+
+你收到的就是玩家亲手画的涂鸦（多模态图片）。
+
+【第一步·看懂它】
+先只描述**形状**：轮廓是什么轮廓？几条线？尖角还是圆角？比例与朝向？有几个部件？有没有眼睛/腿/把手/翅膀？
+写清形状特征之后，再判断它像什么。以你**真实看到的线条**为准，不要按常见题材猜。
+
+【第二步·写生图提示词（重点，交给生图模型）】
+输出 `art_prompt`：一段英文提示词，让专门的生图模型画出这张卡的**插画**。要求：
+- 主体：用你识别出的**具体物件**（不要写 "doodle"、"sketch"、"player drawing" 这类词）
+- 构图：`centered subject, three-quarter view, full body in frame, balanced composition`
+- 风格：`clean card game illustration, soft ink outlines, gentle cel shading, subtle texture`
+- 配色：按你看到的内容选一套协调色调（如 `warm ochre and deep teal palette`）
+- 背景：`simple radial gradient background, no scenery`
+- **结尾必须原样包含**：`no text, no watermark, no border, no signature, square composition, 1024x1024`
+- 长度 60-110 个英文单词。只写画面，**不要写玩法、数值、卡名**。
+
+【第三步·命名与机制】
+卡名来自你识别出的**具体物件**（看到什么叫什么，不要空泛）。
+机制：像攻击生物/武器 → kind=attack 给 damage；像护盾/建筑/防御 → kind=skill 给 block。
+
+【第四步·效果程序（可选）】
+可以用 program 给一个小特色，只能用这些 op：
+damage / damage_scaled / apply_status / heal / draw / discard_random / multiply_next / block / duplicate_next / modify_intent
+**program 最多 1 个操作**。基础伤害写 damage 字段，不要在 program 里重复。
+
+【输出格式】
+只输出一行 JSON，不要 SVG，不要 Markdown 围栏，不要解释：
+{"name":"≤8字卡名","kind":"attack或skill","damage":0-20,"block":0-20,"draw":0-2,"desc":"≤30字效果描述","program":[],"art_prompt":"英文生图提示词（含尺寸约束）","seen":"你看到的具体形状特征"}"""
+
 
 ## 卡面通道开关（2026-11-05 圆桌：砍 SVG 改 card_face.json）。
 ## **默认 false**：主人此前钦定「通用大模型用自己的绘图能力输出 SVG」，改成程序化卡面
@@ -147,8 +193,11 @@ static var use_face_mode := false
 
 
 ## 当前该用哪套提示词
-static func active_prompt() -> String:
-	return FACE_PROMPT if use_face_mode else VISION_PROMPT
+static func active_prompt(has_image_gen: bool = false) -> String:
+	if use_face_mode:
+		return FACE_PROMPT
+	## A 路径（有生图模型）：不画 SVG，只产 art_prompt + 卡牌属性
+	return PALETTE_PROMPT if has_image_gen else VISION_PROMPT
 
 
 ## 好感度 → 画质要求（写给模型看；数值/机制加成在本地钳制层）

@@ -34,9 +34,39 @@ static func _lv(id: String, chapter: int, chapter_name: String, idx: int,
 	return l
 
 
+## 【特殊怪物】封号大王（2026-11-11 主人要求）：
+## 不用程序化像素图，直接用主人给的立绘；带技能「封号」。
+## 意图循环多一拍 skill：攻 → 防 → 封号 → 攻（见 ban_pattern）。
+const BAN_ART := "res://assets/art/enemy-fenghao-dawang.png"
+const SKILL_BAN := "ban"
+
+
+static func _special_ban() -> LevelData:
+	var l := _lv("L0", 1, "幻觉滋生", 0, "第一战 · 封号大王",
+			"它抬手一指，你的输出就没了。",
+			"封号大王", 55, 6, 4, "bug", false)
+	l.enemy_art = BAN_ART
+	l.is_special = true
+	l.enemy_skill = SKILL_BAN
+	return l
+
+
+## 封号大王的意图循环：攻 → 防 → 封号 → 攻 …
+## 封号那一拍 value=0（不造成伤害，纯粹开技能）
+static func ban_pattern(atk: int, def: int) -> Array:
+	return [
+		{"kind": "attack", "value": atk},
+		{"kind": "defend", "value": def},
+		{"kind": "skill", "value": 0, "skill": SKILL_BAN},
+		{"kind": "attack", "value": atk},
+	]
+
+
 static func all_levels() -> Array[LevelData]:
 	return [
 		# ── 第 1 章 · 幻觉滋生 ─────────────────────────────
+		# 首战 = 特殊怪物封号大王（2026-11-11 主人要求）
+		_special_ban(),
 		_lv("L1", 1, "幻觉滋生", 1, "第一只幻觉",
 			"它一本正经地胡说八道。撞它！",
 			"幻觉幼虫", 40, 7, 4, "bug"),
@@ -60,8 +90,8 @@ static func all_levels() -> Array[LevelData]:
 
 		# ── 第 3 章 · 上下文崩坏 ───────────────────────────
 		_lv("L7", 3, "上下文崩坏", 1, "断片",
-			"聊到第三轮，它忘了自己是谁。",
-			"上下文幽灵", 130, 13, 8, "ghost"),
+			"话说到一半被掐断的怨灵。",
+			"断片", 130, 13, 8, "ghost"),
 		_lv("L8", 3, "上下文崩坏", 2, "Token 超限",
 			"话说到一半被掐断的怨灵。",
 			"Token 超限魔像", 138, 12, 8, "golem"),

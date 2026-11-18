@@ -65,6 +65,8 @@ var combat: StsCombat = null
 
 var _card_layer: Control = null
 var _hand_views: Array[StsCardView] = []
+## 新手引导覆盖层（2026-11-18）
+var _tutorial: TutorialOverlay = null
 var _busy: bool = false
 var _hovered: StsCardView = null
 
@@ -113,6 +115,13 @@ var _wish_panel: PanelContainer = null
 var _wish_feedback: Label = null
 var _wish_pending_card: StsCard = null
 var _wish_pending_name := ""
+## ── 生图路线（2026-11-18 主人三条路径）──
+## A. 配了生图模型：默认模型分析+产卡牌+产 art_prompt，卡面用生图模型（不画 SVG）
+## B. 没配生图、配了 SVG 专属模型：该模型分析+画 SVG+产卡牌
+## C. 都没配：默认模型分析+画 SVG+产卡牌
+var _image_gen: ImageGenClient = null
+var _wish_art_prompt := ""
+var _wish_svg_fallback := ""
 var _wish_canvas: WishCanvas = null
 var _wish_mode_vision := false
 ## 截断重试标记：每张卡只重试一次
@@ -1010,7 +1019,7 @@ func _do_wish_prefetch() -> void:
 	_prefetch_count += 1
 	_prefetch_sent_hash = h
 	_llm_client().request("event", [
-		{"role": "system", "content": WishCardFactory.active_prompt()},
+		{"role": "system", "content": WishCardFactory.active_prompt(_wish_path() == "image")},
 		{"role": "user", "content": [
 			{"type": "text", "text": "这是我画的涂鸦，请照它造一张卡。"},
 			{"type": "image_url", "image_url": {"url": uri}},
@@ -1082,7 +1091,7 @@ func _request_vision_card(cfg: LLMConfig, is_retry: bool = false) -> void:
 		return
 	## 2026-11-07 主人定稿：去掉文字输入，AI 纯看图创作
 	messages = [
-		{"role": "system", "content": WishCardFactory.active_prompt()
+		{"role": "system", "content": WishCardFactory.active_prompt(_wish_path() == "image")
 				+ WishCardFactory.quality_hint(Affection.quality_tier())},
 		{"role": "user", "content": [
 			{"type": "text", "text": "这是我画的涂鸦，请照它造一张卡。"},
@@ -1144,51 +1153,186 @@ func _on_vision_card_done(r: Dictionary) -> void:
 				% RunState.MAX_TIER3)
 		_close_wish_panel()
 		return
-	run.deck.append(card)
-	## 组合审计预热：200ms 限时，算不完下次继续（缓存累积），不卡界面（2026-11-10）
-	run.prewarm_combo_audit()
-	## 当前战斗立刻到手牌（手牌未满时）——画完就能看见、就能打；
-	## 手牌已满则进抽牌堆（下一抽即得）。两种都同步牌堆数字。
-	var got_in_hand := false
-	if combat != null and combat.over == StsCombat.Result.RUNNING:
-		if combat.hand.size() < combat.hand_size():
-			combat.hand.append(card)
-			_rebuild_hand()
-			got_in_hand = true
-		else:
-			combat.draw_pile.append(card)
-		_update_pile_counts()
+	## 注意（2026-11-18 修）：卡牌的**入组与进手牌要推迟到卡面就绪之后**。
+	## 之前是「先 append 进 deck/hand 再生成卡面」，A 路径下生图要 30-60 秒，
+	## 玩家会先看到一张没有图的黑卡；等生图回来只改了 art_path，
+	## 而 StsCardView 不会重读贴图（视图在 setup 时就取了）。
+	## 现在把入组动作统一放到 _finalize_wish_card() 里，等卡面确定了才调。
 	_wish_pending_card = card
 	_wish_pending_name = StsCardPool.card_name(card.id)
 	_close_wish_panel()
 	SfxNode.play("ui_click")
-	_toast("🖍 新卡已入手：%s（%s）" % [_wish_pending_name,
-			"已到手牌" if got_in_hand else "已进抽牌堆，下一抽即得"])
-	## 卡面四路：face token（程序化）> SVG > 位图 > 像素草图兜底
+	## 入组与 toast 都推迟到卡面定稿（见 _finalize_wish_card）
+	## ── 卡面生成：严格按主人 2026-11-18 定义的三条路径 ────────────────
+	##   A. 配了生图模型 → 默认模型做视觉分析 + 产卡牌属性 + 产生图 prompt，
+	##      **不画 SVG**；卡面 = 生图模型产物（异步）。
+	##   B. 没配生图、配了 SVG 专属模型 → 该模型分析 + 画 SVG + 产卡牌属性。
+	##   C. 都没配 → 默认模型分析 + 画 SVG + 产卡牌属性。
+	## face token（程序化）优先级最高，命中就不走上面三条。
+	var art_prompt := String(def.get("art_prompt", "")).strip_edges()
+	_wish_art_prompt = art_prompt
+	_wish_svg_fallback = svg if (not svg.is_empty() and not svg.begins_with("BITMAP:")) else ""
+
 	var face := WishCardFactory.parse_ai_face(def)
 	if not face.is_empty():
+		## ① 程序化卡面（最快，命中即用）
 		var fpath := ImageGenClient.CACHE_DIR.path_join(
 				"wish_face_%s.png" % _wish_pending_card.id.sha256_text().substr(0, 12))
+		var fc := _wish_pending_card
 		if not CardFace.render_png(face, fpath).is_empty():
-			_wish_pending_card.art_path = fpath
+			fc.art_path = fpath
 			_toast("🎨 AI 画好了：%s" % _wish_pending_name)
 		else:
 			_fallback_sketch()
+		_wish_pending_card = null
+		_finalize_wish_card(fc)
+	elif _try_image_gen_card(art_prompt):
+		## ② A 路径：交给生图模型，图异步回来（_on_wish_image_done 挂卡面）。
+		## **这里绝对不能置空 _wish_pending_card** —— 回调还要用它挂图。
+		## （2026-11-18 修：之前末尾无条件置空 → 异步图挂不上 → 卡面全黑。）
+		if _status_label != null:
+			_status_label.text = "🎨 生图模型中，请稍候…"
+		return
 	elif svg.begins_with("BITMAP:"):
-		_set_card_bitmap(_wish_pending_card, svg.substr(7))
+		## ③ 模型直出位图
+		var bc := _wish_pending_card
+		_set_card_bitmap(bc, svg.substr(7))
+		_wish_pending_card = null
+		_finalize_wish_card(bc)
 	elif not svg.is_empty():
+		## ④ B/C 路径：模型画的 SVG 用 ThorVG 渲染
 		var out := ImageGenClient.CACHE_DIR.path_join(
 				"wish_svg_%s.png" % _wish_pending_card.id.sha256_text().substr(0, 12))
+		var sc2 := _wish_pending_card
 		if WishCardFactory.render_svg_png(svg, out):
-			_wish_pending_card.art_path = out
+			sc2.art_path = out
 			_toast("🎨 AI 画好了：%s" % _wish_pending_name)
 		else:
 			_fallback_sketch()
+		_wish_pending_card = null
+		_finalize_wish_card(sc2)
 	else:
+		var ec := _wish_pending_card
 		_fallback_sketch()
-	if _status_label != null:
-		_status_label.text = "🎨 卡牌创作完成：%s（已进牌组）" % _wish_pending_name
+		_wish_pending_card = null
+		_finalize_wish_card(ec)
+	if _status_label != null and _wish_pending_card == null:
+		_status_label.text = "🎨 卡牌创作完成：%s" % _wish_pending_name
 	_wish_pending_card = null
+
+
+## 当前许愿走哪条路径（2026-11-18 主人定义）：
+##   "image"  = A：配了生图模型 → 默认模型只产 art_prompt+卡牌，不画 SVG
+##   "svgown" = B：没配生图、配了 SVG 专属模型 → 该模型分析+画 SVG
+##   "default"= C：都没配 → 默认模型分析+画 SVG
+func _wish_path() -> String:
+	var cfg := _llm_config()
+	if cfg != null and cfg.image_ready():
+		return "image"
+	if cfg != null and cfg.svg_ready():
+		return "svgown"
+	return "default"
+
+
+## SVG 专属通道（B 路径）
+func _svg_channel_cfg(cfg: LLMConfig) -> LLMConfig:
+	if cfg == null or not cfg.svg_ready():
+		return null
+	var ch := cfg.svg_channel()
+	var c := LLMConfig.new()
+	c.enabled = true
+	c.base_url = String(ch.get("base", ""))
+	c.api_key = String(ch.get("key", ""))
+	c.model = String(ch.get("model", ""))
+	c.protocol = String(ch.get("protocol", cfg.protocol))
+	c.temperatures = cfg.temperatures.duplicate()
+	c.vision_override = cfg.vision_override
+	return c
+
+
+## A 路径：涂鸦 + art_prompt 交给生图模型（edits 图生图）
+## 卡面定稿后统一入组（2026-11-18 主人反馈）：
+## A 路径的生图是异步的（30-60s）。之前是「先入组再生成卡面」，
+## 玩家先看到一张没图的黑卡，而生图回来只改 art_path、
+## StsCardView 在 setup 时已取过贴图不会重读 → 永远是黑卡。
+## 现在等卡面确定了才调这里入组。
+func _finalize_wish_card(card: StsCard) -> void:
+	if card == null:
+		return
+	run.deck.append(card)
+	run.prewarm_combo_audit()
+	var got_in_hand := false
+	if combat != null and combat.over == StsCombat.Result.RUNNING:
+		if combat.hand.size() < combat.hand_size():
+			combat.hand.append(card)
+			got_in_hand = true
+		else:
+			combat.draw_pile.append(card)
+	_rebuild_hand()
+	_update_pile_counts()
+	_toast("🖍 新卡已入手：%s（%s）" % [StsCardPool.card_name(card.id),
+			"已到手牌" if got_in_hand else "已进抽牌堆，下一抽即得"])
+
+
+func _try_image_gen_card(art_prompt: String) -> bool:
+	if _wish_pending_card == null:
+		return false
+	var cfg := _llm_config()
+	if cfg == null or not cfg.image_ready():
+		return false
+	return _start_image_gen(_wish_pending_card, art_prompt)
+
+
+## 生图核心（与调用方解耦：显式传 card，不依赖全局 _wish_pending_card）
+func _start_image_gen(card: StsCard, art_prompt: String) -> bool:
+	if card == null:
+		return false
+	var cfg := _llm_config()
+	if cfg == null or not cfg.image_ready():
+		return false
+	_wish_pending_card = card
+	var prompt := art_prompt
+	if prompt.is_empty():
+		var nm := StsCardPool.card_name(_wish_pending_card.id)
+		prompt = ("A card illustration of %s, centered, three-quarter view, "
+				+ "clean illustration, soft ink outlines, simple radial background, "
+				+ "no text, no watermark, no frame, square composition") % nm
+	if not prompt.contains("square"):
+		prompt += ", square composition, 1024x1024"
+	var ref := _export_wish_ref_png()
+	if ref.is_empty():
+		return false
+	var r := _image_client().edit(prompt, ref, cfg)
+	if not bool(r.get("ok", false)):
+		return false
+	if bool(r.get("cached", false)):
+		var p := String(r.get("path", ""))
+		if not p.is_empty() and FileAccess.file_exists(p):
+			_wish_pending_card.art_path = p
+			_toast("🎨 生图命中缓存：%s" % _wish_pending_name)
+			_wish_pending_card = null
+			return true
+	return true
+
+
+## 涂鸦导出成 png（edits 参考图）
+func _export_wish_ref_png() -> String:
+	if _wish_canvas == null:
+		return ""
+	var uri := _wish_canvas.export_data_uri()
+	if not uri.begins_with("data:") or not uri.contains("base64,"):
+		return ""
+	var bin := Marshalls.base64_to_raw(uri.substr(uri.find("base64,") + 7))
+	var img := Image.new()
+	if img.load_png_from_buffer(bin) != OK:
+		return ""
+	DirAccess.make_dir_recursive_absolute(
+			ProjectSettings.globalize_path(ImageGenClient.CACHE_DIR))
+	var out := ImageGenClient.CACHE_DIR.path_join(
+			"wish_ref_%s.png" % _wish_prefetch_hash())
+	if img.save_png(out) != OK:
+		return ""
+	return out
 
 
 func _set_card_bitmap(card: StsCard, uri: String) -> void:
@@ -1219,20 +1363,47 @@ func _fallback_sketch() -> void:
 
 
 func _on_wish_image_done(ok: bool, path: String, reason: String) -> void:
+	print("[Wish] ★ _on_wish_image_done ok=", ok, " path=", path, " reason=", reason)
 	if ok and not path.is_empty() and _wish_pending_card != null:
-		_wish_pending_card.art_path = path     ## 无缝替换成 AI 图
+		var card := _wish_pending_card
+		card.art_path = path
+		_wish_pending_card = null
+		## 卡面就绪 → 这时才把卡放进牌组/手牌（玩家第一次看到它就有图）
+		_finalize_wish_card(card)
 		_float_text(Vector2(size.x * 0.5, 150.0),
-				"愿望已绘制：%s" % _wish_pending_name, Color(0.6, 0.95, 1.0), UiKit.FS_S)
+				"愿望已绘制：%s" % StsCardPool.card_name(card.id),
+				Color(0.6, 0.95, 1.0), UiKit.FS_S)
 		if _status_label != null:
-			_status_label.text = "🎨 愿望已绘制：%s（已进牌组）" % _wish_pending_name
+			_status_label.text = "🎨 生图完成：%s（已进牌组）" % StsCardPool.card_name(card.id)
 		SfxNode.play("fx_ult_ready")
-	elif not ok:
+		return
+	## 生图失败：先回退到默认模型画的 SVG，再不行才像素草图；然后才入组
+	var card := _wish_pending_card
+	if card == null:
+		return
+	_wish_pending_card = null
+	var fell_back := false
+	if not _wish_svg_fallback.is_empty():
+		var out := ImageGenClient.CACHE_DIR.path_join(
+				"wish_svg_%s.png" % card.id.sha256_text().substr(0, 12))
+		if WishCardFactory.render_svg_png(_wish_svg_fallback, out):
+			card.art_path = out
+			fell_back = true
+			_float_text(Vector2(size.x * 0.5, 180.0),
+					"生图没成（%s），用默认模型的画顶上" % reason,
+					Color(1.0, 0.85, 0.55), UiKit.FS_XS)
+			if _status_label != null:
+				_status_label.text = "✏ 生图没成（%s），已用默认模型的画" % reason
+	if not fell_back:
+		_wish_pending_card = card       ## _fallback_sketch 依赖它
+		_fallback_sketch()
+		_wish_pending_card = null
 		_float_text(Vector2(size.x * 0.5, 180.0),
 				"AI 没画成（%s），像素草图先顶上" % reason,
 				Color(1.0, 0.75, 0.5), UiKit.FS_XS)
 		if _status_label != null:
 			_status_label.text = "✏ AI 没画成（%s），用像素草图顶上" % reason
-	_wish_pending_card = null
+	_finalize_wish_card(card)
 
 
 ## 终结技「深度思考」入口（左下角，牌堆图标上方）：
@@ -1418,7 +1589,9 @@ func _toggle_pile_panel(mode: int) -> void:
 	for c in sorted:
 		var view := StsCardView.new()
 		view.setup(c)
-		view.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		## 牌堆里可**右键翻面**看描述（2026-11-18 主人要求）。
+		## 不能是 MOUSE_FILTER_IGNORE —— 那样右键收不到，翻不了牌。
+		view.mouse_filter = Control.MOUSE_FILTER_PASS
 		view.set_playable(true)
 		grid.add_child(view)
 	_pile_panel.move_to_front()
@@ -1750,6 +1923,64 @@ func _start_battle() -> void:
 		_play_intro()
 	else:
 		_status_label.text = "战斗开始！意图：%s" % _intent_text()
+		## 无转场路径（第二场之后 / --nointro）也要播引导
+		if GameSettings.should_show_tutorial():
+			_start_tutorial.call_deferred()
+
+##   ① 第一张手牌  —— 右键翻转看作用
+##   ② 弃牌模式按钮 —— 弃掉不想要的牌
+##   ③ 左下角「愿」 —— 画图向 AI 许愿
+## 每步：全局压暗 + 目标挖洞 + 提示框；玩家点一下进下一步。
+## 「恒定新手模式」开着时每次都播（高级选项里可切）。
+func _start_tutorial() -> void:
+	if _tutorial != null and is_instance_valid(_tutorial):
+		return
+	## 等两帧：手牌布局与按钮定位都落定后再量矩形
+	## 等手牌入场动画播完（_reveal_from_intro 里是 0.34s + 每张 0.06s 错帧 + 0.65s 收尾）
+	## 再等一帧让布局落定，然后才量矩形——否则会量到动画中间态或 (0,0)。
+	await get_tree().create_timer(0.75).timeout
+	await get_tree().process_frame
+	var steps: Array = []
+	## ① 第一张手牌
+	if not _hand_views.is_empty() and _hand_views[0] != null:
+		var v0: StsCardView = _hand_views[0]
+		## 保护：若手牌还没布局完（尺寸/位置异常），不要量出错误矩形
+		var vr := Rect2(v0.global_position, v0.size)
+		if v0.size.x < 20.0 or v0.scale.x < 0.2:
+			## 兜底再等一小会儿（正常流程到不了这里）
+			await get_tree().create_timer(0.3).timeout
+			if is_instance_valid(v0):
+				vr = Rect2(v0.global_position, v0.size)
+		steps.append({
+			"rect": vr,
+			"text": "这是你的作战卡牌。\n右键翻转，查看它的具体作用！",
+		})
+	## ② 弃牌模式按钮
+	if _discard_btn != null and _discard_btn.is_visible_in_tree():
+		steps.append({
+			"rect": Rect2(_discard_btn.global_position, _discard_btn.size),
+			"text": "点击「弃牌模式」，然后点手牌就能弃掉不想要的牌。\n弃 1 张会从牌堆补 1 张。",
+		})
+	## ③ 左下角「愿」
+	if _wish_btn != null and _wish_btn.is_visible_in_tree():
+		steps.append({
+			"rect": Rect2(_wish_btn.global_position, _wish_btn.size),
+			"text": "点击这里，可以画图向 AI 许愿，得到一张 AI 生成的专属卡牌！\n（前提：已在「模型接入」里配好 AI）\n画的越好，效果越好哦！",
+		})
+	if steps.is_empty():
+		GameSettings.mark_tutorial_done()
+		return
+	_tutorial = TutorialOverlay.new()
+	_tutorial.name = "TutorialOverlay"
+	add_child(_tutorial)
+	_tutorial.finished.connect(_on_tutorial_finished)
+	_tutorial.start(steps)
+
+
+func _on_tutorial_finished() -> void:
+	_tutorial = null
+	GameSettings.mark_tutorial_done()
+
 
 
 ## 进场转场：手牌与敌人先藏起，3D 翻飞结束后 2D 弹入
@@ -2054,6 +2285,11 @@ func _reveal_from_intro() -> void:
 	_busy = false
 	_end_turn_button.disabled = false
 	_status_label.text = "战斗开始！意图：%s" % _intent_text()
+
+	## 新手引导（2026-11-18 主人修正）：必须等**转场播完、手牌真正弹入**之后再启动，
+	## 否则手牌还是 scale=0 藏在对话框外，高亮框会量到 (0,0) 附近（主人实测踩到）。
+	if GameSettings.should_show_tutorial():
+		_start_tutorial.call_deferred()
 
 
 ## 合成整卡贴图（框 + 立绘）给 3D 转场用；按卡 id 缓存
@@ -3004,6 +3240,16 @@ func _llm_config() -> LLMConfig:
 	if _llm_cfg == null:
 		_llm_cfg = LLMConfig.load_from_disk()
 	return _llm_cfg
+
+
+## 生图客户端（懒加载）
+func _image_client() -> ImageGenClient:
+	if _image_gen == null or not is_instance_valid(_image_gen):
+		_image_gen = ImageGenClient.new()
+		_image_gen.name = "ImageGenClient"
+		add_child(_image_gen)
+		_image_gen.finished.connect(_on_wish_image_done)
+	return _image_gen
 
 
 func _llm_client() -> LLMClient:
