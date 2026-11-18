@@ -114,6 +114,13 @@ var _handle: Button = null
 func _ready() -> void:
 	set_anchors_preset(Control.PRESET_FULL_RECT)
 	mouse_filter = Control.MOUSE_FILTER_IGNORE
+	## ⚠ 显式装主题（2026-11-18 修中文方框）：
+	##   本面板所有 Label 只设 font_size、不设 font，完全依赖全局 theme 继承。
+	##   但 Web 版里继承链没把中文字体送到这里 → 中文全渲染成方框
+	##   （同一构建的 LaunchScreen 因为每个 Label 都显式 add_theme_font_override
+	##    所以中文正常，这就是最有力的对照）。
+	##   在根节点装一份 theme，子节点自然继承，比逐个 Label 打补丁可靠。
+	theme = PixelTheme.build()
 	_panel = Control.new()
 	_panel.name = "Panel"
 	_panel.mouse_filter = Control.MOUSE_FILTER_IGNORE

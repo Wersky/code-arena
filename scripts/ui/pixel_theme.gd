@@ -48,9 +48,26 @@ static func build() -> Theme:
 	var f := font()
 	if f != null:
 		t.default_font = f
-	t.default_font_size = 12
+		## ⚠ 光设 default_font 不够（2026-11-18 实测，中文方框的根因）：
+		##   `Theme.default_font` 只是**兜底**——它的优先级低于「主题类里显式定义的
+		##   font 项」。而 Godot 内置默认 Theme 定义了 Label/Button 等的 `font`，
+		##   于是 get_theme_font("font") 拿到的是**内置那个没有中文的字体**，
+		##   default_font 根本没被用上。
+		##   实测探针（真实窗口，非 headless）：
+		##     root.theme.default_font = FontFile#...195615430      ← 我们设的中文字体
+		##     leaf.get_theme_font("font") = FontFile#...4155201702  ← 换了一个！
+		##     has_char(中) = false    has_char(A) = true
+		##   所以必须**逐个控件类型**把 font 项也指向中文字体。
+		t.default_font_size = 12
+		for cls in ["Label", "Button", "RichTextLabel", "LineEdit",
+				"TextEdit", "OptionButton", "CheckBox", "CheckButton",
+				"MenuButton", "LinkButton", "SpinBox", "ItemList",
+				"Tree", "TabBar", "PopupMenu", "TooltipLabel",
+				"ProgressBar", "TreeItem"]:
+			for item in ["font", "normal_font"]:
+				t.set_font(item, cls, f)
 	_theme = t
-	return t
+	return _theme
 
 
 ## 装到场景根上，全局生效
@@ -62,5 +79,42 @@ static func install(node: Node) -> void:
 		(node as Window).theme = t
 	elif node is Control:
 		(node as Control).theme = t
-	else:
+	elif node.get_tree() != null:
+		## ⚠ Window.theme 不参与 Control 的继承链（2026-11-18 实测，中文方框根因）：
+		##   把 theme 设到 get_tree().root（Window）上，子 Control 的 `theme` 仍是 null，
+		##   get_theme_font("font") 拿到**引擎内置主题**里那个没有中文的字体。
+		##   实测探针（真实窗口）：
+		##     theme.get_font("font","Label") = FontFile#...195615430  ← 我们设的（对）
+		##     leaf.theme = <Object#null>                              ← 没继承（错）
+		##     leaf.get_theme_font("font") = FontFile#...4155201702    ← 内置字体
+		##     has_char(中)=false  has_char(A)=true
+		##   对照：LaunchScreen 每个 Label 都显式 add_theme_font_override → 中文正常。
+		##   所以除了 root，还要沿 Node 树给每个 Control 挂一份（见下）。
 		node.get_tree().root.theme = t
+		_attach_to_controls(node.get_tree().root, t)
+		## 运行时新增的界面（LLM 面板、选角介绍面板等）在 add_child 之后才出现，
+		## 这里挂一个监听：每次树结构变化就补挂，避免"新窗口没字体"。
+		_watch_new_controls(node.get_tree().root, t)
+
+
+## 沿 Node 树给每个 Control 挂 theme（Control 内部靠继承链，不递归）
+static func _attach_to_controls(n: Node, t: Theme) -> void:
+	for c in n.get_children():
+		if c is Control:
+			if (c as Control).theme == null:
+				(c as Control).theme = t
+		else:
+			_attach_to_controls(c, t)
+
+
+## 树结构变化时补挂（只挂顶层 Control，避免每帧遍历整棵树）
+static func _watch_new_controls(root: Window, t: Theme) -> void:
+	if root.has_meta("_pixel_theme_watch"):
+		return
+	root.set_meta("_pixel_theme_watch", true)
+	root.child_entered_tree.connect(func(n: Node) -> void:
+		if n is Control:
+			var c := n as Control
+			if c.theme == null:
+				c.theme = t
+	)
