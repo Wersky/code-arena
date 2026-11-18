@@ -74,6 +74,9 @@ func _send() -> void:
 		_http = HTTPRequest.new()
 		_http.name = "ImageHttp"
 		_http.timeout = TIMEOUT_S
+		## 同 llm_client：Web 版经 Worker 转发后 gzip 解不开，必须关掉
+		if OS.has_feature("web"):
+			_http.accept_gzip = false
 		add_child(_http)
 		_http.request_completed.connect(_on_done)
 	var cfg: LLMConfig = _task["cfg"]
@@ -96,7 +99,7 @@ func _send() -> void:
 			"image": data_uri,
 			"size": SIZE,
 		})
-		err = _http.request(url, headers, HTTPClient.METHOD_POST, jbody)
+		err = _http.request(LLMProtocol.absolutize(url), headers, HTTPClient.METHOD_POST, jbody)
 	else:
 		url = base + "/v1/images/generations"
 		headers.append("Content-Type: application/json")
@@ -105,7 +108,7 @@ func _send() -> void:
 			"prompt": String(_task["prompt"]),
 			"size": SIZE,
 		})
-		err = _http.request(url, headers, HTTPClient.METHOD_POST, jbody)
+		err = _http.request(LLMProtocol.absolutize(url), headers, HTTPClient.METHOD_POST, jbody)
 	if err != OK:
 		_fail("request_error")
 

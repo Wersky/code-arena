@@ -237,6 +237,16 @@ func _launch_http(rid: int) -> void:
 	http.name = "LLMHttp_%d" % rid
 	http.timeout = float(job["timeout_s"])
 	http.max_redirects = 3
+	## ⚠ Web 版必须关掉 gzip 自动解压（2026-11-18 实测）：
+	##   HTTPRequest.accept_gzip 默认 true，它会发 Accept-Encoding: gzip 并用
+	##   StreamPeerGZIP 自己解。但经过 Cloudflare Worker 转发 + 边缘压缩后，
+	##   那层 gzip 解不开，直接报
+	##     ERROR: Condition "err != 0 && err != 1" is true. Returning: FAILED
+	##     at: _process (core/io/stream_peer_gzip.cpp:117)
+	##   整个响应作废（明明 HTTP 200、body 也是合法 JSON）。
+	##   关掉之后要求服务端回明文；Worker 侧也已剔除 accept-encoding 头。
+	if OS.has_feature("web"):
+		http.accept_gzip = false
 	host.add_child(http)
 	job["http"] = http
 	http.request_completed.connect(_on_http.bind(rid, int(job["attempt"])))

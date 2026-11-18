@@ -57,6 +57,35 @@ static func trim_model(model: String) -> String:
 	return m
 
 
+## Web 版的 base 是同源相对路径（"/proxy/llm"），但 Godot 的 HTTPRequest
+## **只接受绝对 URL**（实测报 "Error parsing URL"，见 http_request.cpp:61），
+## 所以拼请求前必须补成 "https://<当前域名>/proxy/llm"。
+##
+## 2026-11-18 实测：不补这一步，浏览器里点「测试连接」直接报
+##   ERROR: Error parsing URL: '/proxy/llm/v1/chat/completions'
+static func absolutize(url: String) -> String:
+	var u := String(url).strip_edges()
+	if u.is_empty():
+		return u
+	if u.begins_with("http://") or u.begins_with("https://"):
+		return u
+	if not OS.has_feature("web"):
+		return u          ## 桌面版不会出现相对路径，原样返回
+	# 通过 JavaScriptBridge 取当前页面的 origin（https://你的域名）
+	var origin := ""
+	if Engine.has_singleton("JavaScriptBridge"):
+		var js = Engine.get_singleton("JavaScriptBridge")
+		if js != null and js.has_method("eval"):
+			var v = js.eval("self.location.origin", true)
+			if v != null:
+				origin = String(v)
+	if origin.is_empty() or origin == "null":
+		origin = "http://localhost"   ## 兜底，正常不会走到
+	if not u.begins_with("/"):
+		u = "/" + u
+	return origin + u
+
+
 # ══ URL ═══════════════════════════════════════════════
 static func chat_url(protocol: String, base: String, model: String, api_key: String = "") -> String:
 	var p := normalize_protocol(protocol)
@@ -65,16 +94,16 @@ static func chat_url(protocol: String, base: String, model: String, api_key: Str
 	match p:
 		"anthropic":
 			if b.ends_with("/messages"):
-				return b
-			return b + "/v1/messages"
+				return absolutize(b)
+			return absolutize(b + "/v1/messages")
 		"responses":
 			if b.ends_with("/responses"):
-				return b
-			return b + "/v1/responses"
+				return absolutize(b)
+			return absolutize(b + "/v1/responses")
 		_:
 			if b.ends_with("/chat/completions"):
-				return b
-			return b + "/v1/chat/completions"
+				return absolutize(b)
+			return absolutize(b + "/v1/chat/completions")
 
 
 ## 模型列表端点；Anthropic 无此端点返回空串（GUI 走手填）。
@@ -86,7 +115,7 @@ static func models_url(protocol: String, base: String, api_key: String = "") -> 
 			return ""       ## Anthropic 无公开模型列表端点，GUI 走手填
 		_:
 			if b.ends_with("/models"):
-				return b
+				return absolutize(b)
 			return b + "/v1/models"
 
 

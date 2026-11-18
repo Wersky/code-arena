@@ -21,3 +21,15 @@ desktop.ini
 # 导出的游戏本体（105 MB，别进仓库）
 dist/
 tools/__pycache__/
+
+# 本机工作文件（不入公开仓库）
+圆桌纪要/
+probe_*.gd*
+*.bak-*
+
+# Web 导出产物与 Worker 本地密钥
+build/
+worker/.dev.vars
+worker/.wrangler/
+# tools/stage_web.py 生成的部署目录（82MB，每次打包重建，不进仓库）
+worker/public/
