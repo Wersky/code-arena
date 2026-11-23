@@ -108,7 +108,7 @@ Godot 4 的 pck 内部块是 **zstd** 压缩（不是 zlib），解压后配合
 ## 安全模型
 
 ```
-面试官浏览器
+访问者浏览器
     │ ① POST /api/gate {code:"<访问码>"}
     ▼
 Cloudflare Worker（服务端）
