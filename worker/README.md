@@ -1,6 +1,8 @@
 # 把游戏放到网上（Cloudflare Worker，免 R2 / 免绑卡）
 
-> 目标：面试官打开网址 → 输访问码 `<ACCESS_CODE>` → 玩网页版；**你的 API key 全程在服务端**。
+> 目标：别人打开网址 → 输访问码 → 玩网页版；**API key 全程在服务端**。
+>
+> 本文档只描述部署方式，**真实域名与访问码不入库**（部署后自行记录）。
 
 ---
 
@@ -14,7 +16,7 @@ tools\export_web.bat
 
 # ② 设服务端密钥（只需一次，值不会进仓库）
 cd worker
-wrangler secret put ACCESS_CODE        # 输 <ACCESS_CODE>
+wrangler secret put ACCESS_CODE        # 输你自己的访问码
 wrangler secret put SESSION_SECRET     # 随便一串随机字符
 wrangler secret put LLM_BASE           # https://api.commandcode.ai/provider/v1
 wrangler secret put LLM_KEY            # 你的 commandcode key
@@ -26,7 +28,7 @@ wrangler deploy
 
 # ④ 验证（无痕窗口）
 #   <你的网址>/game.pck   → 必须 403
-#   <你的网址>/           → 看到门禁页，输 <ACCESS_CODE> 进游戏
+#   <你的网址>/           → 看到门禁页，输访问码进游戏
 ```
 
 部署成功会打印 `https://code-arena-gate.<你的账号>.workers.dev`。
@@ -107,7 +109,7 @@ Godot 4 的 pck 内部块是 **zstd** 压缩（不是 zlib），解压后配合
 
 ```
 面试官浏览器
-    │ ① POST /api/gate {code:"<ACCESS_CODE>"}
+    │ ① POST /api/gate {code:"<访问码>"}
     ▼
 Cloudflare Worker（服务端）
     │ ② 常量时间比对 ACCESS_CODE
@@ -147,15 +149,15 @@ fail-closed 缺 SESSION_SECRET 未授权 / 缺 ACCESS_CODE 503 / 缺 ASSETS 503
 
 ```powershell
 cd worker
-wrangler secret put ACCESS_CODE     # 换新码
-wrangler deploy
+wrangler secret put ACCESS_CODE     # 换新码，上传即生效（2026-11-23 实测：不用再 deploy）
 ```
 
 旧 Cookie 仍有效（签名密钥没变）。**要立刻让所有人失效**：
 ```powershell
-wrangler secret put SESSION_SECRET  # 换新随机串
-wrangler deploy
+wrangler secret put SESSION_SECRET  # 换新随机串，上传即生效
 ```
+
+> 只有改了 `src/index.js` / `wrangler.toml` / `public/` 才需要 `wrangler deploy`。
 
 ---
 
